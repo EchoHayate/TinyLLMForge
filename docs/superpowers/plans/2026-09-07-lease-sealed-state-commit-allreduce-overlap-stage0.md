@@ -81,6 +81,71 @@ pytest, JSON/JSONL, SHA-256 manifests, SSH, four NVIDIA A100 GPUs.
 | `docs/superpowers/audits/2026-09-07-lease-sealed-state-commit-overlap-stage0-audit.md` | Terminal Stage-0 result and claim boundary |
 | `AGENT_HANDOFF_STATE.md` | Append-only final checkpoint and authorized next action |
 
+## Implementation reconciliation (2026-09-07)
+
+The executable implementation is stricter than several early illustrative
+snippets later in this plan. The following protocol is authoritative for the
+Stage-0 launch:
+
+- remote preflight records and validates all of
+  `attempt_exists`, `attempt_parent_is_symlink`,
+  `remote_root_is_symlink`, `remote_root_exists`,
+  `remote_root_is_directory`, `remote_root_on_distinct_filesystem`,
+  `resolved_remote_root`, and `resolved_attempt_root`;
+- the approved `/data00/home/sitian/...` root must already exist, resolve
+  exactly to itself, not be a symlink, and have a different device ID from
+  `/`; the controller must never silently create it on the root filesystem;
+- remote attempt creation repeats the mounted-filesystem and realpath checks
+  immediately before creating the immutable attempt directory;
+- `run_attempt` performs a second Kerberos TTL check, validates the exact four
+  frozen GPU UUID/index rows again, persists that immediate launch snapshot
+  locally and remotely, and only then launches workers;
+- worker supervision registers each owned process group at spawn time,
+  terminates only those registered groups on rank failure, timeout, or
+  resource-identity violation, and records three exact-tag cleanup scans;
+- source staging and compact evidence download terminate and reap their owned
+  archive/SSH sender if the receiving subprocess raises or times out;
+- runtime capability evidence binds hostname, Python, NVIDIA driver, CUDA,
+  PyTorch, NCCL availability/version, GPU UUID/name/compute capability, world
+  size, tensor dimensions, and dtypes across all four ranks;
+- memory evidence uses `torch.cuda.max_memory_reserved()` after resetting peak
+  statistics, rather than treating a post-allocation snapshot as peak reserved
+  memory;
+- the producer validates numeric admission thresholds, empty process lists,
+  unique GPU UUID/index identity, and runtime capability consistency before
+  emitting the bundle;
+- remote and local verification receipts are distinct:
+  `remote_independent_verification.json` and
+  `local_streaming_independent_verification.json`;
+- the local verifier requires the remote receipt before mutation, writes
+  `manifest.json`, rewrites `manifest.sha256` over the complete terminal
+  inventory, and makes subsequent receipt-writing verification invalid;
+- post-seal verification is read-only and must use `--check-only`;
+- controller exceptions create terminal local or remote receipts without
+  mutating an already-existing attempt.
+
+The current dependency-injected adapter is:
+
+```text
+run_attempt(
+    plan,
+    kerberos_probe,
+    gpu_probe,
+    remote_writer,
+    launch_admission_writer,
+    worker_runner,
+    assembler,
+    remote_verifier,
+    downloader,
+    local_verifier,
+) -> dict
+```
+
+The complete local regression suite comprises the six test files listed in
+Task 5 Step 6. Older code excerpts below are historical RED-phase examples;
+where they omit the fields or steps above, this reconciliation section and the
+checked-in implementation take precedence.
+
 ---
 
 ### Task 1: Freeze the Stage-0 evidence contract and classifier
@@ -1732,10 +1797,11 @@ git push origin feat/kv-sparse-attention
 
 - Produces
   `build_attempt_plan(...) -> dict`.
-- Produces `build_remote_worker_commands(plan, ...) -> tuple[list[str], ...]`.
+- Produces `build_remote_worker_commands(plan, ...) -> tuple[str, ...]`.
 - Produces dependency-injected
   `run_attempt(plan, kerberos_probe, gpu_probe, remote_writer, worker_runner,
-  assembler, remote_verifier, downloader, local_verifier) -> dict`.
+  launch_admission_writer, assembler, remote_verifier, downloader,
+  local_verifier) -> dict`.
 - Reuses strict-clean parsing and Kerberos inspection from
   `tools/run_qwen38_tp4_communication_profile.py`.
 
@@ -1934,6 +2000,8 @@ DEFAULT_DIST_PORT = 29741
 `build_attempt_plan` must:
 
 - reject an existing or symlinked attempt path;
+- require the approved remote root to exist as a real directory on a
+  filesystem distinct from `/`;
 - reject any path outside `APPROVED_REMOTE_ROOT`;
 - require exactly four strict-clean GPU inventory rows;
 - place `TMPDIR`, `XDG_CACHE_HOME`, `TORCH_EXTENSIONS_DIR`, and
@@ -1968,20 +2036,25 @@ from tools.run_qwen38_tp4_communication_profile import (
 
 `run_attempt` must execute exactly:
 
-1. Kerberos TTL fail-fast check;
-2. wait for four strict-clean GPUs;
-3. create the fresh remote attempt directories;
-4. upload plan and source identity;
-5. stage the committed source archive;
-6. repeat strict-clean admission immediately before launch;
-7. launch four rank workers;
-8. monitor selected GPUs and exact-tag-owned descendants;
-9. assemble the producer bundle remotely;
-10. run the independent verifier remotely;
-11. download only the compact final bundle and remote verifier receipt;
-12. run the same independent verifier locally;
-13. require producer and both verifiers to agree;
-14. write the controller terminal receipt.
+1. perform the initial Kerberos TTL fail-fast check;
+2. validate the mounted remote root and fresh attempt path;
+3. wait for four strict-clean GPUs and freeze their UUID/index mapping;
+4. construct and persist the local plan/source/admission records;
+5. perform the second Kerberos TTL fail-fast check;
+6. revalidate the exact four frozen GPUs;
+7. create the fresh remote attempt, stage committed source, and upload the
+   plan/source/initial-admission records;
+8. repeat strict-clean admission immediately before launch and atomically
+   replace the local and remote launch-admission records;
+9. launch four rank workers;
+10. monitor selected GPUs and exact-tag-owned descendants;
+11. assemble the producer bundle remotely;
+12. run the independent verifier remotely and preserve its distinct receipt;
+13. download only the compact final bundle and controller receipts;
+14. run the same independent verifier locally, preserve its distinct receipt,
+    and seal the terminal manifest;
+15. require producer and both verifiers to agree;
+16. write the controller terminal receipt.
 
 SSH return code 255 may be retried only within the fixed retry budget.
 Non-255 failures are terminal. The controller must never invoke authentication
@@ -2138,7 +2211,8 @@ Run:
 ```bash
 python3 \
   tools/verify_lease_sealed_state_commit_overlap.py \
-  artifacts/lease_sealed_state_commit_overlap/20260907-lease-sealed-state-commit-overlap-stage0-r1/final_bundle
+  artifacts/lease_sealed_state_commit_overlap/20260907-lease-sealed-state-commit-overlap-stage0-r1/final_bundle \
+  --check-only
 ```
 
 Expected: verifier status `PASS`. Its reconstructed classification may be GO,

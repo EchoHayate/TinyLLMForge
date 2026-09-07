@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -21,6 +22,8 @@ if __package__:
         WORLD_SIZE,
         classify_stage0,
         validate_measurement_row,
+        validate_runtime_capabilities,
+        validate_strict_clean_admission,
     )
 else:
     from lease_sealed_state_commit_overlap import (
@@ -33,6 +36,8 @@ else:
         WORLD_SIZE,
         classify_stage0,
         validate_measurement_row,
+        validate_runtime_capabilities,
+        validate_strict_clean_admission,
     )
 
 
@@ -80,6 +85,27 @@ def _load_json(path):
             )
     except json.JSONDecodeError as error:
         raise ValueError(f"invalid JSON: {path}") from error
+
+
+def _load_jsonl(path):
+    rows = []
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                rows.append(
+                    json.loads(
+                        line,
+                        object_pairs_hook=_duplicate_keys,
+                        parse_constant=_nonfinite,
+                    )
+                )
+            except json.JSONDecodeError as error:
+                raise ValueError(
+                    f"invalid JSONL at {path}:{line_number}"
+                ) from error
+    return rows
 
 
 def _require_finite(value):
@@ -226,13 +252,18 @@ def _validate_source_identity(source):
         or not _validate_rank_rows(source.get("gpu_rank_rows"))
     ):
         raise ValueError("source identity is invalid")
-    admission = source.get("admission")
-    if (
-        not isinstance(admission, dict)
-        or admission.get("classification") != "STRICT_CLEAN"
-        or not _validate_rank_rows(admission.get("rank_rows"))
-    ):
-        raise ValueError("source admission identity is invalid")
+    try:
+        source["admission"] = validate_strict_clean_admission(
+            source.get("admission")
+        )
+    except ValueError as error:
+        raise ValueError("source admission identity is invalid") from error
+    source["environment"]["runtime_capabilities"] = (
+        validate_runtime_capabilities(
+            source["environment"].get("runtime_capabilities"),
+            source["gpu_rank_rows"],
+        )
+    )
     return dict(source)
 
 
@@ -459,3 +490,59 @@ def assemble_bundle(
     if {path.name for path in output_root.iterdir()} != PRODUCER_ARTIFACTS:
         raise RuntimeError("producer artifact inventory is incomplete")
     return producer
+
+
+def assemble_raw_attempt(
+    *,
+    raw_root,
+    source_identity_path,
+    admission_path,
+    output_root,
+):
+    raw_root = Path(raw_root).resolve()
+    source = _load_json(source_identity_path)
+    source["admission"] = _load_json(admission_path)
+    capabilities = validate_runtime_capabilities(
+        _load_json(raw_root / "runtime_capabilities.json"),
+        source.get("gpu_rank_rows"),
+    )
+    source.setdefault("environment", {})["runtime_capabilities"] = (
+        capabilities
+    )
+    lifecycle = _load_json(raw_root / "lifecycle.json")
+    lifecycle.update(_identity(source))
+    cleanup = _load_json(raw_root / "cleanup.json")
+    cleanup.update(_identity(source))
+    return assemble_bundle(
+        output_root=output_root,
+        source_identity=source,
+        rows=_load_jsonl(raw_root / "measurement_rows.jsonl"),
+        memory=_load_json(raw_root / "memory.json"),
+        lifecycle=lifecycle,
+        cleanup=cleanup,
+    )
+
+
+def build_argument_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--raw-root", required=True, type=Path)
+    parser.add_argument("--source-identity", required=True, type=Path)
+    parser.add_argument("--admission", required=True, type=Path)
+    parser.add_argument("--output-root", required=True, type=Path)
+    return parser
+
+
+def main(argv=None):
+    args = build_argument_parser().parse_args(argv)
+    result = assemble_raw_attempt(
+        raw_root=args.raw_root,
+        source_identity_path=args.source_identity,
+        admission_path=args.admission,
+        output_root=args.output_root,
+    )
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

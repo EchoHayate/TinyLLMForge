@@ -10,6 +10,8 @@ import json
 import math
 import os
 from pathlib import Path
+import platform
+import subprocess
 import time
 
 if __package__:
@@ -387,6 +389,26 @@ def _run_lifecycle_probe(
 
 def _runtime_capability_row(rank, device, torch, dist):
     properties = torch.cuda.get_device_properties(device)
+    driver = subprocess.run(
+        [
+            "nvidia-smi",
+            "--query-gpu=driver_version",
+            "--format=csv,noheader,nounits",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    driver_versions = {
+        line.strip()
+        for line in driver.stdout.splitlines()
+        if line.strip()
+    }
+    if driver.returncode != 0 or len(driver_versions) != 1:
+        raise RuntimeError("NVIDIA driver identity is unavailable")
+    nccl_version = torch.cuda.nccl.version()
+    if nccl_version is None:
+        raise RuntimeError("NCCL version identity is unavailable")
     return {
         "rank": rank,
         "device_index": rank,
@@ -396,9 +418,13 @@ def _runtime_capability_row(rank, device, torch, dist):
             int(properties.major),
             int(properties.minor),
         ],
+        "hostname": platform.node(),
+        "python_version": platform.python_version(),
+        "driver_version": driver_versions.pop(),
         "cuda_version": str(torch.version.cuda),
         "torch_version": str(torch.__version__),
         "nccl_available": bool(dist.is_nccl_available()),
+        "nccl_version": str(nccl_version),
         "world_size": WORLD_SIZE,
         "hidden_size": HIDDEN_SIZE,
         "collective_dtype": "float32",
@@ -750,6 +776,11 @@ def run_worker(args):
                     torch.cuda.max_memory_allocated(device)
                     - before_allocated,
                 ),
+                "peak_reserved_delta_bytes": max(
+                    0,
+                    torch.cuda.max_memory_reserved(device)
+                    - before_reserved,
+                ),
                 "maximum_theoretical_shadow_bytes": (
                     STATE_BYTES_PER_TOKEN_PER_LAYER
                     * active_tokens
@@ -768,7 +799,7 @@ def run_worker(args):
                 row["peak_allocated_delta_bytes"] for row in memory_rows
             ),
             "maximum_reserved_delta_bytes": max(
-                row["reserved_delta_bytes"] for row in memory_rows
+                row["peak_reserved_delta_bytes"] for row in memory_rows
             ),
             "maximum_theoretical_shadow_bytes": max(
                 row["maximum_theoretical_shadow_bytes"]

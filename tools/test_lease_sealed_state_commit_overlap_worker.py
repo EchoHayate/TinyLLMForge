@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import types
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +20,7 @@ for package_name in ("tinyvllm", "tinyvllm.engine"):
 
 from tools.lease_sealed_state_commit_overlap_worker import (
     OverlapBuffers,
+    _runtime_capability_row,
     _run_candidate,
     _tensor_digest,
     build_argument_parser,
@@ -130,6 +132,22 @@ def test_candidate_timed_path_has_no_sync_item_allocation_or_construction():
         assert forbidden not in source
 
 
+def test_worker_records_peak_reserved_memory_for_gate_evidence():
+    source = inspect.getsource(
+        __import__(
+            "tools.lease_sealed_state_commit_overlap_worker",
+            fromlist=["run_worker"],
+        ).run_worker
+    )
+
+    assert "torch.cuda.max_memory_reserved(device)" in source
+    assert '"peak_reserved_delta_bytes"' in source
+    assert (
+        'row["peak_reserved_delta_bytes"] for row in memory_rows'
+        in source
+    )
+
+
 def test_tensor_digest_views_raw_bytes_with_torch_uint8():
     tensor = FakeTensor()
 
@@ -154,3 +172,44 @@ def test_cli_requires_attempt_source_rank_and_output_identity():
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_runtime_capability_records_driver_cuda_nccl_and_device_identity(
+    monkeypatch,
+):
+    properties = SimpleNamespace(
+        name="NVIDIA A100-SXM4-80GB",
+        uuid="GPU-expected",
+        major=8,
+        minor=0,
+    )
+    cuda = SimpleNamespace(
+        get_device_properties=lambda _device: properties,
+        nccl=SimpleNamespace(version=lambda: (2, 21, 5)),
+    )
+    torch = SimpleNamespace(
+        cuda=cuda,
+        version=SimpleNamespace(cuda="12.8"),
+        __version__="2.8.0",
+    )
+    dist = SimpleNamespace(is_nccl_available=lambda: True)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="550.54.15\n",
+            stderr="",
+        ),
+    )
+
+    row = _runtime_capability_row(2, "cuda:2", torch, dist)
+
+    assert row["rank"] == 2
+    assert row["device_uuid"] == "GPU-expected"
+    assert row["driver_version"] == "550.54.15"
+    assert row["cuda_version"] == "12.8"
+    assert row["nccl_version"] == "(2, 21, 5)"
+    assert row["nccl_available"] is True
+    assert isinstance(row["hostname"], str) and row["hostname"]
+    assert isinstance(row["python_version"], str) and row["python_version"]

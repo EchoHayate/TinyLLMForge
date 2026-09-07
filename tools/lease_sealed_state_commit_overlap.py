@@ -18,6 +18,165 @@ MAX_SINGLE_TOKEN_MEDIAN_REGRESSION = 0.01
 MAX_P99_REGRESSION = 0.03
 MAX_HOST_SUBMISSION_REGRESSION = 0.03
 MIN_DIRECTIONAL_PAIR_COUNT = 11
+MAX_GPU_MEMORY_USED_MIB = 1024
+MAX_GPU_UTILIZATION_PERCENT = 5
+RUNTIME_CAPABILITY_FIELDS = frozenset({
+    "rank",
+    "device_index",
+    "device_name",
+    "device_uuid",
+    "compute_capability",
+    "hostname",
+    "python_version",
+    "driver_version",
+    "cuda_version",
+    "torch_version",
+    "nccl_available",
+    "nccl_version",
+    "world_size",
+    "hidden_size",
+    "collective_dtype",
+    "output_dtype",
+    "state_dtype",
+})
+
+
+def validate_runtime_capabilities(capabilities, gpu_rank_rows):
+    if (
+        not isinstance(capabilities, dict)
+        or not isinstance(capabilities.get("rank_rows"), list)
+        or len(capabilities["rank_rows"]) != WORLD_SIZE
+        or not isinstance(gpu_rank_rows, list)
+        or len(gpu_rank_rows) != WORLD_SIZE
+    ):
+        raise ValueError("runtime capability identity is invalid")
+    expected_by_rank = {
+        row.get("rank"): row
+        for row in gpu_rank_rows
+        if isinstance(row, dict)
+    }
+    if (
+        set(expected_by_rank) != set(range(WORLD_SIZE))
+        or any(
+            set(row) != {"rank", "device_index", "device_uuid"}
+            or type(row["rank"]) is not int
+            or type(row["device_index"]) is not int
+            or row["device_index"] < 0
+            or not isinstance(row["device_uuid"], str)
+            or not row["device_uuid"].startswith("GPU-")
+            for row in gpu_rank_rows
+        )
+        or len({row["device_index"] for row in gpu_rank_rows}) != WORLD_SIZE
+        or len({row["device_uuid"] for row in gpu_rank_rows}) != WORLD_SIZE
+    ):
+        raise ValueError("runtime capability identity is invalid")
+    shared_versions = set()
+    seen_ranks = set()
+    for row in capabilities["rank_rows"]:
+        if not isinstance(row, dict) or set(row) != RUNTIME_CAPABILITY_FIELDS:
+            raise ValueError("runtime capability schema is invalid")
+        rank = row["rank"]
+        expected = expected_by_rank.get(rank)
+        compute_capability = row["compute_capability"]
+        if (
+            type(rank) is not int
+            or rank not in range(WORLD_SIZE)
+            or rank in seen_ranks
+            or type(row["device_index"]) is not int
+            or row["device_index"] != rank
+            or not isinstance(row["device_name"], str)
+            or not row["device_name"]
+            or not isinstance(row["device_uuid"], str)
+            or expected is None
+            or row["device_uuid"] != expected.get("device_uuid")
+            or not isinstance(compute_capability, list)
+            or len(compute_capability) != 2
+            or any(type(value) is not int or value < 0 for value in compute_capability)
+            or not isinstance(row["hostname"], str)
+            or not row["hostname"]
+            or not isinstance(row["python_version"], str)
+            or not row["python_version"]
+            or not isinstance(row["driver_version"], str)
+            or not row["driver_version"]
+            or not isinstance(row["cuda_version"], str)
+            or not row["cuda_version"]
+            or row["cuda_version"] == "None"
+            or not isinstance(row["torch_version"], str)
+            or not row["torch_version"]
+            or row["nccl_available"] is not True
+            or not isinstance(row["nccl_version"], str)
+            or not row["nccl_version"]
+            or row["nccl_version"] == "None"
+            or row["world_size"] != WORLD_SIZE
+            or row["hidden_size"] != HIDDEN_SIZE
+            or row["collective_dtype"] != "float32"
+            or row["output_dtype"] != "bfloat16"
+            or row["state_dtype"] != "bfloat16"
+        ):
+            raise ValueError("runtime capability identity is invalid")
+        seen_ranks.add(rank)
+        shared_versions.add((
+            row["hostname"],
+            row["python_version"],
+            row["driver_version"],
+            row["cuda_version"],
+            row["torch_version"],
+            row["nccl_version"],
+        ))
+    if seen_ranks != set(range(WORLD_SIZE)) or len(shared_versions) != 1:
+        raise ValueError("runtime capability identity is invalid")
+    return {
+        "rank_rows": [
+            dict(row)
+            for row in sorted(
+                capabilities["rank_rows"],
+                key=lambda row: row["rank"],
+            )
+        ]
+    }
+
+
+def validate_strict_clean_admission(admission):
+    rows = admission.get("rank_rows") if isinstance(admission, dict) else None
+    if (
+        admission.get("classification") != "STRICT_CLEAN"
+        if isinstance(admission, dict)
+        else True
+    ) or not isinstance(rows, list) or len(rows) != WORLD_SIZE:
+        raise ValueError("strict-clean admission is invalid")
+    seen_ranks = set()
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or set(row)
+            != {
+                "rank",
+                "memory_mib",
+                "utilization_percent",
+                "compute_processes",
+            }
+            or type(row["rank"]) is not int
+            or row["rank"] not in range(WORLD_SIZE)
+            or row["rank"] in seen_ranks
+            or type(row["memory_mib"]) is not int
+            or not 0 <= row["memory_mib"] <= MAX_GPU_MEMORY_USED_MIB
+            or type(row["utilization_percent"]) is not int
+            or not 0
+            <= row["utilization_percent"]
+            <= MAX_GPU_UTILIZATION_PERCENT
+            or row["compute_processes"] != []
+        ):
+            raise ValueError("strict-clean admission is invalid")
+        seen_ranks.add(row["rank"])
+    if seen_ranks != set(range(WORLD_SIZE)):
+        raise ValueError("strict-clean admission is invalid")
+    return {
+        "classification": "STRICT_CLEAN",
+        "rank_rows": [
+            dict(row)
+            for row in sorted(rows, key=lambda row: row["rank"])
+        ],
+    }
 
 
 def interval_intersection_ns(left, right):

@@ -22,6 +22,8 @@ if __package__:
         WORLD_SIZE,
         classify_stage0,
         validate_measurement_row,
+        validate_runtime_capabilities,
+        validate_strict_clean_admission,
     )
 else:
     from lease_sealed_state_commit_overlap import (
@@ -34,10 +36,19 @@ else:
         WORLD_SIZE,
         classify_stage0,
         validate_measurement_row,
+        validate_runtime_capabilities,
+        validate_strict_clean_admission,
     )
 
 
 MANIFEST_SCHEMA = "lease-sealed-state-commit-overlap-manifest.v1"
+TERMINAL_MANIFEST_SCHEMA = (
+    "lease-sealed-state-commit-overlap-terminal-manifest.v1"
+)
+LEGACY_RECEIPT_NAME = "independent_verification.json"
+REMOTE_RECEIPT_NAME = "remote_independent_verification.json"
+LOCAL_RECEIPT_NAME = "local_streaming_independent_verification.json"
+TERMINAL_MANIFEST_NAME = "manifest.json"
 PRODUCER_FILES = frozenset(
     {
         "source_manifest.json",
@@ -162,7 +173,14 @@ def _verify_manifest(root):
     }
     accepted = {
         PRODUCER_FILES,
-        PRODUCER_FILES | {"independent_verification.json"},
+        PRODUCER_FILES | {LEGACY_RECEIPT_NAME},
+        PRODUCER_FILES | {REMOTE_RECEIPT_NAME},
+        PRODUCER_FILES
+        | {
+            REMOTE_RECEIPT_NAME,
+            LOCAL_RECEIPT_NAME,
+            TERMINAL_MANIFEST_NAME,
+        },
     }
     if actual not in accepted or set(manifest["artifacts"]) != actual:
         raise ValueError("manifest artifact inventory mismatch")
@@ -215,6 +233,41 @@ def _validate_rank_rows(rows):
     )
 
 
+def _terminal_manifest_payload(root, identity, classification):
+    artifact_hashes = {
+        path.name: _sha256(path)
+        for path in sorted(root.iterdir())
+        if path.is_file()
+        and path.name not in {"manifest.sha256", TERMINAL_MANIFEST_NAME}
+    }
+    return {
+        "schema_version": TERMINAL_MANIFEST_SCHEMA,
+        **identity,
+        "classification": classification,
+        "artifact_hashes": artifact_hashes,
+    }
+
+
+def _validate_existing_receipts(root, expected):
+    for name in (
+        LEGACY_RECEIPT_NAME,
+        REMOTE_RECEIPT_NAME,
+        LOCAL_RECEIPT_NAME,
+    ):
+        path = root / name
+        if path.is_file() and _load_json(path) != expected:
+            raise ValueError(f"{name} disagrees with reconstruction")
+
+
+def _validate_terminal_manifest(root, identity, classification):
+    path = root / TERMINAL_MANIFEST_NAME
+    if not path.is_file():
+        return
+    expected = _terminal_manifest_payload(root, identity, classification)
+    if _load_json(path) != expected:
+        raise ValueError("terminal manifest disagrees with bundle")
+
+
 def _require_identity(payload, identity, name):
     if not isinstance(payload, dict) or any(
         payload.get(key) != value for key, value in identity.items()
@@ -226,10 +279,29 @@ def _project(row, fields):
     return {field: row[field] for field in fields}
 
 
-def verify_bundle(root):
+def verify_bundle(
+    root,
+    *,
+    receipt_name=LEGACY_RECEIPT_NAME,
+    seal_terminal=False,
+):
     root = Path(root).resolve()
     if not root.is_dir():
         raise ValueError("bundle root must be an existing directory")
+    if receipt_name not in {
+        None,
+        LEGACY_RECEIPT_NAME,
+        REMOTE_RECEIPT_NAME,
+        LOCAL_RECEIPT_NAME,
+    }:
+        raise ValueError("independent verification receipt name is invalid")
+    if seal_terminal and receipt_name != LOCAL_RECEIPT_NAME:
+        raise ValueError("terminal sealing requires the local receipt")
+    if (
+        (root / TERMINAL_MANIFEST_NAME).is_file()
+        and receipt_name is not None
+    ):
+        raise ValueError("sealed terminal bundle is read-only")
     _verify_manifest(root)
     source = _load_json(root / "source_manifest.json")
     if (
@@ -279,11 +351,17 @@ def verify_bundle(root):
         _require_identity(payload, identity, name)
     if not _validate_rank_rows(gpu_ranks.get("rank_rows")):
         raise ValueError("gpu rank identity mismatch")
-    if (
-        admission.get("classification") != "STRICT_CLEAN"
-        or not _validate_rank_rows(admission.get("rank_rows"))
-    ):
-        raise ValueError("admission identity mismatch")
+    validate_runtime_capabilities(
+        environment.get("runtime_capabilities"),
+        gpu_ranks["rank_rows"],
+    )
+    try:
+        validate_strict_clean_admission({
+            "classification": admission.get("classification"),
+            "rank_rows": admission.get("rank_rows"),
+        })
+    except ValueError as error:
+        raise ValueError("admission identity mismatch") from error
     expected_workload = {
         "world_size": WORLD_SIZE,
         "active_token_groups": list(ACTIVE_TOKEN_GROUPS),
@@ -407,20 +485,56 @@ def verify_bundle(root):
         "artifact_hashes_verified": True,
         "measurement_row_count": reconstructed["measurement_row_count"],
     }
-    _write_json(root / "independent_verification.json", receipt)
-    _rewrite_manifest(root)
+    _validate_existing_receipts(root, receipt)
+    _validate_terminal_manifest(
+        root,
+        identity,
+        reconstructed["classification"],
+    )
+    if seal_terminal and not (root / REMOTE_RECEIPT_NAME).is_file():
+        raise ValueError("remote independent verification is missing")
+    if receipt_name is not None:
+        _write_json(root / receipt_name, receipt)
+    if seal_terminal:
+        _write_json(
+            root / TERMINAL_MANIFEST_NAME,
+            _terminal_manifest_payload(
+                root,
+                identity,
+                reconstructed["classification"],
+            ),
+        )
+    if receipt_name is not None or seal_terminal:
+        _rewrite_manifest(root)
     return receipt
 
 
 def build_argument_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
+    parser.add_argument(
+        "--receipt-name",
+        choices=(
+            LEGACY_RECEIPT_NAME,
+            REMOTE_RECEIPT_NAME,
+            LOCAL_RECEIPT_NAME,
+        ),
+        default=LEGACY_RECEIPT_NAME,
+    )
+    parser.add_argument("--seal-terminal", action="store_true")
+    parser.add_argument("--check-only", action="store_true")
     return parser
 
 
 def main(argv=None):
     args = build_argument_parser().parse_args(argv)
-    result = verify_bundle(args.root)
+    if args.check_only and args.seal_terminal:
+        raise ValueError("--check-only and --seal-terminal are incompatible")
+    result = verify_bundle(
+        args.root,
+        receipt_name=None if args.check_only else args.receipt_name,
+        seal_terminal=args.seal_terminal,
+    )
     print(json.dumps(result, sort_keys=True))
     return 0
 

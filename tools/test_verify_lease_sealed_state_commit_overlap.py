@@ -99,3 +99,81 @@ def test_verifier_rejects_producer_summary_disagreement(tmp_path):
 
     with pytest.raises(ValueError, match="producer classification"):
         verify_bundle(tmp_path)
+
+
+def test_verifier_rejects_runtime_capability_identity_drift(tmp_path):
+    assemble_bundle(output_root=tmp_path, **clone_inputs())
+    environment_path = tmp_path / "environment_manifest.json"
+    environment = json.loads(environment_path.read_text())
+    environment["runtime_capabilities"]["rank_rows"][0][
+        "device_uuid"
+    ] = "GPU-different"
+    _write_json(environment_path, environment)
+    rewrite_manifest(tmp_path)
+
+    with pytest.raises(ValueError, match="runtime capability"):
+        verify_bundle(tmp_path)
+
+
+def test_verifier_rejects_mislabeled_dirty_admission(tmp_path):
+    assemble_bundle(output_root=tmp_path, **clone_inputs())
+    admission_path = tmp_path / "admission.json"
+    admission = json.loads(admission_path.read_text())
+    admission["rank_rows"][0]["utilization_percent"] = 6
+    _write_json(admission_path, admission)
+    rewrite_manifest(tmp_path)
+
+    with pytest.raises(ValueError, match="admission"):
+        verify_bundle(tmp_path)
+
+
+def test_remote_and_local_receipts_are_preserved_in_terminal_bundle(tmp_path):
+    assemble_bundle(output_root=tmp_path, **clone_inputs())
+
+    remote = verify_bundle(
+        tmp_path,
+        receipt_name="remote_independent_verification.json",
+    )
+    remote_bytes = (
+        tmp_path / "remote_independent_verification.json"
+    ).read_bytes()
+    local = verify_bundle(
+        tmp_path,
+        receipt_name="local_streaming_independent_verification.json",
+        seal_terminal=True,
+    )
+
+    assert remote == local
+    assert (
+        tmp_path / "remote_independent_verification.json"
+    ).read_bytes() == remote_bytes
+    assert (
+        tmp_path / "local_streaming_independent_verification.json"
+    ).is_file()
+    assert (tmp_path / "manifest.json").is_file()
+    assert not (tmp_path / "independent_verification.json").exists()
+    assert verify_bundle(
+        tmp_path,
+        receipt_name=None,
+    ) == local
+
+    with pytest.raises(ValueError, match="sealed terminal bundle"):
+        verify_bundle(tmp_path)
+
+
+def test_terminal_sealing_missing_remote_receipt_is_nonmutating(tmp_path):
+    assemble_bundle(output_root=tmp_path, **clone_inputs())
+    manifest_before = (tmp_path / "manifest.sha256").read_bytes()
+
+    with pytest.raises(ValueError, match="remote independent"):
+        verify_bundle(
+            tmp_path,
+            receipt_name="local_streaming_independent_verification.json",
+            seal_terminal=True,
+        )
+
+    assert not (
+        tmp_path / "local_streaming_independent_verification.json"
+    ).exists()
+    assert not (tmp_path / "manifest.json").exists()
+    assert (tmp_path / "manifest.sha256").read_bytes() == manifest_before
