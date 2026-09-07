@@ -396,7 +396,7 @@ before model integration.
 - one host;
 - four CUDA GPUs;
 - tensor parallel size four;
-- BF16 NCCL AllReduce;
+- FP32 NCCL AllReduce followed by the unchanged BF16 output cast;
 - all four GPUs pass `strict_clean` admission:
   - memory usage at most `1,024 MiB`;
   - utilization at most `5%`;
@@ -414,8 +414,10 @@ The benchmark profile uses active-token counts `1`, `4`, and `8`.
 
 For each shape:
 
-- `local_result` uses the first adopter's real hidden width and BF16 dtype;
-- side-effect bytes equal `271,360 * active_tokens`;
+- `local_result` uses the first adopter's real hidden width and FP32
+  accumulation dtype;
+- the final output cast uses BF16;
+- side-effect bytes equal `271,360 * active_tokens` in BF16;
 - destinations are preallocated shadow storage;
 - the same deterministic input bytes feed baseline and candidate.
 
@@ -442,7 +444,8 @@ local projection result
 -> completion
 ```
 
-Both variants execute the same collective and copy the same bytes.
+Both variants execute the same FP32 collective, the same BF16 output cast, and
+copy the same BF16 state bytes.
 
 ### 11.4 Repetition protocol
 
@@ -464,7 +467,7 @@ sealed. Its timing cannot replace or reclassify the formal rows.
 
 Stage 0 requires:
 
-- bitwise-equal reduced output;
+- bitwise-equal FP32 reduced output and BF16 final output;
 - byte-equal shadow payload;
 - old active state unchanged before publish;
 - exact active state after successful publish;
@@ -850,7 +853,7 @@ advanced and violate existing transaction semantics.
 | Requirement | Design evidence |
 |---|---|
 | Preserve full-batch GEMM | no cohort split; same local projection |
-| Preserve NCCL and exact math | same BF16 AllReduce and greedy path |
+| Preserve NCCL and exact math | same FP32 AllReduce, BF16 cast, and greedy path |
 | Create real overlap | async collective concurrent with shadow copy |
 | Preserve state atomicity | invisible generation plus cross-layer seal |
 | Protect stale requests | lease/generation identity at seal and publish |
