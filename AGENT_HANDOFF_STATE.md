@@ -52628,3 +52628,142 @@ Next work, if separately requested, is a new design task to reduce actual
 capture cost below two seconds without weakening admission or qualification
 gates. It requires a new written plan, RED/GREEN cycle, source revision, and
 fresh immutable run tag.
+
+## 2026-09-07 TP4 segmented exact decode graph terminal checkpoint
+
+The approved segmented/composite capture plan reached its frozen Stage 0 stop
+rule. Tasks 1-4 are complete. Tasks 5-8 were not executed because Stage 0 did
+not select an eligible plan. Task 9 reconciles the result in:
+
+```text
+docs/superpowers/audits/
+  2026-08-31-tp4-collective-stable-decode-replay-audit.md
+```
+
+### Source and local verification
+
+```text
+branch:
+  feat/kv-sparse-attention
+Stage 0 source revision:
+  23617df36ed3914125069e47808f875e50ba4414
+Stage 0 source tree SHA256:
+  a044b8431d4929973e42e628579d66bf6a10da93e92a77056e0d8057c9e1d8a3
+model:
+  Qwen/Qwen3.8-27B
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+latest combined Task 1-3/shared-adapter tests:
+  136 passed under Python 3.12
+```
+
+Relevant source history:
+
+```text
+7ad950b  design
+b1a0279  implementation plan
+14b2bb8  segmented contracts
+0864d35  range-bounded Qwen3.8 execution
+ab2c6bc  TP4 census
+2fea16a  blocked-preflight persistence
+c7d2dc4  inference-mode correction
+ee8faf6  SSH-255 source-staging retry
+23617df  optional non-root logits correction
+```
+
+### Immutable r57-r60 history
+
+- r57, source `2fea16a`: failed outside inference mode with an autograd
+  in-place leaf-variable error; worker return 250; cleanup `DIRTY`; final
+  exact-tag scans empty.
+- r58, source `c7d2dc4`: SSH 255 during source staging before GPU work;
+  cleanup `CLEAN`; no rank rows or scientific result.
+- r59, source `ee8faf6`: failed when non-root TP ranks returned legal `None`
+  logits; exact-tag reaper removed 36 owned processes after stalled shutdown;
+  worker/rank exit 143; cleanup `DIRTY`; final exact-tag scans empty.
+- r60, source `23617df`: complete strict-clean Stage 0 result with clean
+  lifecycle, manifest, and agreeing local/remote independent verifiers.
+
+Do not mutate or reassemble any of these tags.
+
+### r60 authoritative result
+
+```text
+run tag:
+  20260907-qwen38-tp4-segmented-capture-r60
+classification:
+  NO_GO_CORRECTNESS_OR_LIFECYCLE
+failed gates:
+  correctness_or_lifecycle:p2
+  correctness_or_lifecycle:p3
+  correctness_or_lifecycle:p4
+selected plan ID/SHA:
+  null / null
+cleanup:
+  CLEAN
+rank exits:
+  0,0,0,0
+process groups destroyed:
+  true on ranks 0-3
+exact-tag cleanup scans:
+  seven empty scans in the receipt
+fresh 2026-09-07 remote exact-tag scan:
+  empty
+```
+
+Admission used strict-clean GPUs `3,4,6,7`, each at 0 MiB, 0% utilization,
+and no compute process. Kerberos had 33,670 seconds remaining at preflight.
+All remote data remained below:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+```
+
+Candidate results:
+
+```text
+p2 [0,32),[32,64):
+  max segment 3,039,488,211 ns
+  lifecycle   8,869,714,806 ns
+
+p3 [0,22),[22,43),[43,64):
+  max segment 2,739,897,045 ns
+  lifecycle   9,726,856,076 ns
+
+p4 [0,16),[16,32),[32,48),[48,64):
+  max segment 2,553,261,459 ns
+  lifecycle   9,935,843,505 ns
+```
+
+Frozen limits remain 1,800,000,000 ns per TP-wide segment and
+4,500,000,000 ns per TP-wide lifecycle. All plans had exact output, exact
+selected state, unchanged unselected state, and successful graph reset. All
+plans failed scratch-KV restoration.
+
+p4 reduced the worst capture by about 36.47% relative to r54's monolithic
+4,019,119,030 ns, but remained about 41.85% above the Stage 0 segment limit
+and more than 2.2x above the lifecycle limit. Census costs included up to
+1,260,859,392 bytes allocated delta, 807,403,520 bytes reserved delta, and a
+313,909,504-byte stable boundary buffer.
+
+### Claim and continuation boundary
+
+This is census-only negative evidence:
+
+```text
+production integration Tasks 5-8:  not attempted
+actual graph replay:                not attempted
+cross-lease replay coverage:        unavailable
+throughput/TTFT/TPOT/P99 E2E:       unavailable
+production retained memory:         unavailable
+performance benefit claim:          prohibited
+```
+
+The six final-bundle manifest entries were freshly re-hashed and matched.
+The Stage 0 schema has no separate post-verification manifest; do not claim
+that the controller-side verifier JSON files are manifest-bound.
+
+The next task is not to resume Tasks 5-8. A future attempt requires a new
+design that addresses both the slow middle/tail segment captures and exact
+scratch-KV restoration, with a new plan, RED/GREEN evidence, committed source,
+and a fresh immutable run tag. Do not lower the frozen gates.

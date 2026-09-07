@@ -1934,3 +1934,272 @@ Final classification:
 > from becoming ready, and therefore exercises no cross-lease replay. r55 is
 > correctly skipped, Stage 1 remains unauthorized, and no performance benefit
 > may be claimed.
+
+## 21. TP4 segmented exact decode graph Stage 0 terminal result
+
+The follow-up design attempted to replace the rejected monolithic Qwen3.8-27B
+BF16 TP4 decode capture with a source-bound composite of two, three, or four
+contiguous CUDA Graph segments. The design and execution plan are:
+
+```text
+docs/superpowers/specs/
+  2026-09-06-tp4-segmented-exact-decode-graph-program-design.md
+docs/superpowers/plans/
+  2026-09-06-tp4-segmented-exact-decode-graph-program.md
+```
+
+The source history for the completed Stage 0 path is:
+
+```text
+7ad950b  docs(tp4): design segmented decode graph
+b1a0279  docs(tp4): plan segmented decode graph
+14b2bb8  feat(tp4): add segmented graph contracts
+0864d35  feat(qwen35): add segmented graph execution
+ab2c6bc  feat(tp4): add segmented capture census
+2fea16a  fix(tp4): persist blocked census preflight
+c7d2dc4  fix(tp4): disable autograd during segmented census
+ee8faf6  fix(tp4): retry source staging disconnects
+23617df  fix(tp4): preserve non-root census logits
+```
+
+The runtime-affecting corrections followed focused RED/GREEN cycles. The
+latest combined Task 1-3 and shared-adapter suite passed 136 tests under
+Python 3.12. The Stage 0 evidence below is bound to full source revision
+`23617df36ed3914125069e47808f875e50ba4414`, not to any later documentation
+commit.
+
+### 21.1 Immutable attempt history
+
+Each attempted run tag remains immutable:
+
+| Run | Source | Terminal state | Meaning |
+|---|---|---|---|
+| `20260906-qwen38-tp4-segmented-capture-r57` | `2fea16a` | worker return 250; cleanup `DIRTY` | Census capture ran outside inference mode and failed with an in-place leaf-variable autograd error. Final exact-tag scans were empty, but rank process-group destruction was not proven. |
+| `20260907-qwen38-tp4-segmented-capture-r58` | `c7d2dc4` | source staging aborted; cleanup `CLEAN` | SSH closed with return code 255 before a GPU worker started. There are no rank rows and no performance or correctness evidence. |
+| `20260907-qwen38-tp4-segmented-capture-r59` | `ee8faf6` | worker return 143; cleanup `DIRTY` | Non-root TP ranks legally returned no LM-head logits, but the census attempted to clone them. After the failed shutdown stalled, the exact-tag-owned reaper removed 36 r59-owned processes. Final exact-tag scans were empty; foreign processes were not touched. |
+| `20260907-qwen38-tp4-segmented-capture-r60` | `23617df` | `NO_GO_CORRECTNESS_OR_LIFECYCLE`; cleanup `CLEAN` | Complete strict-clean Stage 0 evidence with producer output, two agreeing independent verifiers, a manifest, rank exits, and cleanup receipts. |
+
+r57-r59 are failure/recovery evidence only. They are not combined with r60
+to improve or reinterpret its classification.
+
+### 21.2 r60 source, workload, and admission
+
+```text
+run tag:
+  20260907-qwen38-tp4-segmented-capture-r60
+source revision:
+  23617df36ed3914125069e47808f875e50ba4414
+source tree SHA256:
+  a044b8431d4929973e42e628579d66bf6a10da93e92a77056e0d8057c9e1d8a3
+model:
+  Qwen/Qwen3.8-27B
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+tensor parallel size:
+  4
+batch/concurrency:
+  8
+prompt length:
+  256
+worker max tokens:
+  2
+model length:
+  384
+admission:
+  strict_clean
+Kerberos lifetime at preflight:
+  33,670 seconds
+Kerberos expiry:
+  2026-09-07T20:23:31+08:00
+remote root:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  tp4-segmented-capture-census
+```
+
+The admitted physical GPUs were:
+
+| Rank | GPU index | UUID | Memory | Utilization | Compute processes |
+|---:|---:|---|---:|---:|---:|
+| 0 | 3 | `GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d` | 0 MiB | 0% | 0 |
+| 1 | 4 | `GPU-56b882d2-6e6e-adb3-80e7-95f0a9e678f1` | 0 MiB | 0% | 0 |
+| 2 | 6 | `GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31` | 0 MiB | 0% | 0 |
+| 3 | 7 | `GPU-b8ffec62-b437-85f7-3f7d-2cd05bd23e16` | 0 MiB | 0% | 0 |
+
+### 21.3 r60 candidate results
+
+The frozen Stage 0 limits were:
+
+```text
+maximum TP-wide segment duration:   1,800,000,000 ns
+maximum TP-wide lifecycle:          4,500,000,000 ns
+```
+
+All ranks agreed on the candidate plan hashes. No plan was selected:
+
+| Plan | Ranges | Plan SHA256 | Max segment | Lifecycle | Capture ceiling | Scratch KV restored |
+|---|---|---|---:|---:|---|---|
+| p2 | `[0,32)`, `[32,64)` | `d3256d9527c64eab1a80351ffba9c26db115d222af8c65c88ea25dde2400d1bf` | 3,039,488,211 ns | 8,869,714,806 ns | fail | false |
+| p3 | `[0,22)`, `[22,43)`, `[43,64)` | `11af0dcaff81a4d77cacc5e6d0fd89f9bcfa9e690f84217089cdade4066566a5` | 2,739,897,045 ns | 9,726,856,076 ns | fail | false |
+| p4 | `[0,16)`, `[16,32)`, `[32,48)`, `[48,64)` | `56b306d8bb9de6970eb93991cac4da880ca6bb471b62670ce1d288ee43bb4bb0` | 2,553,261,459 ns | 9,935,843,505 ns | fail | false |
+
+The TP-wide segment durations were:
+
+```text
+p2: 3,039,488,211; 2,997,285,549 ns
+p3:   853,112,108; 2,588,410,287; 2,739,897,045 ns
+p4:   680,478,231; 2,553,261,459;   619,027,595;
+    2,502,394,024 ns
+```
+
+For every plan and every rank:
+
+```text
+exact output:                 true
+selected state exact:         true
+unselected state unchanged:   true
+graph reset:                  true
+scratch KV restored:          false
+```
+
+The best candidate, p4, reduced the maximum individual capture by about
+36.47% relative to r54's 4,019,119,030 ns monolithic capture. That is a useful
+mechanism-level observation, but p4 still exceeded the stricter Stage 0
+segment ceiling by about 41.85% and exceeded the lifecycle ceiling by more
+than 2.2x. It also failed scratch-KV restoration. The reduction therefore
+does not qualify a production plan.
+
+### 21.4 Benefit and cost boundary
+
+This run is a bounded Stage 0 capture census, not a production replay or
+performance benchmark.
+
+Benefit observed:
+
+- splitting reduced the worst individual capture from the r54 monolithic
+  4.019 seconds to 2.553 seconds in p4;
+- eager versus captured execution produced exact logits/output, exact selected
+  state, unchanged unselected state, and successful graph reset.
+
+Costs and failures observed:
+
+- p2/p3/p4 required 2/3/4 graph captures respectively;
+- measured complete first-capture lifecycle was 8.870-9.936 seconds;
+- the maximum observed per-row allocation delta was 1,260,859,392 bytes;
+- the maximum observed reserved-memory delta was 807,403,520 bytes;
+- the maximum stable boundary buffer was 313,909,504 bytes;
+- every plan failed scratch-KV restoration;
+- every plan exceeded both frozen Stage 0 capture ceilings.
+
+No graph was selected or integrated into the production runner. Consequently:
+
+```text
+actual cross-lease replay:          not attempted
+replay coverage:                    unavailable
+throughput benefit/regression:      unavailable
+TTFT benefit/regression:            unavailable
+TPOT benefit/regression:            unavailable
+P99 E2E benefit/regression:         unavailable
+production retained-memory cost:    unavailable
+```
+
+The memory deltas above belong only to the census rows and must not be
+presented as production steady-state retained memory.
+
+### 21.5 Independent verification, manifest, and cleanup
+
+The remote independent verifier and the local independent verifier both
+returned:
+
+```text
+classification:
+  NO_GO_CORRECTNESS_OR_LIFECYCLE
+failed gates:
+  correctness_or_lifecycle:p2
+  correctness_or_lifecycle:p3
+  correctness_or_lifecycle:p4
+selected plan:
+  null
+```
+
+The final manifest contains six artifacts. A fresh local re-hash on
+2026-09-07 matched all six recorded SHA256 values:
+
+```text
+cleanup.json:
+  2335b01911fc5b53cabd48826e706c7aab5b12d2f1fd3eb0bf855c8fe3f2281d
+launch_admission.json:
+  f9d40ec193cd71043880388233458b683a3d4b3c002f2cef2a205b330314be98
+process_receipts.json:
+  64e8540f988683c54888c2c5b1afb079f8b78a647e7693c02df94774a64b992a
+segment_rows.jsonl:
+  45d15e1149bff266fb785d2d71b88a3de0d8430819b36db3d7ba917e3f3cf593
+source_identity.json:
+  6325c6e9ec611db754e03a72fc852d3f4f0d22b88f9619be5eea49feea100754
+source_manifest.json:
+  6325c6e9ec611db754e03a72fc852d3f4f0d22b88f9619be5eea49feea100754
+```
+
+The Stage 0 schema does not emit a separate post-verification manifest, so the
+two controller-side independent-verifier JSON files are not claimed as
+manifest-bound artifacts. They agree byte-for-field on the classification,
+failed gates, plan hashes, durations, and per-plan gate values.
+
+All four ranks exited 0 and reported `process_group_destroyed=true`.
+The cleanup receipt contains four empty exact-tag scans followed by three
+empty final scans, with no owned child remaining. An additional read-only
+remote `/proc` scan on 2026-09-07 also returned an empty list for the exact
+r60 tag and attempt root.
+
+### 21.6 Frozen stop-rule application
+
+The approved Task 4 rule requires every condition to pass before production
+integration. r60 has no eligible selected plan, exceeds both timing ceilings,
+and fails scratch-KV restoration. It is therefore terminal:
+
+```text
+Stage 0:
+  NO_GO_CORRECTNESS_OR_LIFECYCLE
+Tasks 5-8:
+  not executed, as required by the frozen stop rule
+production integration:
+  not attempted
+production replay:
+  not attempted
+performance claim:
+  none
+```
+
+### 21.7 Prompt-to-artifact completion checklist
+
+| Requirement | Concrete evidence | Result |
+|---|---|---|
+| Design and implementation commits | `7ad950b` through `23617df`; source identity in r60 | complete |
+| RED/GREEN evidence | focused contract, layer-stack, prepared-step, worker, controller, verifier, and shared-adapter tests; latest combined run 136 passed | complete locally |
+| Source commit and tree SHA | `final_bundle/source_identity.json` | complete |
+| Model repository and immutable revision | `final_bundle/source_identity.json` | complete |
+| Strict-clean admission and GPU UUIDs | `controller/strict_clean_admission.json`; `final_bundle/launch_admission.json` | complete |
+| Kerberos TTL and mounted storage | `controller/ssh_storage_preflight.json` | complete |
+| Candidate plans, hashes, and rank agreement | `final_bundle/segment_rows.jsonl`; both verifiers | complete; selected plan is null |
+| Segment and lifecycle durations | `final_bundle/segment_rows.jsonl`; both verifiers | complete; all plans fail |
+| Exact output and selected-state equality | segment rows and both verifiers | complete; pass |
+| Unselected-state immutability | segment rows and both verifiers | complete; pass |
+| Scratch-KV restoration | segment rows and both verifiers | complete; fail |
+| Graph reset | segment rows and both verifiers | complete; pass |
+| Cross-lease replay and coverage | prohibited after Stage 0 NO_GO | intentionally not attempted |
+| Throughput, TTFT, TPOT, and P99 E2E | prohibited after Stage 0 NO_GO | unavailable; no claim |
+| Production memory | production integration prohibited; census deltas recorded above | unavailable; no production claim |
+| Producer and dual-verifier classification | worker result plus local/remote verifier JSON | complete; `NO_GO_CORRECTNESS_OR_LIFECYCLE` |
+| Manifest and hashes | six-entry `final_bundle/manifest.json`; fresh local re-hash | complete for bundle artifacts |
+| Post-verification hashes | no separate Stage 0 artifact exists | explicitly not claimed |
+| Cleanup | four zero rank exits, destroyed groups, seven empty receipt scans, fresh remote empty scan | complete |
+| Smoke and conditional full gate | Tasks 5-8 barred by stop rule | intentionally not run |
+| Git delivery | branch `feat/kv-sparse-attention`; implementation commits pushed through `23617df`; the documentation commit is the commit containing this section | final local/tracking/remote SHA equality is a post-commit Task 9 check and cannot be embedded self-referentially in this same commit |
+
+Final classification:
+
+> Segmentation materially reduced the maximum individual capture, but did not
+> make Qwen3.8-27B BF16 TP4 eligible for the exact decode graph runtime. Every
+> candidate exceeded both frozen Stage 0 timing limits and failed scratch-KV
+> restoration. The complete strict-clean r60 evidence is therefore
+> `NO_GO_CORRECTNESS_OR_LIFECYCLE`; Tasks 5-8 were correctly skipped, no
+> production replay occurred, and no throughput or latency benefit is claimed.
