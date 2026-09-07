@@ -840,3 +840,257 @@ def finalize_captured_segment(
         program_lifecycle_ns=program_lifecycle_ns,
     )
     return replace(captured, accounting=final_accounting)
+
+
+_P4_RANGES = (
+    (0, 16),
+    (16, 32),
+    (32, 48),
+    (48, 64),
+)
+MAX_ADDED_MEMORY_BYTES_PER_RANK = 512 * 1024 * 1024
+
+
+def _control(
+    control_id: str,
+    ranges: tuple[tuple[int, int], ...],
+    *,
+    kind: str,
+    pool_mode: str,
+    formal_route_row: bool,
+) -> dict:
+    return {
+        "control_id": control_id,
+        "ranges": ranges,
+        "kind": kind,
+        "pool_mode": pool_mode,
+        "formal_route_row": formal_route_row,
+    }
+
+
+def build_phase_a1_controls() -> tuple[dict, ...]:
+    return (
+        _control(
+            "stitched_p4_repeat_0",
+            _P4_RANGES,
+            kind="stitched",
+            pool_mode="shared",
+            formal_route_row=True,
+        ),
+        _control(
+            "stitched_p4_repeat_1",
+            _P4_RANGES,
+            kind="stitched",
+            pool_mode="shared",
+            formal_route_row=False,
+        ),
+        *(
+            _control(
+                f"isolated_{start}_{end}",
+                ((start, end),),
+                kind="isolated",
+                pool_mode="isolated",
+                formal_route_row=False,
+            )
+            for start, end in _P4_RANGES
+        ),
+    )
+
+
+def select_pool_control_ranges(
+    isolated_rows: list[dict],
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    grouped = {}
+    for row in isolated_rows:
+        identity = (
+            row.get("start_layer"),
+            row.get("end_layer"),
+        )
+        grouped.setdefault(identity, []).append(row)
+    if set(grouped) != set(_P4_RANGES):
+        raise ValueError("isolated range inventory is incomplete")
+    contract = _load_attribution_contract()
+    maxima = {
+        identity: contract.aggregate_tp4_phase_rows(rows)[
+            "segment_total_ns"
+        ]
+        for identity, rows in grouped.items()
+    }
+    fastest = min(
+        maxima,
+        key=lambda identity: (maxima[identity], identity),
+    )
+    slowest = min(
+        maxima,
+        key=lambda identity: (-maxima[identity], identity),
+    )
+    return fastest, slowest
+
+
+def build_pool_controls(
+    fastest_range: tuple[int, int],
+    slowest_range: tuple[int, int],
+) -> tuple[dict, ...]:
+    if (
+        fastest_range not in _P4_RANGES
+        or slowest_range not in _P4_RANGES
+    ):
+        raise ValueError("pool control range is invalid")
+    return (
+        _control(
+            "pool_fastest_shared",
+            (fastest_range,),
+            kind="pool_control",
+            pool_mode="shared",
+            formal_route_row=False,
+        ),
+        _control(
+            "pool_fastest_isolated",
+            (fastest_range,),
+            kind="pool_control",
+            pool_mode="isolated",
+            formal_route_row=False,
+        ),
+        _control(
+            "pool_slowest_shared",
+            (slowest_range,),
+            kind="pool_control",
+            pool_mode="shared",
+            formal_route_row=False,
+        ),
+        _control(
+            "pool_slowest_isolated",
+            (slowest_range,),
+            kind="pool_control",
+            pool_mode="isolated",
+            formal_route_row=False,
+        ),
+    )
+
+
+def isolated_pool_memory_gate_pass(rows: list[dict]) -> bool:
+    isolated = [
+        row for row in rows if row.get("pool_mode") == "isolated"
+    ]
+    if not isolated:
+        return False
+    for row in isolated:
+        for name in (
+            "allocated_delta_bytes",
+            "reserved_delta_bytes",
+        ):
+            value = row.get(name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+                or value > MAX_ADDED_MEMORY_BYTES_PER_RANK
+            ):
+                return False
+    return True
+
+
+def run_stitched_repeat(backend, *, repeat_ordinal: int) -> dict:
+    if repeat_ordinal not in (0, 1):
+        raise ValueError("stitched repeat ordinal is invalid")
+    if repeat_ordinal == 1:
+        backend.restore_control_baseline()
+        backend.reset_control_graphs()
+        backend.synchronize()
+    control = build_phase_a1_controls()[repeat_ordinal]
+    result = dict(backend.run_control(control))
+    result["formal_route_row"] = control["formal_route_row"]
+    return result
+
+
+def run_isolated_range(
+    backend,
+    *,
+    start_layer: int,
+    end_layer: int,
+    pool_mode: str,
+    control_id: str,
+) -> dict:
+    if (start_layer, end_layer) not in _P4_RANGES:
+        raise ValueError("isolated range is invalid")
+    if pool_mode not in {"shared", "isolated"}:
+        raise ValueError("isolated pool mode is invalid")
+    backend.restore_control_baseline()
+    hidden = backend.embed_inputs()
+    eager_prefix_prepare_ns = 0
+    if start_layer:
+        prefix_started_ns = int(backend.clock_ns())
+        hidden = backend.run_eager_prefix(
+            hidden,
+            start_layer=0,
+            end_layer=start_layer,
+        )
+        backend.synchronize()
+        eager_prefix_prepare_ns = (
+            int(backend.clock_ns()) - prefix_started_ns
+        )
+    else:
+        backend.synchronize()
+    backend.install_isolated_hidden(hidden)
+    control = _control(
+        control_id,
+        ((start_layer, end_layer),),
+        kind=(
+            "pool_control"
+            if control_id.startswith("pool_")
+            else "isolated"
+        ),
+        pool_mode=pool_mode,
+        formal_route_row=False,
+    )
+    result = dict(backend.run_control(control))
+    result["eager_prefix_prepare_ns"] = eager_prefix_prepare_ns
+    return result
+
+
+def run_phase_a1_matrix(backend) -> dict:
+    controls = list(build_phase_a1_controls())
+    results = [
+        run_stitched_repeat(backend, repeat_ordinal=0),
+        run_stitched_repeat(backend, repeat_ordinal=1),
+    ]
+    isolated_results = []
+    for start_layer, end_layer in _P4_RANGES:
+        result = run_isolated_range(
+            backend,
+            start_layer=start_layer,
+            end_layer=end_layer,
+            pool_mode="isolated",
+            control_id=f"isolated_{start_layer}_{end_layer}",
+        )
+        isolated_results.append(result)
+        results.append(result)
+    gathered_rows = backend.gather_isolated_rows(isolated_results)
+    fastest_range, slowest_range = select_pool_control_ranges(
+        gathered_rows
+    )
+    pool_controls = build_pool_controls(
+        fastest_range,
+        slowest_range,
+    )
+    controls.extend(pool_controls)
+    for control in pool_controls:
+        (start_layer, end_layer), = control["ranges"]
+        results.append(
+            run_isolated_range(
+                backend,
+                start_layer=start_layer,
+                end_layer=end_layer,
+                pool_mode=control["pool_mode"],
+                control_id=control["control_id"],
+            )
+        )
+    return {
+        "controls": tuple(controls),
+        "control_results": results,
+        "fastest_isolated_range": fastest_range,
+        "slowest_isolated_range": slowest_range,
+        "isolated_pool_memory_gate_pass": (
+            isolated_pool_memory_gate_pass(results)
+        ),
+    }

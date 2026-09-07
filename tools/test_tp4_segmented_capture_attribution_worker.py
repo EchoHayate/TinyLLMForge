@@ -574,3 +574,246 @@ def test_finalize_capture_accounting_keeps_restore_and_reset_measured():
     assert finalized.accounting.segment_total_ns == 92
     assert finalized.accounting.program_lifecycle_ns == 200
     assert finalized.graph is captured.graph
+
+
+def test_phase_a1_base_matrix_is_fixed_and_bounded():
+    controls = worker.build_phase_a1_controls()
+    assert tuple(
+        (control["control_id"], control["ranges"])
+        for control in controls
+    ) == (
+        (
+            "stitched_p4_repeat_0",
+            ((0, 16), (16, 32), (32, 48), (48, 64)),
+        ),
+        (
+            "stitched_p4_repeat_1",
+            ((0, 16), (16, 32), (32, 48), (48, 64)),
+        ),
+        ("isolated_0_16", ((0, 16),)),
+        ("isolated_16_32", ((16, 32),)),
+        ("isolated_32_48", ((32, 48),)),
+        ("isolated_48_64", ((48, 64),)),
+    )
+    assert controls[0]["formal_route_row"] is True
+    assert controls[1]["formal_route_row"] is False
+    assert all(
+        len(control["ranges"]) <= 4
+        for control in controls
+    )
+
+
+def _isolated_phase_rows():
+    totals = {
+        (0, 16): (600, 610, 620, 630),
+        (16, 32): (2_400, 2_500, 2_450, 2_550),
+        (32, 48): (600, 610, 620, 630),
+        (48, 64): (2_300, 2_400, 2_500, 2_520),
+    }
+    rows = []
+    for (start, end), rank_totals in totals.items():
+        for rank, total in enumerate(rank_totals):
+            row = {
+                "rank": rank,
+                "control_id": f"isolated_{start}_{end}",
+                "segment_ordinal": 0,
+                "start_layer": start,
+                "end_layer": end,
+                "snapshot_and_prepare_ns": 10,
+                "graph_object_create_ns": 10,
+                "capture_context_enter_ns": 10,
+                "capture_body_ns": total - 140,
+                "capture_context_exit_and_instantiate_ns": 10,
+                "post_capture_synchronize_ns": 10,
+                "post_capture_restore_ns": 10,
+                "graph_reset_ns": 10,
+                "segment_total_ns": total,
+                "program_lifecycle_ns": total + 100,
+            }
+            rows.append(row)
+    return rows
+
+
+def test_pool_controls_select_tp_wide_fastest_and_slowest_ranges():
+    fastest, slowest = worker.select_pool_control_ranges(
+        _isolated_phase_rows()
+    )
+    assert fastest == (0, 16)
+    assert slowest == (16, 32)
+    controls = worker.build_pool_controls(fastest, slowest)
+    assert tuple(
+        (
+            control["control_id"],
+            control["ranges"],
+            control["pool_mode"],
+        )
+        for control in controls
+    ) == (
+        ("pool_fastest_shared", ((0, 16),), "shared"),
+        ("pool_fastest_isolated", ((0, 16),), "isolated"),
+        ("pool_slowest_shared", ((16, 32),), "shared"),
+        ("pool_slowest_isolated", ((16, 32),), "isolated"),
+    )
+
+
+def test_pool_control_ties_choose_lexicographically_smallest_range():
+    rows = _isolated_phase_rows()
+    for row in rows:
+        row["segment_total_ns"] = 1_000
+        row["program_lifecycle_ns"] = 1_100
+        row["capture_body_ns"] = 900
+    assert worker.select_pool_control_ranges(rows) == (
+        (0, 16),
+        (0, 16),
+    )
+
+
+class _MatrixBackend:
+    def __init__(self):
+        self.events = []
+
+    def restore_control_baseline(self):
+        self.events.append("restore-baseline")
+
+    def reset_control_graphs(self):
+        self.events.append("reset-control-graphs")
+
+    def synchronize(self):
+        self.events.append("synchronize")
+
+    def embed_inputs(self):
+        self.events.append("embed")
+        return "embedded"
+
+    def run_eager_prefix(self, hidden, *, start_layer, end_layer):
+        self.events.append(
+            ("prefix", hidden, start_layer, end_layer)
+        )
+        return f"hidden-{end_layer}"
+
+    def install_isolated_hidden(self, hidden):
+        self.events.append(("install-hidden", hidden))
+
+    def clock_ns(self):
+        return len(self.events) * 10
+
+    def run_control(self, control):
+        self.events.append(("run-control", control["control_id"]))
+        return {
+            "control_id": control["control_id"],
+            "ranges": control["ranges"],
+            "pool_mode": control["pool_mode"],
+            "allocated_delta_bytes": (
+                200 if control["pool_mode"] == "isolated" else 100
+            ),
+            "reserved_delta_bytes": (
+                300 if control["pool_mode"] == "isolated" else 150
+            ),
+        }
+
+    def gather_isolated_rows(self, local_results):
+        assert len(local_results) == 4
+        self.events.append("gather-isolated")
+        return _isolated_phase_rows()
+
+
+def test_isolated_range_prepares_prefix_outside_capture_measurement():
+    backend = _MatrixBackend()
+    result = worker.run_isolated_range(
+        backend,
+        start_layer=16,
+        end_layer=32,
+        pool_mode="isolated",
+        control_id="isolated_16_32",
+    )
+    assert result["eager_prefix_prepare_ns"] > 0
+    assert backend.events[:5] == [
+        "restore-baseline",
+        "embed",
+        ("prefix", "embedded", 0, 16),
+        "synchronize",
+        ("install-hidden", "hidden-16"),
+    ]
+    assert backend.events[-1] == (
+        "run-control",
+        "isolated_16_32",
+    )
+
+
+def test_zero_start_isolated_range_has_zero_prefix_duration():
+    backend = _MatrixBackend()
+    result = worker.run_isolated_range(
+        backend,
+        start_layer=0,
+        end_layer=16,
+        pool_mode="isolated",
+        control_id="isolated_0_16",
+    )
+    assert result["eager_prefix_prepare_ns"] == 0
+    assert not any(
+        isinstance(event, tuple) and event[0] == "prefix"
+        for event in backend.events
+    )
+
+
+def test_second_stitched_repeat_has_explicit_reset_boundary():
+    backend = _MatrixBackend()
+    worker.run_stitched_repeat(backend, repeat_ordinal=0)
+    assert backend.events[0] == (
+        "run-control",
+        "stitched_p4_repeat_0",
+    )
+
+    backend = _MatrixBackend()
+    result = worker.run_stitched_repeat(
+        backend,
+        repeat_ordinal=1,
+    )
+    assert backend.events[:4] == [
+        "restore-baseline",
+        "reset-control-graphs",
+        "synchronize",
+        ("run-control", "stitched_p4_repeat_1"),
+    ]
+    assert result["formal_route_row"] is False
+
+
+def test_phase_a1_matrix_runs_only_six_base_and_four_pool_controls():
+    backend = _MatrixBackend()
+    result = worker.run_phase_a1_matrix(backend)
+    assert len(result["control_results"]) == 10
+    assert sum(
+        len(control["ranges"])
+        for control in result["controls"]
+    ) == 16
+    assert result["fastest_isolated_range"] == (0, 16)
+    assert result["slowest_isolated_range"] == (16, 32)
+    assert result["isolated_pool_memory_gate_pass"] is True
+    assert {
+        control["control_id"]
+        for control in result["controls"]
+    } == {
+        "stitched_p4_repeat_0",
+        "stitched_p4_repeat_1",
+        "isolated_0_16",
+        "isolated_16_32",
+        "isolated_32_48",
+        "isolated_48_64",
+        "pool_fastest_shared",
+        "pool_fastest_isolated",
+        "pool_slowest_shared",
+        "pool_slowest_isolated",
+    }
+
+
+def test_isolated_pool_memory_gate_uses_frozen_half_gib_limit():
+    rows = [
+        {
+            "pool_mode": "isolated",
+            "allocated_delta_bytes": 512 * 1024 * 1024,
+            "reserved_delta_bytes": 512 * 1024 * 1024,
+        }
+    ]
+    assert worker.isolated_pool_memory_gate_pass(rows) is True
+    rows[0]["reserved_delta_bytes"] += 1
+    assert worker.isolated_pool_memory_gate_pass(rows) is False
