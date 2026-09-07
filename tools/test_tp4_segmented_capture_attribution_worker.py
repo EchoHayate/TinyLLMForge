@@ -1,0 +1,383 @@
+from types import SimpleNamespace
+
+import pytest
+import torch
+
+import tp4_segmented_capture_attribution_worker as worker
+
+
+SLOTS = [2, 5]
+
+
+class _CudaFacade:
+    def __init__(self):
+        self.synchronize_count = 0
+
+    def synchronize(self):
+        self.synchronize_count += 1
+
+
+class _TorchFacade:
+    Tensor = torch.Tensor
+    uint8 = torch.uint8
+    int64 = torch.int64
+
+    def __init__(self):
+        self.cuda = _CudaFacade()
+
+    def __getattr__(self, name):
+        return getattr(torch, name)
+
+
+class _FakeRunner:
+    block_size = 2
+
+    def __init__(self):
+        self.kv_cache = torch.zeros(
+            2,
+            3,
+            4,
+            self.block_size,
+            2,
+            4,
+            dtype=torch.bfloat16,
+        )
+
+    def snapshot_kv_slots(self, physical_slots):
+        block_ids = torch.tensor(
+            [slot // self.block_size for slot in physical_slots],
+            dtype=torch.long,
+        )
+        offsets = torch.tensor(
+            [slot % self.block_size for slot in physical_slots],
+            dtype=torch.long,
+        )
+        return {
+            "keys": (
+                self.kv_cache[0, :, block_ids, offsets]
+                .detach()
+                .cpu()
+                .clone()
+            ),
+            "values": (
+                self.kv_cache[1, :, block_ids, offsets]
+                .detach()
+                .cpu()
+                .clone()
+            ),
+        }
+
+    def restore_kv_slots(self, physical_slots, snapshot):
+        for slot_ordinal, physical_slot in enumerate(physical_slots):
+            block_id = physical_slot // self.block_size
+            offset = physical_slot % self.block_size
+            self.kv_cache[0, :, block_id, offset].copy_(
+                snapshot["keys"][:, slot_ordinal]
+            )
+            self.kv_cache[1, :, block_id, offset].copy_(
+                snapshot["values"][:, slot_ordinal]
+            )
+
+
+def _snapshots_equal(left, right):
+    return all(
+        torch.equal(left[name], right[name])
+        for name in ("keys", "values")
+    )
+
+
+def test_sentinel_is_nonzero_deterministic_and_rank_sensitive():
+    torch_facade = _TorchFacade()
+    first = _FakeRunner()
+    second = _FakeRunner()
+    other_rank = _FakeRunner()
+
+    worker.fill_scratch_sentinel(
+        first,
+        SLOTS,
+        run_tag="a1-r1",
+        rank=0,
+        torch_module=torch_facade,
+    )
+    worker.fill_scratch_sentinel(
+        second,
+        SLOTS,
+        run_tag="a1-r1",
+        rank=0,
+        torch_module=_TorchFacade(),
+    )
+    worker.fill_scratch_sentinel(
+        other_rank,
+        SLOTS,
+        run_tag="a1-r1",
+        rank=1,
+        torch_module=_TorchFacade(),
+    )
+
+    first_snapshot = first.snapshot_kv_slots(SLOTS)
+    second_snapshot = second.snapshot_kv_slots(SLOTS)
+    other_snapshot = other_rank.snapshot_kv_slots(SLOTS)
+    assert _snapshots_equal(first_snapshot, second_snapshot)
+    assert not _snapshots_equal(first_snapshot, other_snapshot)
+    assert all(
+        bool(torch.count_nonzero(tensor))
+        for tensor in first_snapshot.values()
+    )
+    assert torch_facade.cuda.synchronize_count == 1
+
+
+def test_sentinel_handles_full_width_unsigned_sha_seed():
+    runner = SimpleNamespace(
+        block_size=1,
+        kv_cache=torch.zeros(
+            2,
+            64,
+            8,
+            1,
+            1,
+            1,
+            dtype=torch.bfloat16,
+        ),
+    )
+    worker.fill_scratch_sentinel(
+        runner,
+        list(range(8)),
+        run_tag="phase-a1",
+        rank=3,
+        torch_module=_TorchFacade(),
+    )
+    assert bool(torch.count_nonzero(runner.kv_cache))
+
+
+def test_checkpoint_hashes_canonical_bytes_and_bounds_diff():
+    runner = _FakeRunner()
+    torch_facade = _TorchFacade()
+    worker.fill_scratch_sentinel(
+        runner,
+        SLOTS,
+        run_tag="a1-r2",
+        rank=0,
+        torch_module=torch_facade,
+    )
+    s0 = runner.snapshot_kv_slots(SLOTS)
+    baseline = worker.snapshot_scratch_checkpoint(
+        runner,
+        SLOTS,
+        checkpoint="S0",
+        rank=0,
+        s0=None,
+        synchronized=True,
+        segment_ordinal=None,
+        torch_module=torch_facade,
+    )
+    repeated = worker.snapshot_scratch_checkpoint(
+        runner,
+        SLOTS,
+        checkpoint="S1",
+        rank=0,
+        s0=s0,
+        synchronized=True,
+        segment_ordinal=None,
+        torch_module=torch_facade,
+    )
+    assert baseline["keys"]["sha256"] == repeated["keys"]["sha256"]
+    assert repeated["key_diff"]["equal_to_s0"] is True
+
+    runner.kv_cache[1, 1, 1, 0, 1, 3] += 0.5
+    changed = worker.snapshot_scratch_checkpoint(
+        runner,
+        SLOTS,
+        checkpoint="S3",
+        rank=0,
+        s0=s0,
+        synchronized=True,
+        segment_ordinal=0,
+        torch_module=torch_facade,
+    )
+    assert changed["values"]["sha256"] != baseline["values"]["sha256"]
+    assert {
+        key: value
+        for key, value in changed["value_diff"].items()
+        if key != "max_absolute_difference"
+    } == {
+        "equal_to_s0": False,
+        "mismatching_element_count": 1,
+        "first_mismatch": {
+            "layer": 1,
+            "scratch_slot_ordinal": 0,
+            "head": 1,
+            "element_offset": 3,
+        },
+    }
+    assert changed["value_diff"]["max_absolute_difference"] == pytest.approx(
+        0.5,
+        abs=0.01,
+    )
+    serialized_names = set(changed)
+    assert not serialized_names.intersection(
+        {"bytes", "data", "tensor", "base64"}
+    )
+
+
+def test_first_scratch_divergence_uses_checkpoint_order():
+    rows = [
+        {"checkpoint": "S0", "key_diff": {"equal_to_s0": True},
+         "value_diff": {"equal_to_s0": True}},
+        {"checkpoint": "S1", "key_diff": {"equal_to_s0": True},
+         "value_diff": {"equal_to_s0": True}},
+        {"checkpoint": "S2", "key_diff": {"equal_to_s0": True},
+         "value_diff": {"equal_to_s0": True}},
+        {"checkpoint": "S3", "segment_ordinal": 0,
+         "key_diff": {"equal_to_s0": False},
+         "value_diff": {"equal_to_s0": True}},
+        {"checkpoint": "S4", "key_diff": {"equal_to_s0": True},
+         "value_diff": {"equal_to_s0": True}},
+    ]
+    assert worker.first_scratch_divergence(rows) == "S3"
+    assert worker.first_scratch_divergence(rows[:3]) is None
+
+
+class _SequenceBackend:
+    def __init__(
+        self,
+        *,
+        round_trip_exact=True,
+        eager_error=None,
+        capture_error_ordinal=None,
+        restore_error=None,
+        reset_error=None,
+    ):
+        self.events = []
+        self.round_trip_exact = round_trip_exact
+        self.eager_error = eager_error
+        self.capture_error_ordinal = capture_error_ordinal
+        self.restore_error = restore_error
+        self.reset_error = reset_error
+        self.graphs = []
+
+    def initialize_sentinel(self):
+        self.events.append("sentinel")
+
+    def checkpoint(self, name, *, segment_ordinal=None):
+        self.events.append(("checkpoint", name, segment_ordinal))
+        return {
+            "checkpoint": name,
+            "segment_ordinal": segment_ordinal,
+            "key_diff": {"equal_to_s0": True},
+            "value_diff": {"equal_to_s0": True},
+        }
+
+    def restore_s0(self):
+        self.events.append("restore")
+        if self.restore_error is not None:
+            error, self.restore_error = self.restore_error, None
+            raise error
+
+    def scratch_equal_to_s0(self):
+        self.events.append("round_trip")
+        return self.round_trip_exact
+
+    def run_eager(self):
+        self.events.append("eager")
+        if self.eager_error is not None:
+            raise self.eager_error
+
+    def capture_segment(self, ordinal):
+        if ordinal == self.capture_error_ordinal:
+            self.events.append(("capture", ordinal))
+            raise RuntimeError("capture failed")
+        graph = f"graph-{ordinal}"
+        self.events.append(("capture", ordinal))
+        self.graphs.append(graph)
+        return graph
+
+    def replay(self, graphs):
+        self.events.append(("replay", tuple(graphs)))
+
+    def reset_graph(self, graph):
+        self.events.append(("reset", graph))
+        if self.reset_error is not None:
+            error, self.reset_error = self.reset_error, None
+            raise error
+
+    def synchronize(self):
+        self.events.append("synchronize")
+
+
+def test_forensic_sequence_orders_restore_checkpoints_and_reverse_reset():
+    backend = _SequenceBackend()
+    result = worker.run_scratch_forensic_sequence(
+        backend,
+        segment_count=2,
+    )
+    assert result["restore_round_trip_exact"] is True
+    assert [row["checkpoint"] for row in result["checkpoint_rows"]] == [
+        "S0",
+        "S1",
+        "S2",
+        "S3",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7",
+    ]
+    assert backend.events == [
+        "sentinel",
+        ("checkpoint", "S0", None),
+        "restore",
+        "round_trip",
+        "eager",
+        ("checkpoint", "S1", None),
+        "restore",
+        ("checkpoint", "S2", None),
+        ("capture", 0),
+        ("checkpoint", "S3", 0),
+        ("capture", 1),
+        ("checkpoint", "S3", 1),
+        "restore",
+        ("checkpoint", "S4", None),
+        ("replay", ("graph-0", "graph-1")),
+        ("checkpoint", "S5", None),
+        "restore",
+        ("checkpoint", "S6", None),
+        "restore",
+        ("reset", "graph-1"),
+        ("reset", "graph-0"),
+        "synchronize",
+        ("checkpoint", "S7", None),
+    ]
+
+
+def test_restore_round_trip_failure_stops_before_eager_or_capture():
+    backend = _SequenceBackend(round_trip_exact=False)
+    with pytest.raises(RuntimeError, match="scratch_restore_primitive"):
+        worker.run_scratch_forensic_sequence(
+            backend,
+            segment_count=2,
+        )
+    assert "eager" not in backend.events
+    assert not any(
+        isinstance(event, tuple) and event[0] == "capture"
+        for event in backend.events
+    )
+    assert ("checkpoint", "S7", None) in backend.events
+
+
+def test_source_error_remains_primary_when_cleanup_also_fails():
+    backend = _SequenceBackend(
+        capture_error_ordinal=1,
+        reset_error=RuntimeError("reset failed"),
+    )
+    with pytest.raises(RuntimeError, match="capture failed"):
+        worker.run_scratch_forensic_sequence(
+            backend,
+            segment_count=2,
+        )
+    assert ("checkpoint", "S7", None) in backend.events
+
+
+def test_attribution_backend_preserves_none_logits_on_non_root_rank():
+    backend = object.__new__(worker._AttributionCudaBackend)
+    backend.rank = 3
+    assert backend.clone_logits(None) is None
