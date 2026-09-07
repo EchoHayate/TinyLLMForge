@@ -2203,3 +2203,334 @@ Final classification:
 > restoration. The complete strict-clean r60 evidence is therefore
 > `NO_GO_CORRECTNESS_OR_LIFECYCLE`; Tasks 5-8 were correctly skipped, no
 > production replay occurred, and no throughput or latency benefit is claimed.
+
+## 22. Phase A1 segmented-capture attribution completion
+
+The follow-up Phase A1 plan was executed to distinguish the two remaining
+questions left by r60:
+
+1. whether scratch-KV divergence was caused by a broken restore primitive or
+   by the expected eager decode write; and
+2. whether the alternating slow segments could be reduced below the frozen
+   segment and full-lifecycle ceilings with a bounded four-graph program.
+
+The governing plan is:
+
+```text
+docs/superpowers/plans/
+  2026-09-07-tp4-segmented-capture-attribution-phase-a1.md
+```
+
+Phase A1 is diagnostic only. It does not integrate a graph into production,
+does not execute Phase A2, and does not establish steady-state latency or
+throughput.
+
+### 22.1 Source corrections and immutable attempt history
+
+The final eligible diagnostic source is:
+
+```text
+source revision:
+  05f5880dde2bbb0d37e6f1606bec064dfa0d35ed
+source tree SHA256:
+  65dc15ce6f689bb97668dbb20e4be214c73fefe2e4f7fda359bff1efdb7f55d3
+worker SHA256:
+  501ca58906b6d817348583a0a290732cfdc7d7812cdb71ecc792306060c93e8b
+verifier SHA256:
+  686254ce114341e26a8c50fc66eed2c933621144f8a4eefd6e6db2c5545f4bb5
+plan SHA256:
+  a85582ec5481fff3356062824c7c7f270ef8122ab9b8e243e3162b20ba36368a
+```
+
+The two post-r60 correction commits are:
+
+```text
+bd53abca9505b9abbe1a6057e73ddbcb4433c47b
+  fix(tp4): restore scratch KV slots exactly
+05f5880dde2bbb0d37e6f1606bec064dfa0d35ed
+  fix(tp4): verify rank-local capture memory
+```
+
+`bd53abc` replaced the advanced-indexing restore, which wrote a temporary
+tensor, with writes addressed by physical slot. `05f5880` made the verifier
+Python 3.9 compatible and treated the stable hidden/candidate/logits buffer
+as rank-local memory, validating every value and taking the TP-wide maximum.
+
+Every run remains immutable:
+
+| Run | Source | Terminal state | Meaning |
+|---|---|---|---|
+| `20260907-qwen38-tp4-segmented-capture-attribution-r61` | `5c83428` | `INCOMPLETE`; cleanup `CLEAN` | Worker and all ranks exited 0, but scratch restoration failed because advanced indexing did not mutate the original cache. The verifier also discarded source/run identity on the incomplete path, so the controller correctly rejected verifier identity. |
+| `20260907-qwen38-tp4-segmented-capture-attribution-r62` | `bd53abc` | local-only `INCOMPLETE` | The controller received the invalid bare target `10.232.195.203`; `launch_started=false`, and no remote attempt directory or GPU process was created. |
+| `20260907-qwen38-tp4-segmented-capture-attribution-r63` | `bd53abc` | `INCOMPLETE`; cleanup `CLEAN` | Worker and all ranks exited 0. The local Python 3.9 verifier rejected `zip(strict=True)`, while the remote verifier rejected legal rank-local stable-buffer sizes as metadata disagreement. The verifier outputs were therefore not byte-identical. |
+| `20260907-qwen38-tp4-segmented-capture-attribution-r64` | `05f5880` | `PIVOT_TP4_COMMUNICATION_COMPUTE_FUSION`; cleanup `CLEAN` | Authoritative Phase A1 evidence. Scratch restoration, correctness, segment time, graph count, and memory pass; the projected full lifecycle alone fails. |
+
+r61-r63 are failure and recovery evidence only. No later verifier is used to
+retroactively upgrade them.
+
+### 22.2 r64 source, workload, admission, and storage
+
+```text
+run tag:
+  20260907-qwen38-tp4-segmented-capture-attribution-r64
+model:
+  Qwen/Qwen3.8-27B
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+dtype:
+  bfloat16
+tensor parallel size:
+  4
+batch/concurrency:
+  8
+prompt length:
+  256
+worker max tokens:
+  2
+model length:
+  384
+maximum TP-wide segment:
+  1,800,000,000 ns
+maximum complete lifecycle:
+  4,500,000,000 ns
+maximum added memory per rank:
+  536,870,912 bytes
+admission:
+  strict_clean
+remote attempt root:
+  /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+  tp4-segmented-capture-attribution/
+  20260907-qwen38-tp4-segmented-capture-attribution-r64
+```
+
+Kerberos preflight reported principal `sitian@BYTEDANCE.COM`, expiry
+`2026-09-08T01:29:36+08:00`, 30,649 seconds remaining, and a required
+lifetime of 22,500 seconds.
+
+The admitted physical GPUs were:
+
+| Rank | GPU index | UUID | Memory | Utilization | Compute processes |
+|---:|---:|---|---:|---:|---:|
+| 0 | 3 | `GPU-f8904cb4-f9f0-c757-df36-e6fd971b3a9d` | 0 MiB | 0% | 0 |
+| 1 | 4 | `GPU-56b882d2-6e6e-adb3-80e7-95f0a9e678f1` | 0 MiB | 0% | 0 |
+| 2 | 6 | `GPU-c27f6fd6-8a66-7935-41fd-bd5ccdaced31` | 0 MiB | 0% | 0 |
+| 3 | 7 | `GPU-b8ffec62-b437-85f7-3f7d-2cd05bd23e16` | 0 MiB | 0% | 0 |
+
+### 22.3 Complete control and phase evidence
+
+r64 contains 10 controls, 16 captured segments, 64 per-rank phase rows, and
+344 scratch checkpoint rows. The table below reports the TP-wide maximum for
+each field. `E/S/G/R` means exact output where applicable, exact selected and
+unselected state, graph reset, and scratch-KV restoration.
+
+| Control | Range | Segment total ns | Lifecycle ns | Capture body ns | Enter ns | Exit/instantiate ns | Added allocated | Added reserved | Stable buffers | E/S/G/R |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| `stitched_p4_repeat_0` | `[0,16)` | 750,355,450 | 8,269,788,814 | 411,087,777 | 248,469,139 | 127,872,743 | 86,066,176 | 0 | 77,545,472 | pass |
+| `stitched_p4_repeat_0` | `[16,32)` | 764,480,745 | 8,269,788,814 | 369,265,840 | 244,462,578 | 165,601,850 | 77,463,552 | 83,886,080 | 155,009,024 | pass |
+| `stitched_p4_repeat_0` | `[32,48)` | 670,886,785 | 8,269,788,814 | 351,800,777 | 209,827,924 | 127,228,677 | 77,463,552 | 83,886,080 | 232,472,576 | pass |
+| `stitched_p4_repeat_0` | `[48,64)` | 787,924,410 | 8,269,788,814 | 402,335,627 | 219,886,653 | 151,262,331 | 81,436,672 | 83,886,080 | 313,909,248 | pass |
+| `stitched_p4_repeat_1` | `[0,16)` | 750,191,275 | 7,108,650,749 | 409,514,197 | 236,440,437 | 80,018,802 | 0 | 0 | 77,545,472 | pass |
+| `stitched_p4_repeat_1` | `[16,32)` | 706,304,988 | 7,108,650,749 | 355,690,609 | 232,256,350 | 93,684,480 | 77,463,552 | 83,886,080 | 155,009,024 | pass |
+| `stitched_p4_repeat_1` | `[32,48)` | 723,615,300 | 7,108,650,749 | 464,920,317 | 176,504,878 | 76,611,326 | 77,463,552 | 83,886,080 | 232,472,576 | pass |
+| `stitched_p4_repeat_1` | `[48,64)` | 730,853,989 | 7,108,650,749 | 387,796,962 | 179,750,362 | 98,867,394 | 81,436,672 | 83,886,080 | 313,909,248 | pass |
+| `isolated_0_16` | `[0,16)` | 764,902,632 | 4,959,918,135 | 361,599,371 | 257,838,542 | 77,848,164 | 0 | 0 | 77,545,472 | pass |
+| `isolated_16_32` | `[16,32)` | 776,464,194 | 4,809,043,065 | 401,681,734 | 269,937,161 | 79,915,101 | 82,944 | 0 | 77,545,472 | pass |
+| `isolated_32_48` | `[32,48)` | 789,198,876 | 4,663,395,173 | 357,608,012 | 268,745,193 | 117,545,818 | 82,944 | 0 | 77,545,472 | pass |
+| `isolated_48_64` | `[48,64)` | 686,223,905 | 4,854,602,511 | 353,334,845 | 208,163,273 | 83,408,873 | 82,944 | 0 | 77,545,472 | pass |
+| `pool_fastest_shared` | `[48,64)` | 688,943,394 | 4,804,697,687 | 365,185,563 | 225,835,904 | 90,118,455 | 82,944 | 0 | 77,545,472 | pass |
+| `pool_fastest_isolated` | `[48,64)` | 773,807,291 | 4,789,143,501 | 406,351,501 | 268,163,461 | 78,344,604 | 82,944 | 0 | 77,545,472 | pass |
+| `pool_slowest_shared` | `[32,48)` | 822,157,449 | 4,579,971,996 | 411,995,936 | 262,954,970 | 100,123,245 | 82,944 | 0 | 77,545,472 | pass |
+| `pool_slowest_isolated` | `[32,48)` | 785,565,858 | 4,811,546,367 | 372,186,546 | 255,596,825 | 120,081,604 | 82,944 | 0 | 77,545,472 | pass |
+
+`stitched_p4_repeat_0` is the only formal route row. Repeat 1 is a
+reproducibility control and is excluded from route selection. The formal
+maximum segment is 787,924,410 ns, which passes the 1.8-second ceiling. The
+formal lifecycle is 8,269,788,814 ns, which fails the 4.5-second ceiling by
+3,769,788,814 ns, or about 83.77%.
+
+The isolated census selected `[48,64)` as fastest and `[32,48)` as slowest.
+In the controlled pool comparison:
+
+```text
+fastest shared:    688,943,394 ns
+fastest isolated:  773,807,291 ns
+slowest shared:    822,157,449 ns
+slowest isolated:  785,565,858 ns
+isolated added allocated memory:
+  82,944 bytes
+isolated added reserved memory:
+  0 bytes
+```
+
+The shared-versus-isolated ordering is not stable across the fastest and
+slowest controls, so there is no evidence that pool isolation explains the
+remaining lifecycle failure. The independently reconstructed diagnosis names
+`capture_body_ns` as the slow phase.
+
+### 22.4 Scratch-KV attribution and correction boundary
+
+Every rank has the same checkpoint pattern for the formal stitched control:
+
+| Rank | First divergence | Other expected divergence | S2 exact | S4 exact | S6 exact | S7 exact |
+|---:|---|---|---|---|---|---|
+| 0 | `S1` | `S5` | yes | yes | yes | yes |
+| 1 | `S1` | `S5` | yes | yes | yes | yes |
+| 2 | `S1` | `S5` | yes | yes | yes | yes |
+| 3 | `S1` | `S5` | yes | yes | yes | yes |
+
+S1 and S5 are the expected eager decode writes. S2 and S6 prove the immediate
+restore round trip returns both key and value scratch slots exactly to S0.
+S4 and S7 prove that capture and reset leave the restored baseline exact. All
+344 checkpoint rows are synchronized and contain bounded digests/diff
+summaries rather than full scratch payloads.
+
+The reconstructed diagnosis is:
+
+```text
+first scratch divergence:
+  S1
+root cause kind:
+  eager_scratch_write
+source:
+  tools/tp4_segmented_capture_attribution_worker.py
+symbol:
+  _AttributionCudaBackend.run_eager
+bounded repair statement:
+  preserve and restore the eager scratch baseline
+repair count:
+  1
+projected graph count:
+  4
+projected maximum segment:
+  787,924,410 ns
+projected lifecycle:
+  8,269,788,814 ns
+```
+
+The restore mechanism is therefore correct after `bd53abc`. The lifecycle
+ceiling, not scratch correctness, is the terminal blocker. Because the
+classifier is a pivot, the otherwise bounded repair diagnosis does not
+authorize Phase A2.
+
+### 22.5 Benefit, cost, verifier, manifest, and cleanup
+
+Observed diagnostic benefit:
+
+- the formal maximum segment is 787,924,410 ns, below the frozen
+  1,800,000,000 ns ceiling;
+- all 64 phase rows pass exact output where applicable, selected-state
+  equality, unselected-state immutability, graph reset, and scratch restore;
+- the first scratch transition and its exact restoration are localized;
+- the attribution matrix identifies `capture_body_ns`, rather than shared
+  pool reuse, as the remaining slow phase.
+
+Observed diagnostic cost:
+
+```text
+diagnostic graph captures:          16
+diagnostic synchronizations:        222
+peak allocated delta:               86,066,176 bytes
+peak reserved delta:                83,886,080 bytes
+maximum stable buffer footprint:    313,909,248 bytes
+scratch CPU snapshot/hash time:     18,171,520,557 ns
+total worker duration:              60,258,334,642 ns
+formal complete lifecycle:          8,269,788,814 ns
+```
+
+Both independent verifier files are byte-identical:
+
+```text
+local verifier SHA256:
+  479fe8bf143376e6c931b6bd9ea8aa77d16728dbe982552a4c453a7b5dc0e8c4
+remote verifier SHA256:
+  479fe8bf143376e6c931b6bd9ea8aa77d16728dbe982552a4c453a7b5dc0e8c4
+pre-verification manifest SHA256:
+  ccd9e4036caaecf915eb68252ab41a3acbfbef326abe28196210a26a33581cf4
+post-verification manifest SHA256:
+  05126f9e21842a4dcbd4cbc4d6deed853a91aeef6d5b61660f1a69ef2be0a9a1
+final live-scan canonical SHA256:
+  4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945
+```
+
+A fresh local audit on 2026-09-07 independently re-hashed all 10
+pre-verification entries and all 4 post-verification entries; every entry
+matched. It also reconstructed the final empty live-scan canonical hash and
+matched the post-verification manifest.
+
+All four ranks exited 0 and reported destroyed process groups. Cleanup is
+`CLEAN`, no owned child remains, and the cleanup receipt ends with three
+empty final exact-tag scans. A separate read-only remote `/proc` scan on
+2026-09-07 excluded its own inspection process and found no command line or
+environment containing the exact r64 tag.
+
+### 22.6 Terminal classification and claim boundary
+
+The two verifiers independently returned:
+
+```text
+classification:
+  PIVOT_TP4_COMMUNICATION_COMPUTE_FUSION
+failed gates:
+  projected_lifecycle_ceiling
+```
+
+The required claim boundary is:
+
+```text
+capture attribution is not steady-state performance
+scratch repair is not replay qualification
+a GO diagnosis is not production GO
+a pivot is a technically complete negative result
+```
+
+No Phase A2 repair, production graph integration, production replay,
+throughput benchmark, TTFT benchmark, TPOT benchmark, P99 benchmark, or
+production retained-memory claim was started under Phase A1.
+
+The segmented-capture route is closed under its frozen limits. The immediate
+next technical route is a separate steady-state
+`TP4_COMMUNICATION_COMPUTE_FUSION` profile and design. That work must use a
+new written design/plan and may not reinterpret r64 as positive steady-state
+performance evidence.
+
+### 22.7 Phase A1 prompt-to-artifact completion checklist
+
+| Requirement | Concrete evidence | Result |
+|---|---|---|
+| Work in the authoritative checkout and preserve the retired checkout | repository root resolves from `/Users/bytedance/Desktop/TinyLLMForge`; no worktree created; no adaptive-ngram path changed | complete |
+| Frozen r57-r60 evidence remains immutable | existing Stage 0 section and untouched historical artifact roots | complete |
+| Phase A1-only implementation | plan and source paths; no production dispatch or Phase A2 source change | complete |
+| RED/GREEN runtime changes | `bd53abc` adds exact KV-slot restore regression; `05f5880` adds Python 3.9, rank-local memory, and negative-value verifier regressions | complete |
+| Focused and adjacent tests | local Python 3.9 dependency-light Phase A1 suite: 88 passed; remote frozen source with Python 3.11, PyTorch, all Phase A1 plus adjacent census files: 202 passed | complete |
+| Source review | scoped review artifacts under `/tmp/TinyLLMForge_r64_verifier_review_1788771197`; negative rank-local byte finding fixed; no unresolved P0-P2 | complete |
+| Diagnostic source committed and pushed | `05f5880dde2bbb0d37e6f1606bec064dfa0d35ed`; local/tracking/remote equality checked before r64 | complete |
+| Fresh immutable strict-clean tag | r64 source identity, plan, admission, and controller artifacts | complete |
+| Frozen model/workload and timing/memory gates | `final_bundle/plan.json`; both independent verifiers | complete |
+| Remote storage stays under the mounted root | all paths in `final_bundle/plan.json` are below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/` | complete |
+| No credential refresh by the controller | Kerberos guard artifacts; no `kinit` or `krenew` execution | complete |
+| Exactly one launch after admission | controller launch and worker-wait receipts; no duplicate r64 tag | complete |
+| Strict-clean GPU inventory | `controller/strict_clean_admission.json`; GPUs 3/4/6/7 at 0 MiB, 0%, no compute process | complete |
+| All controls and ranks present | 10 controls, 16 segments, 64 phase rows, ranks 0-3 | complete |
+| TP-wide phase maxima use rank maximum | both verifiers and the table in section 22.3 | complete |
+| Stitched repeat and isolated/pool comparisons | `phase_rows.jsonl`; `tp_wide_phase_summary`; `pool_summary` | complete |
+| First scratch divergence per rank | `scratch_rows.jsonl`; all ranks first diverge at S1 | complete |
+| S2/S4/S6/S7 exactness and immediate restore | 344 scratch rows; verifier `restore_round_trip_exact=true` | complete |
+| Exact output/state/reset/restore | all 64 phase rows and both verifiers | complete |
+| Benefit and cost reported together | verifier `benefit`/`cost`; sections 22.3-22.5 | complete |
+| Worker and rank terminal state | `worker_summary.json`; `rank_results.json`; `process_receipts.json` | complete |
+| Cleanup and live process state | cleanup `CLEAN`; three archived empty scans; fresh self-excluding remote `/proc` scan empty | complete |
+| Independent local/remote verification | byte-identical verifier JSON, SHA256 `479fe8...e8c4` | complete |
+| Pre-verification manifest | 10 entries independently re-hashed; SHA256 `ccd9e4...cf4` | complete |
+| Post-verification manifest | 4 entries plus final live-scan hash independently revalidated; SHA256 `05126f...a9a1` | complete |
+| Exact terminal classifier | `PIVOT_TP4_COMMUNICATION_COMPUTE_FUSION`; only failed gate is `projected_lifecycle_ceiling` | complete |
+| Prohibited claims and work | no Phase A2, production integration, replay qualification, or steady-state performance claim | complete |
+| Audit and handoff publication | this section and the matching EOF handoff checkpoint | complete in the documentation commit containing this section |
+| Final Git delivery | exact-path staging, one required trailer, push to `origin/feat/kv-sparse-attention`, and local/tracking/remote SHA equality | verified after creating the documentation commit; the resulting SHA is reported outside this self-referential file |
+
+Final Phase A1 classification:
+
+> r64 proves that four 16-layer segments individually fit the frozen capture
+> ceiling and that scratch-KV restoration is exact. It does not make the
+> segmented runtime eligible: the formal complete lifecycle is 8.270 seconds,
+> 83.77% above the 4.5-second ceiling. The only valid terminal result is
+> `PIVOT_TP4_COMMUNICATION_COMPUTE_FUSION`.

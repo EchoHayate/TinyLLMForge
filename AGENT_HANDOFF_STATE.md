@@ -52767,3 +52767,191 @@ The next task is not to resume Tasks 5-8. A future attempt requires a new
 design that addresses both the slow middle/tail segment captures and exact
 scratch-KV restoration, with a new plan, RED/GREEN evidence, committed source,
 and a fresh immutable run tag. Do not lower the frozen gates.
+
+## 2026-09-07 Phase A1 attribution terminal checkpoint
+
+The r60 follow-up attribution plan is complete. This checkpoint supersedes
+the preceding statement that a future segmented-capture attempt must still
+solve scratch restoration: `bd53abc` fixed the restore primitive, and r64
+proved the round trip exact. Segmented capture still terminates as a pivot
+because its complete lifecycle exceeds the frozen ceiling.
+
+### Authoritative repository and source
+
+```text
+checkout used:
+  /Users/bytedance/Desktop/TinyLLMForge
+physical repository root:
+  /Users/bytedance/dev/TinyLLMForge
+branch:
+  feat/kv-sparse-attention
+remote:
+  https://github.com/EchoHayate/TinyLLMForge.git
+eligible Phase A1 source:
+  05f5880dde2bbb0d37e6f1606bec064dfa0d35ed
+source tree SHA256:
+  65dc15ce6f689bb97668dbb20e4be214c73fefe2e4f7fda359bff1efdb7f55d3
+```
+
+Do not update `/Users/bytedance/dev/TinyLLMForge-adaptive-ngram`.
+
+Relevant corrections:
+
+```text
+bd53abca9505b9abbe1a6057e73ddbcb4433c47b
+  fix(tp4): restore scratch KV slots exactly
+05f5880dde2bbb0d37e6f1606bec064dfa0d35ed
+  fix(tp4): verify rank-local capture memory
+```
+
+### Immutable r61-r64 history
+
+- r61, source `5c83428`: `INCOMPLETE`, cleanup `CLEAN`. The worker completed,
+  but advanced-indexing restore did not mutate the original KV cache and the
+  incomplete verifier path dropped run/source identity.
+- r62, source `bd53abc`: local-only `INCOMPLETE`. The bare SSH target was
+  invalid, `launch_started=false`, and no remote directory or GPU process was
+  created.
+- r63, source `bd53abc`: `INCOMPLETE`, cleanup `CLEAN`. Worker/ranks exited 0,
+  but local Python 3.9 rejected `zip(strict=True)` and the remote verifier
+  rejected legal rank-local stable-buffer sizes. Verifiers disagreed.
+- r64, source `05f5880`: authoritative successful diagnostic terminal state
+  `PIVOT_TP4_COMMUNICATION_COMPUTE_FUSION`, cleanup `CLEAN`.
+
+Do not mutate or re-verify old tags to upgrade their classifications.
+
+### r64 immutable result
+
+```text
+run tag:
+  20260907-qwen38-tp4-segmented-capture-attribution-r64
+plan SHA256:
+  a85582ec5481fff3356062824c7c7f270ef8122ab9b8e243e3162b20ba36368a
+classification:
+  PIVOT_TP4_COMMUNICATION_COMPUTE_FUSION
+failed gates:
+  projected_lifecycle_ceiling
+cleanup:
+  CLEAN
+rank exits:
+  0,0,0,0
+process groups destroyed:
+  true on ranks 0-3
+owned children remaining:
+  none
+```
+
+The frozen workload remained Qwen/Qwen3.8-27B revision
+`1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`, BF16, TP4, batch 8,
+prompt 256, max tokens 2, and model length 384. Strict-clean admission used
+GPUs `3,4,6,7`, all at 0 MiB, 0% utilization, with no compute processes.
+Kerberos preflight had 30,649 seconds remaining against a 22,500-second
+requirement.
+
+All remote source, cache, logs, artifacts, and temporary files stayed below:
+
+```text
+/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/
+```
+
+### r64 result in one table
+
+| Boundary | Result | Gate |
+|---|---:|---|
+| Formal stitched p4 maximum segment | 787,924,410 ns | pass, <= 1,800,000,000 ns |
+| Formal stitched p4 lifecycle | 8,269,788,814 ns | fail, > 4,500,000,000 ns |
+| Fastest isolated range | `[48,64)` | diagnostic |
+| Slowest isolated range | `[32,48)` | diagnostic |
+| Shared pool maximum segment | 822,157,449 ns | diagnostic |
+| Isolated pool maximum segment | 785,565,858 ns | diagnostic |
+| Isolated added allocated memory | 82,944 bytes | pass |
+| Isolated added reserved memory | 0 bytes | pass |
+| Peak allocated delta | 86,066,176 bytes | diagnostic cost |
+| Peak reserved delta | 83,886,080 bytes | diagnostic cost |
+| Maximum stable buffers | 313,909,248 bytes | diagnostic cost |
+| Scratch CPU snapshot/hash time | 18,171,520,557 ns | diagnostic cost |
+| Total worker duration | 60,258,334,642 ns | diagnostic cost |
+
+The artifact contains 10 controls, 16 captured segments, 64 per-rank phase
+rows, and 344 scratch rows. All phase rows pass exact output where
+applicable, selected-state equality, unselected-state immutability, graph
+reset, and scratch restore.
+
+For every rank, the first scratch divergence is S1 and the other expected
+eager-write divergence is S5. S2/S4/S6/S7 are exact. Therefore:
+
+```text
+restore round trip exact:
+  true
+timing evidence eligible:
+  true
+diagnosed slow phase:
+  capture_body_ns
+projected graph count:
+  4
+```
+
+### Verifier, manifest, and cleanup closure
+
+```text
+local verifier SHA256:
+  479fe8bf143376e6c931b6bd9ea8aa77d16728dbe982552a4c453a7b5dc0e8c4
+remote verifier SHA256:
+  479fe8bf143376e6c931b6bd9ea8aa77d16728dbe982552a4c453a7b5dc0e8c4
+verifier byte-identical:
+  true
+pre-verification manifest SHA256:
+  ccd9e4036caaecf915eb68252ab41a3acbfbef326abe28196210a26a33581cf4
+post-verification manifest SHA256:
+  05126f9e21842a4dcbd4cbc4d6deed853a91aeef6d5b61660f1a69ef2be0a9a1
+```
+
+On 2026-09-07, all 10 pre-manifest entries and all 4 post-manifest entries
+were independently re-hashed and matched. The final empty live-scan canonical
+SHA also matched the post manifest. A separate remote `/proc` scan excluded
+its own inspection process and found no exact r64 tag in any command line or
+environment.
+
+Fresh closeout verification:
+
+```text
+local Python 3.9 dependency-light Phase A1 suite:
+  88 passed in 0.45s
+remote frozen source, Python 3.11 + PyTorch, Phase A1 and adjacent census:
+  202 passed in 3.94s
+local py_compile:
+  passed
+```
+
+The Mac system Python does not have PyTorch, and its Python 3.9 cannot execute
+the older adjacent test fixture's `zip(strict=True)`. Those local environment
+errors are not counted as green; the complete nine-file suite was rerun
+against the exact frozen source in the remote Python 3.11 + PyTorch
+environment.
+
+### Claim boundary and immediate next action
+
+```text
+capture attribution is not steady-state performance
+scratch repair is not replay qualification
+a GO diagnosis is not production GO
+a pivot is a technically complete negative result
+```
+
+No Phase A2 repair, production integration, production replay, TTFT, TPOT,
+P99, throughput, or production-memory claim is authorized from r64.
+
+The segmented-capture route is closed under the frozen limits. The immediate
+next task is to write a separate steady-state
+`TP4_COMMUNICATION_COMPUTE_FUSION` design and execution plan. Start from the
+existing TP4 communication-profile evidence, but refresh all source,
+workload, admission, and performance evidence under the new plan. Do not
+lower the r64 gates and do not treat r64 capture timing as steady-state
+benefit.
+
+The full prompt-to-artifact checklist and per-control timing table are in:
+
+```text
+docs/superpowers/audits/
+  2026-08-31-tp4-collective-stable-decode-replay-audit.md
+```
