@@ -657,3 +657,94 @@ def test_cuda_backend_revalidates_lease_identity_before_replay():
         backend.replay((graph,))
 
     assert replayed == []
+
+
+def test_cuda_backend_eager_preserves_non_root_none_logits():
+    backend = object.__new__(worker._CudaSegmentedCaptureBackend)
+    backend.model = SimpleNamespace(
+        run_exact_cuda_graph_step_by_pool_index=(
+            lambda *args, **kwargs: None
+        ),
+    )
+    backend.state_slot_ids = "slots"
+    backend.token_counts = (1,)
+    backend.static_input_ids = "input"
+    backend.static_positions = "positions"
+    backend._context = lambda: nullcontext()
+    backend.torch = SimpleNamespace(
+        cuda=SimpleNamespace(synchronize=lambda: None),
+    )
+    backend._selected_state = lambda: "selected"
+
+    assert backend.run_eager() == {
+        "logits": None,
+        "selected": "selected",
+    }
+
+
+def test_cuda_backend_replay_preserves_non_root_none_logits():
+    backend = object.__new__(worker._CudaSegmentedCaptureBackend)
+    backend.runner = SimpleNamespace(
+        _last_hybrid_state_leases=("lease",),
+        _last_hybrid_state_request_ids=(17,),
+    )
+    backend.model = SimpleNamespace(
+        exact_cuda_graph_lease_manifest=lambda leases, request_ids: (
+            SimpleNamespace(sha256="captured")
+        ),
+    )
+    backend.lease_manifest_sha256 = "captured"
+    backend._context = lambda: nullcontext()
+    backend.torch = SimpleNamespace(
+        cuda=SimpleNamespace(synchronize=lambda: None),
+    )
+    backend._captured_logits = None
+    backend._selected_state = lambda: "selected"
+    backend._selected_snapshot = "selected-snapshot"
+    backend._scratch_snapshot = "scratch-snapshot"
+    restored = []
+    backend.restore = restored.append
+
+    assert backend.replay(()) == {
+        "logits": None,
+        "selected": "selected",
+    }
+    assert restored == [{
+        "selected": "selected-snapshot",
+        "scratch": "scratch-snapshot",
+    }]
+
+
+def test_cuda_backend_compares_non_root_none_logits_as_exact(
+    monkeypatch,
+):
+    backend = object.__new__(worker._CudaSegmentedCaptureBackend)
+    backend.runner = SimpleNamespace(
+        snapshot_kv_slots=lambda slots: "scratch-snapshot",
+    )
+    backend.scratch_slots = (1,)
+    backend._scratch_snapshot = "scratch-snapshot"
+    backend._unselected_snapshot = "unselected-snapshot"
+    backend._snapshot_unselected = lambda: "unselected-snapshot"
+    backend.torch = SimpleNamespace(
+        equal=lambda left, right: (_ for _ in ()).throw(
+            AssertionError("torch.equal must not receive None logits")
+        ),
+    )
+    monkeypatch.setattr(
+        worker,
+        "_state_equal",
+        lambda left, right, *, torch_module: left == right,
+    )
+
+    comparison = backend.compare(
+        {"logits": None, "selected": "selected"},
+        {"logits": None, "selected": "selected"},
+    )
+
+    assert comparison == {
+        "exact_output": True,
+        "selected_state_exact": True,
+        "unselected_state_unchanged": True,
+        "scratch_kv_restored": True,
+    }

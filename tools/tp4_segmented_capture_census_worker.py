@@ -542,7 +542,7 @@ class _CudaSegmentedCaptureBackend:
             )
             self.torch.cuda.synchronize()
         return {
-            "logits": logits.clone(),
+            "logits": None if logits is None else logits.clone(),
             "selected": self._selected_state(),
         }
 
@@ -629,7 +629,11 @@ class _CudaSegmentedCaptureBackend:
                 graph.replay()
             self.torch.cuda.synchronize()
         result = {
-            "logits": self._captured_logits.clone(),
+            "logits": (
+                None
+                if self._captured_logits is None
+                else self._captured_logits.clone()
+            ),
             "selected": self._selected_state(),
         }
         self.restore({
@@ -642,13 +646,18 @@ class _CudaSegmentedCaptureBackend:
         scratch_after = self.runner.snapshot_kv_slots(
             self.scratch_slots
         )
+        expected_logits = expected["logits"]
+        actual_logits = actual["logits"]
+        exact_output = (
+            expected_logits is None
+            and actual_logits is None
+        ) or (
+            expected_logits is not None
+            and actual_logits is not None
+            and bool(self.torch.equal(expected_logits, actual_logits))
+        )
         return {
-            "exact_output": bool(
-                self.torch.equal(
-                    expected["logits"],
-                    actual["logits"],
-                )
-            ),
+            "exact_output": exact_output,
             "selected_state_exact": _state_equal(
                 expected["selected"],
                 actual["selected"],
