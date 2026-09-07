@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -381,3 +382,195 @@ def test_attribution_backend_preserves_none_logits_on_non_root_rank():
     backend = object.__new__(worker._AttributionCudaBackend)
     backend.rank = 3
     assert backend.clone_logits(None) is None
+
+
+class _FakeGraph:
+    def __init__(self, events):
+        self.events = events
+
+    def pool(self):
+        return "resolved-pool"
+
+    def reset(self):
+        self.events.append("graph-reset")
+
+
+class _PhaseBackend:
+    def __init__(self):
+        self.events = []
+        self._ticks = iter(range(0, 1_000, 10))
+        self.source_revision = "1" * 40
+        self.plan_sha256 = "2" * 64
+        self.rank = 0
+
+    def clock_ns(self):
+        return next(self._ticks)
+
+    def memory_snapshot(self):
+        self.events.append("memory")
+        if self.events.count("memory") == 1:
+            return {"allocated_bytes": 100, "reserved_bytes": 200}
+        return {"allocated_bytes": 140, "reserved_bytes": 280}
+
+    def prepare_segment(self, segment, *, ordinal):
+        self.events.append(("prepare", segment.start_layer, ordinal))
+
+    def create_graph(self):
+        self.events.append("graph-create")
+        return _FakeGraph(self.events)
+
+    @contextmanager
+    def capture_context(self, graph, *, shared_pool):
+        self.events.append(("capture-enter", graph, shared_pool))
+        yield
+        self.events.append("capture-exit")
+
+    def execute_capture_body(self, segment, *, ordinal):
+        self.events.append(("body", segment.end_layer, ordinal))
+
+    def synchronize(self):
+        self.events.append("capture-sync")
+
+    def resolve_pool(self, graph, *, shared_pool):
+        return graph.pool() if shared_pool is None else shared_pool
+
+    def pool_identity(self, pool, *, pool_mode):
+        assert pool in {"resolved-pool", "shared-pool"}
+        return f"{pool_mode}-pool-digest"
+
+    def segment_metadata(self, segment, *, ordinal):
+        return {
+            "linear_attention_layer_count": 12,
+            "full_attention_layer_count": 4,
+            "candidate_tensor_count": 24,
+            "candidate_tensor_bytes": 4_096,
+            "stable_hidden_candidate_logits_bytes": 8_192,
+            "collectives": {
+                "available": False,
+                "counts": {},
+                "unavailable_reason": "existing_receipt_not_exposed",
+            },
+            "cuda_stream_identity": "stream-0",
+        }
+
+
+def test_capture_phase_timestamps_are_non_overlapping_and_named():
+    backend = _PhaseBackend()
+    segment = SimpleNamespace(start_layer=0, end_layer=16)
+    captured = worker.capture_attributed_segment(
+        backend,
+        segment,
+        ordinal=0,
+        control_id="stitched_p4_repeat_0",
+        pool_mode="shared",
+        shared_pool=None,
+    )
+    accounting = captured.accounting
+    assert accounting.snapshot_and_prepare_ns == 10
+    assert accounting.graph_object_create_ns == 10
+    assert accounting.capture_context_enter_ns == 10
+    assert accounting.capture_body_ns == 10
+    assert accounting.capture_context_exit_and_instantiate_ns == 10
+    assert accounting.post_capture_synchronize_ns == 10
+    assert accounting.post_capture_restore_ns == 0
+    assert accounting.graph_reset_ns == 0
+    assert accounting.segment_total_ns == 80
+    assert accounting.program_lifecycle_ns == 80
+    assert captured.pool_identity == "shared-pool-digest"
+    assert captured.shared_pool == "resolved-pool"
+
+
+def test_segment_metadata_counts_layer_types_from_model_modules():
+    model = SimpleNamespace(
+        layer_stack=SimpleNamespace(
+            layers=[
+                SimpleNamespace(
+                    block_type=(
+                        "full_attention"
+                        if index % 4 == 3
+                        else "linear_attention"
+                    )
+                )
+                for index in range(64)
+            ]
+        )
+    )
+    for start, end in ((0, 16), (16, 32), (32, 48), (48, 64)):
+        assert worker.layer_type_inventory(model, start, end) == {
+            "linear_attention_layer_count": 12,
+            "full_attention_layer_count": 4,
+        }
+
+
+def test_unique_tensor_bytes_does_not_double_count_aliases():
+    tensor = torch.zeros(4, dtype=torch.float32)
+    assert worker.count_unique_tensor_bytes(
+        {
+            "hidden": tensor,
+            "again": tensor,
+            "nested": (torch.zeros(2, dtype=torch.int64),),
+        },
+        torch_module=torch,
+    ) == 32
+
+
+def test_capture_metadata_binds_memory_pool_source_and_plan():
+    backend = _PhaseBackend()
+    captured = worker.capture_attributed_segment(
+        backend,
+        SimpleNamespace(start_layer=16, end_layer=32),
+        ordinal=1,
+        control_id="stitched_p4_repeat_0",
+        pool_mode="shared",
+        shared_pool="shared-pool",
+    )
+    assert captured.metadata == {
+        "control_id": "stitched_p4_repeat_0",
+        "segment_ordinal": 1,
+        "start_layer": 16,
+        "end_layer": 32,
+        "rank": 0,
+        "source_revision": "1" * 40,
+        "plan_sha256": "2" * 64,
+        "pool_mode": "shared",
+        "pool_identity": "shared-pool-digest",
+        "allocated_before_bytes": 100,
+        "allocated_after_bytes": 140,
+        "allocated_delta_bytes": 40,
+        "reserved_before_bytes": 200,
+        "reserved_after_bytes": 280,
+        "reserved_delta_bytes": 80,
+        "linear_attention_layer_count": 12,
+        "full_attention_layer_count": 4,
+        "candidate_tensor_count": 24,
+        "candidate_tensor_bytes": 4_096,
+        "stable_hidden_candidate_logits_bytes": 8_192,
+        "collectives": {
+            "available": False,
+            "counts": {},
+            "unavailable_reason": "existing_receipt_not_exposed",
+        },
+        "cuda_stream_identity": "stream-0",
+    }
+
+
+def test_finalize_capture_accounting_keeps_restore_and_reset_measured():
+    captured = worker.capture_attributed_segment(
+        _PhaseBackend(),
+        SimpleNamespace(start_layer=0, end_layer=16),
+        ordinal=0,
+        control_id="isolated_0_16",
+        pool_mode="isolated",
+        shared_pool=None,
+    )
+    finalized = worker.finalize_captured_segment(
+        captured,
+        post_capture_restore_ns=5,
+        graph_reset_ns=7,
+        program_lifecycle_ns=200,
+    )
+    assert finalized.accounting.post_capture_restore_ns == 5
+    assert finalized.accounting.graph_reset_ns == 7
+    assert finalized.accounting.segment_total_ns == 92
+    assert finalized.accounting.program_lifecycle_ns == 200
+    assert finalized.graph is captured.graph
