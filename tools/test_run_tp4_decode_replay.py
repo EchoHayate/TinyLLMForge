@@ -822,6 +822,60 @@ def test_remote_upload_retries_transient_ssh_disconnect():
     assert sleeps == [1.0]
 
 
+def test_source_staging_retries_transient_ssh_disconnect():
+    popen_calls = []
+    run_calls = []
+    sleeps = []
+    receiver_returncodes = iter((255, 0))
+    receiver_errors = iter((
+        b"Connection closed by UNKNOWN port 65535",
+        b"",
+    ))
+
+    class Archive:
+        def __init__(self):
+            self.stdout = io.BytesIO(b"archive")
+            self.stderr = io.BytesIO(b"")
+
+        def wait(self):
+            return 0
+
+    def popen(arguments, **kwargs):
+        popen_calls.append((list(arguments), dict(kwargs)))
+        return Archive()
+
+    def run(arguments, **kwargs):
+        run_calls.append((list(arguments), dict(kwargs)))
+        return SimpleNamespace(
+            returncode=next(receiver_returncodes),
+            stdout=b"",
+            stderr=next(receiver_errors),
+        )
+
+    original_popen = controller.subprocess.Popen
+    original_run = controller.subprocess.run
+    original_sleep = controller.time.sleep
+    controller.subprocess.Popen = popen
+    controller.subprocess.run = run
+    controller.time.sleep = sleeps.append
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = ProductionAdapter(
+                run_tag=RUN_TAG,
+                local_attempt_root=Path(directory) / "attempt",
+                retry_count=3,
+            )
+            adapter._stage_source(_plan())
+    finally:
+        controller.subprocess.Popen = original_popen
+        controller.subprocess.run = original_run
+        controller.time.sleep = original_sleep
+
+    assert len(popen_calls) == 2
+    assert len(run_calls) == 2
+    assert sleeps == [1.0]
+
+
 def test_compact_evidence_download_retries_transient_ssh_disconnect():
     popen_calls = []
     run_calls = []

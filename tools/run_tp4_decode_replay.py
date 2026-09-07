@@ -1291,43 +1291,57 @@ class ProductionAdapter:
 
     def _stage_source(self, plan: dict) -> None:
         repo_root = Path(__file__).resolve().parents[1]
-        archive = subprocess.Popen(
-            [
-                "git",
-                "-C",
-                str(repo_root),
-                "archive",
-                "--format=tar",
-                plan["source_revision"],
-                "tinyvllm",
-                "tools",
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        assert archive.stdout is not None
-        receiver = subprocess.run(
-            build_ssh_argv(
-                ssh_target=self.ssh_target,
-                remote_argv=[
-                    "tar",
-                    "-xf",
-                    "-",
+        archive_returncode = None
+        archive_stderr = b""
+        receiver = None
+        for attempt in range(self.retry_count):
+            archive = subprocess.Popen(
+                [
+                    "git",
                     "-C",
-                    plan["paths"]["source_root"],
+                    str(repo_root),
+                    "archive",
+                    "--format=tar",
+                    plan["source_revision"],
+                    "tinyvllm",
+                    "tools",
                 ],
-                control_path=self.control_path,
-            ),
-            stdin=archive.stdout,
-            capture_output=True,
-            check=False,
-            timeout=self.command_timeout_s,
-        )
-        archive.stdout.close()
-        archive_stderr = (
-            archive.stderr.read() if archive.stderr is not None else b""
-        )
-        archive_returncode = archive.wait()
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            assert archive.stdout is not None
+            receiver = subprocess.run(
+                build_ssh_argv(
+                    ssh_target=self.ssh_target,
+                    remote_argv=[
+                        "tar",
+                        "-xf",
+                        "-",
+                        "-C",
+                        plan["paths"]["source_root"],
+                    ],
+                    control_path=self.control_path,
+                ),
+                stdin=archive.stdout,
+                capture_output=True,
+                check=False,
+                timeout=self.command_timeout_s,
+            )
+            archive.stdout.close()
+            archive_stderr = (
+                archive.stderr.read()
+                if archive.stderr is not None
+                else b""
+            )
+            archive_returncode = archive.wait()
+            if (
+                receiver.returncode != 255
+                or attempt + 1 == self.retry_count
+            ):
+                break
+            time.sleep(1.0)
+        assert archive_returncode is not None
+        assert receiver is not None
         if archive_returncode != 0 or receiver.returncode != 0:
             raise RuntimeError(
                 archive_stderr.decode(errors="replace")
