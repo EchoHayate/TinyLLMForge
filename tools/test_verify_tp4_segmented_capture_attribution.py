@@ -657,6 +657,23 @@ def test_verifier_fails_closed_on_structural_tampering(mutate, gate):
     assert any(gate in item for item in result["failed_gates"])
 
 
+def test_verifier_preserves_validated_identity_on_later_failure():
+    bundle = make_bundle()
+    bundle["admission"]["selected_gpus"][0]["compute_processes"].append(
+        {"pid": 1}
+    )
+
+    result = verify_bundle(bundle)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert result["run_tag"] == bundle["source_identity"]["run_tag"]
+    assert (
+        result["source_revision"]
+        == bundle["source_identity"]["source_revision"]
+    )
+    assert result["plan_sha256"] == bundle["plan"]["plan_sha256"]
+
+
 def test_verifier_uses_tp_wide_max_and_excludes_repeat_one():
     bundle = make_bundle()
     for row in bundle["phase_rows"]:

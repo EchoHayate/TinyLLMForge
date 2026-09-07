@@ -7588,22 +7588,17 @@ class ModelRunner:
     ) -> None:
         if not physical_slots:
             raise ValueError("KV restore requires at least one physical slot")
-        block_ids = torch.tensor(
-            [slot // self.block_size for slot in physical_slots],
-            device=self.kv_cache.device,
-            dtype=torch.long,
-        )
-        offsets = torch.tensor(
-            [slot % self.block_size for slot in physical_slots],
-            device=self.kv_cache.device,
-            dtype=torch.long,
-        )
-        self.kv_cache[0, :, block_ids, offsets].copy_(
-            snapshot["keys"].to(self.kv_cache.device)
-        )
-        self.kv_cache[1, :, block_ids, offsets].copy_(
-            snapshot["values"].to(self.kv_cache.device)
-        )
+        keys = snapshot["keys"].to(self.kv_cache.device)
+        values = snapshot["values"].to(self.kv_cache.device)
+        for slot_ordinal, physical_slot in enumerate(physical_slots):
+            block_id = physical_slot // self.block_size
+            offset = physical_slot % self.block_size
+            self.kv_cache[0, :, block_id, offset].copy_(
+                keys[:, slot_ordinal]
+            )
+            self.kv_cache[1, :, block_id, offset].copy_(
+                values[:, slot_ordinal]
+            )
         torch.cuda.synchronize()
 
     def _capture_exact_multi_sequence_graph(

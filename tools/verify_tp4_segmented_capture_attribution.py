@@ -900,14 +900,21 @@ def _require_worker_binding(
     return rank_results
 
 
-def _incomplete(reason: str) -> dict:
+def _incomplete(
+    reason: str,
+    *,
+    source_revision: str | None = None,
+    run_tag: str | None = None,
+    plan_sha256: str | None = None,
+) -> dict:
     return {
         "schema_version": VERIFICATION_SCHEMA,
         "phase": "A1",
         "classification": "INCOMPLETE",
         "failed_gates": [reason],
-        "source_revision": None,
-        "run_tag": None,
+        "source_revision": source_revision,
+        "run_tag": run_tag,
+        "plan_sha256": plan_sha256,
         "tp_wide_phase_summary": {},
         "scratch_summary": {},
         "pool_summary": {},
@@ -917,6 +924,9 @@ def _incomplete(reason: str) -> dict:
 
 
 def verify_bundle(bundle_or_root) -> dict:
+    run_tag = None
+    source_revision = None
+    plan_sha256 = None
     try:
         bundle = (
             _load_bundle(Path(bundle_or_root))
@@ -1044,6 +1054,7 @@ def verify_bundle(bundle_or_root) -> dict:
             "failed_gates": sorted(decision["failed_gates"]),
             "source_revision": source_revision,
             "run_tag": run_tag,
+            "plan_sha256": plan_sha256,
             "tp_wide_phase_summary": phase_summary,
             "scratch_summary": scratch_summary,
             "pool_summary": pool_summary,
@@ -1057,7 +1068,12 @@ def verify_bundle(bundle_or_root) -> dict:
         ValueError,
         UnicodeDecodeError,
     ) as error:
-        return _incomplete(str(error) or type(error).__name__)
+        return _incomplete(
+            str(error) or type(error).__name__,
+            source_revision=source_revision,
+            run_tag=run_tag,
+            plan_sha256=plan_sha256,
+        )
 
 
 def verification_results_equal(left: object, right: object) -> bool:
