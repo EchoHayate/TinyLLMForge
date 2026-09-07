@@ -757,15 +757,16 @@ class _SegmentedCensusModelRunnerMixin:
                 torch_module=torch_module,
                 temporary_context=temporary_context,
             )
-            self._segmented_census_result = (
-                capture_segment_program(
-                    plan_id,
-                    backend,
-                    clock_ns=time.perf_counter_ns,
-                    lifecycle_started_ns=lifecycle_started_ns,
-                    memory_before=memory_before,
+            with torch_module.inference_mode():
+                self._segmented_census_result = (
+                    capture_segment_program(
+                        plan_id,
+                        backend,
+                        clock_ns=time.perf_counter_ns,
+                        lifecycle_started_ns=lifecycle_started_ns,
+                        memory_before=memory_before,
+                    )
                 )
-            )
         return super().run_model(
             input_ids,
             positions,

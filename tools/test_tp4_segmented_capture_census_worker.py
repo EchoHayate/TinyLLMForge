@@ -1,5 +1,6 @@
+import sys
 from contextlib import nullcontext
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -119,6 +120,82 @@ def test_engine_config_is_exact_q1_tp4_and_manual_capture_only():
     assert config["enforce_eager"] is True
     assert config["multi_sequence_cuda_graphs"] is False
     assert config["multi_sequence_cuda_graph_dynamic_pool_indices"] is False
+
+
+def test_model_runner_mixin_captures_under_inference_mode_only(
+    monkeypatch,
+):
+    state = {
+        "inference_mode": False,
+        "capture_inference_mode": None,
+        "downstream_inference_mode": None,
+    }
+
+    class InferenceMode:
+        def __enter__(self):
+            state["inference_mode"] = True
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            state["inference_mode"] = False
+
+    fake_torch = SimpleNamespace(
+        inference_mode=lambda: InferenceMode(),
+        cuda=SimpleNamespace(
+            memory_allocated=lambda device: 10,
+            memory_reserved=lambda device: 20,
+        ),
+    )
+    tinyvllm_package = ModuleType("tinyvllm")
+    tinyvllm_package.__path__ = []
+    utils_package = ModuleType("tinyvllm.utils")
+    utils_package.__path__ = []
+    context_module = ModuleType("tinyvllm.utils.context")
+    context_module.get_context = lambda: "context"
+    context_module.temporary_context = (
+        lambda *args, **kwargs: nullcontext()
+    )
+    monkeypatch.setitem(sys.modules, "tinyvllm", tinyvllm_package)
+    monkeypatch.setitem(sys.modules, "tinyvllm.utils", utils_package)
+    monkeypatch.setitem(
+        sys.modules,
+        "tinyvllm.utils.context",
+        context_module,
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setattr(
+        worker,
+        "_CudaSegmentedCaptureBackend",
+        lambda *args, **kwargs: "backend",
+    )
+
+    def capture(*args, **kwargs):
+        state["capture_inference_mode"] = state["inference_mode"]
+        return {"captured": True}
+
+    monkeypatch.setattr(worker, "capture_segment_program", capture)
+
+    class BaseRunner:
+        def run_model(self, *args, **kwargs):
+            state["downstream_inference_mode"] = state["inference_mode"]
+            return "downstream"
+
+    class Runner(worker._SegmentedCensusModelRunnerMixin, BaseRunner):
+        rank = 0
+
+    runner = Runner()
+    runner._segmented_census_plan_id = "p2"
+    runner._segmented_census_result = None
+
+    result = runner.run_model(
+        SimpleNamespace(device="cuda:0"),
+        object(),
+        False,
+    )
+
+    assert result == "downstream"
+    assert state["capture_inference_mode"] is True
+    assert state["downstream_inference_mode"] is False
+    assert runner._segmented_census_result == {"captured": True}
 
 
 class _Engine:
