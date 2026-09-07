@@ -290,9 +290,7 @@ def aggregate_tp4_phase_rows(rows: list[dict]) -> dict:
         name: max(row[name] for row in rows)
         for name in duration_names
     }
-    aggregate.update(
-        dict(zip(identity_names, next(iter(identities)), strict=True))
-    )
+    aggregate.update(dict(zip(identity_names, next(iter(identities)))))
     aggregate["ranks"] = ranks
     return aggregate
 

@@ -635,6 +635,19 @@ def _phase_summary(
     for identity, rank_rows in grouped.items():
         if len(rank_rows) != WORLD_SIZE:
             raise ValueError("phase TP4 rank inventory is incomplete")
+        if any(
+            isinstance(
+                row.get("stable_hidden_candidate_logits_bytes"),
+                bool,
+            )
+            or not isinstance(
+                row.get("stable_hidden_candidate_logits_bytes"),
+                int,
+            )
+            or row["stable_hidden_candidate_logits_bytes"] < 0
+            for row in rank_rows
+        ):
+            raise ValueError("stable buffer bytes are invalid")
         metadata_names = (
             "control_id",
             "segment_ordinal",
@@ -647,7 +660,6 @@ def _phase_summary(
             "full_attention_layer_count",
             "candidate_tensor_count",
             "candidate_tensor_bytes",
-            "stable_hidden_candidate_logits_bytes",
             "formal_route_row",
         )
         if any(
@@ -681,6 +693,10 @@ def _phase_summary(
         )
         aggregated["reserved_delta_bytes"] = max(
             row["reserved_delta_bytes"] for row in rank_rows
+        )
+        aggregated["stable_hidden_candidate_logits_bytes"] = max(
+            row["stable_hidden_candidate_logits_bytes"]
+            for row in rank_rows
         )
         aggregated["formal_timing_eligible"] = formal
         summary[control_id].append(aggregated)

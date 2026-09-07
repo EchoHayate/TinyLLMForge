@@ -553,6 +553,41 @@ def test_verifier_accepts_complete_phase_a1_bundle():
     assert result["cost"]["diagnostic_capture_count"] == 16
 
 
+def test_verifier_aggregates_rank_local_stable_buffer_bytes():
+    bundle = make_bundle()
+    expected_bytes = 12_288
+    for row in bundle["phase_rows"]:
+        if (
+            row["rank"] == 0
+            and row["control_id"] == "stitched_p4_repeat_0"
+            and row["segment_ordinal"] == 3
+        ):
+            row["stable_hidden_candidate_logits_bytes"] = expected_bytes
+    bundle["rank_results"][0]["phase_rows"] = [
+        row for row in bundle["phase_rows"] if row["rank"] == 0
+    ]
+
+    result = verify_bundle(bundle)
+
+    assert result["classification"] == "REPAIR_CANDIDATE"
+    assert result["tp_wide_phase_summary"][
+        "stitched_p4_repeat_0"
+    ][3]["stable_hidden_candidate_logits_bytes"] == expected_bytes
+
+
+def test_verifier_rejects_invalid_rank_local_stable_buffer_bytes():
+    bundle = make_bundle()
+    bundle["phase_rows"][0]["stable_hidden_candidate_logits_bytes"] = -1
+    bundle["rank_results"][0]["phase_rows"] = [
+        row for row in bundle["phase_rows"] if row["rank"] == 0
+    ]
+
+    result = verify_bundle(bundle)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert "stable buffer bytes are invalid" in result["failed_gates"]
+
+
 @pytest.mark.parametrize(
     "source_hash_name",
     ("worker_sha256", "verifier_sha256"),
