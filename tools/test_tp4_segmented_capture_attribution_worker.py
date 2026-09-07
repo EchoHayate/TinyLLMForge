@@ -1,4 +1,6 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
+import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -817,3 +819,801 @@ def test_isolated_pool_memory_gate_uses_frozen_half_gib_limit():
     assert worker.isolated_pool_memory_gate_pass(rows) is True
     rows[0]["reserved_delta_bytes"] += 1
     assert worker.isolated_pool_memory_gate_pass(rows) is False
+
+
+def test_engine_config_is_frozen_qwen38_tp4_manual_capture():
+    config = worker.build_engine_config()
+    assert config["tensor_parallel_size"] == 4
+    assert config["max_num_seqs"] == 8
+    assert config["max_model_len"] == 384
+    assert config["max_num_batched_tokens"] == 2_048
+    assert config["enforce_eager"] is True
+    assert config["multi_sequence_cuda_graphs"] is False
+
+
+def _rank_result(rank):
+    controls = (
+        ("stitched_p4_repeat_0", ((0, 16), (16, 32), (32, 48), (48, 64))),
+        ("stitched_p4_repeat_1", ((0, 16), (16, 32), (32, 48), (48, 64))),
+        ("isolated_0_16", ((0, 16),)),
+        ("isolated_16_32", ((16, 32),)),
+        ("isolated_32_48", ((32, 48),)),
+        ("isolated_48_64", ((48, 64),)),
+        ("pool_fastest_shared", ((0, 16),)),
+        ("pool_fastest_isolated", ((0, 16),)),
+        ("pool_slowest_shared", ((16, 32),)),
+        ("pool_slowest_isolated", ((16, 32),)),
+    )
+    phase_rows = []
+    scratch_rows = []
+    for control_id, ranges in controls:
+        for ordinal, (start_layer, end_layer) in enumerate(ranges):
+            phase_rows.append({
+                "row_id": (
+                    f"{control_id}:segment-{ordinal}:rank-{rank}"
+                ),
+                "rank": rank,
+                "control_id": control_id,
+                "segment_ordinal": ordinal,
+                "start_layer": start_layer,
+                "end_layer": end_layer,
+                "source_revision": "1" * 40,
+                "plan_sha256": "2" * 64,
+            })
+        checkpoints = (
+            ("S0", None),
+            ("S1", None),
+            ("S2", None),
+            *((("S3", ordinal) for ordinal in range(len(ranges)))),
+            ("S4", None),
+            ("S5", None),
+            ("S6", None),
+            ("S7", None),
+        )
+        for checkpoint_ordinal, (checkpoint, segment_ordinal) in enumerate(
+            checkpoints
+        ):
+            scratch_rows.append({
+                "row_id": (
+                    f"{control_id}:checkpoint-{checkpoint_ordinal}:"
+                    f"rank-{rank}"
+                ),
+                "rank": rank,
+                "control_id": control_id,
+                "checkpoint": checkpoint,
+                "segment_ordinal": segment_ordinal,
+                "source_revision": "1" * 40,
+                "plan_sha256": "2" * 64,
+            })
+    return {
+        "phase": "A1",
+        "rank": rank,
+        "run_tag": "a1-r1",
+        "source_revision": "1" * 40,
+        "plan_sha256": "2" * 64,
+        "control_ids": tuple(
+            control_id for control_id, _ranges in controls
+        ),
+        "complete": True,
+        "phase_rows": phase_rows,
+        "scratch_rows": scratch_rows,
+        "benefit": {
+            "attributed_segments": 16,
+            "first_scratch_divergence": "S4",
+            "restore_round_trip_exact": True,
+        },
+        "cost": {
+            "diagnostic_capture_count": 16,
+            "diagnostic_synchronization_count": 32,
+            "total_worker_duration_ns": 1_000 + rank,
+            "scratch_snapshot_cpu_ns": 100 + rank,
+            "peak_allocated_delta_bytes": 200 + rank,
+            "peak_reserved_delta_bytes": 300 + rank,
+        },
+    }
+
+
+class _Engine:
+    def __init__(self):
+        self.events = []
+
+    def call_model_runner_acknowledged(
+        self,
+        method_name,
+        *args,
+        timeout_s,
+    ):
+        self.events.append((method_name, args, timeout_s))
+        if method_name == "arm_segmented_capture_attribution":
+            run_tag, source_revision = args
+            assert run_tag == "a1-r1"
+            assert source_revision == "1" * 40
+            return (
+                {"rank": 0, "armed": True},
+                tuple(
+                    SimpleNamespace(
+                        rank=rank,
+                        result={"rank": rank, "armed": True},
+                    )
+                    for rank in (1, 2, 3)
+                ),
+            )
+        assert method_name == "segmented_capture_attribution_result"
+        return (
+            _rank_result(0),
+            tuple(
+                SimpleNamespace(rank=rank, result=_rank_result(rank))
+                for rank in (1, 2, 3)
+            ),
+        )
+
+    def exit(self):
+        self.events.append(("exit", (), None))
+        return {
+            "rank_exit_codes": [0, 0, 0, 0],
+            "process_group_destroyed": True,
+            "owned_children_remaining": [],
+            "rank_cleanup_receipts": [
+                {"rank": rank, "process_group_destroyed": True}
+                for rank in range(4)
+            ],
+        }
+
+
+def test_run_phase_a1_arms_executes_collects_and_cleans():
+    engine = _Engine()
+    workloads = []
+    result = worker.run_phase_a1(
+        model_root="/model",
+        run_tag="a1-r1",
+        source_revision="1" * 40,
+        timeout_s=15.0,
+        engine_factory=lambda model_root, **config: engine,
+        workload_runner=lambda current: workloads.append(current),
+    )
+    assert workloads == [engine]
+    assert len(result["phase_rows"]) == 64
+    assert len(result["scratch_rows"]) == 344
+    assert result["process_receipts"]["process_group_destroyed"] is True
+    assert result["worker_summary"]["run_tag"] == "a1-r1"
+    assert result["worker_summary"]["source_revision"] == "1" * 40
+    assert result["worker_summary"]["plan_sha256"] == "2" * 64
+    assert result["worker_summary"]["cost"][
+        "total_worker_duration_ns"
+    ] == 1_003
+    assert [event[0] for event in engine.events] == [
+        "arm_segmented_capture_attribution",
+        "segmented_capture_attribution_result",
+        "exit",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        (
+            lambda result: result.update(
+                source_revision="3" * 40
+            ),
+            "identity",
+        ),
+        (
+            lambda result: result["control_ids"].__class__(
+                result["control_ids"][:-1]
+            ),
+            "control",
+        ),
+        (
+            lambda result: result["scratch_rows"].__setitem__(
+                0,
+                {
+                    **result["scratch_rows"][0],
+                    "checkpoint": "S7",
+                },
+            ),
+            "checkpoint",
+        ),
+    ),
+)
+def test_collect_rank_results_rejects_identity_or_inventory_drift(
+    mutation,
+    message,
+):
+    rows = [_rank_result(rank) for rank in range(4)]
+    if message == "control":
+        rows[3]["control_ids"] = rows[3]["control_ids"][:-1]
+    else:
+        mutation(rows[3])
+    with pytest.raises(RuntimeError, match=message):
+        worker.collect_rank_results(
+            rows[0],
+            tuple(
+                SimpleNamespace(rank=rank, result=rows[rank])
+                for rank in (1, 2, 3)
+            ),
+        )
+
+
+def test_run_phase_a1_always_cleans_after_workload_failure():
+    engine = _Engine()
+
+    def fail(_engine):
+        raise RuntimeError("workload failed")
+
+    with pytest.raises(RuntimeError, match="workload failed"):
+        worker.run_phase_a1(
+            model_root="/model",
+            run_tag="a1-r1",
+            source_revision="1" * 40,
+            timeout_s=15.0,
+            engine_factory=lambda model_root, **config: engine,
+            workload_runner=fail,
+        )
+    assert engine.events[-1][0] == "exit"
+
+
+def test_main_persists_incomplete_worker_artifacts_on_failure(
+    tmp_path,
+    monkeypatch,
+):
+    failure = {
+        "schema_version": worker.WORKER_SCHEMA,
+        "phase": "A1",
+        "run_tag": "a1-failure",
+        "phase_rows": [{"row_id": "completed-phase"}],
+        "scratch_rows": [{"row_id": "completed-scratch"}],
+        "rank_results": [],
+        "process_receipts": {
+            "process_group_destroyed": True,
+        },
+        "worker_summary": {
+            "schema_version": worker.WORKER_SCHEMA,
+            "phase": "A1",
+            "run_tag": "a1-failure",
+            "complete": False,
+            "first_operational_error": {
+                "type": "RuntimeError",
+                "message": "capture failed",
+            },
+        },
+    }
+    monkeypatch.setattr(
+        worker,
+        "_parse_args",
+        lambda _argv: SimpleNamespace(
+            model_root="/model",
+            run_tag="a1-failure",
+            source_revision="1" * 40,
+            output_root=tmp_path,
+            timeout_s=1.0,
+        ),
+    )
+    monkeypatch.setattr(
+        worker,
+        "run_phase_a1",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            worker.PhaseA1WorkerError(
+                "capture failed",
+                result=failure,
+            )
+        ),
+    )
+    assert worker.main([]) == 1
+    assert json.loads(
+        (tmp_path / "worker_summary.json").read_text()
+    )["first_operational_error"]["message"] == "capture failed"
+    assert (
+        tmp_path / "phase_rows.jsonl"
+    ).read_text().strip() == '{"row_id":"completed-phase"}'
+
+
+def test_atomic_worker_artifacts_stay_below_output_root(tmp_path):
+    result = {
+        "schema_version": worker.WORKER_SCHEMA,
+        "phase": "A1",
+        "run_tag": "a1-r1",
+        "phase_rows": [{"row_id": "phase"}],
+        "scratch_rows": [{"row_id": "scratch"}],
+        "rank_results": [{"rank": rank} for rank in range(4)],
+        "process_receipts": {"process_group_destroyed": True},
+        "worker_summary": {"complete": True},
+    }
+    worker.write_worker_artifacts(tmp_path, result)
+    assert {
+        path.name for path in tmp_path.iterdir()
+    } == {
+        "phase_rows.jsonl",
+        "scratch_rows.jsonl",
+        "rank_results.json",
+        "process_receipts.json",
+        "worker_summary.json",
+    }
+    assert json.loads(
+        (tmp_path / "worker_summary.json").read_text()
+    )["complete"] is True
+
+
+def test_model_runner_mixin_executes_phase_a1_once_under_inference_mode(
+    monkeypatch,
+):
+    state = {"inference": False, "calls": 0}
+
+    class _InferenceMode:
+        def __enter__(self):
+            state["inference"] = True
+
+        def __exit__(self, *_args):
+            state["inference"] = False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(inference_mode=lambda: _InferenceMode()),
+    )
+
+    def execute(runner, **kwargs):
+        assert runner.rank == 0
+        assert kwargs["run_tag"] == "a1-r1"
+        assert kwargs["source_revision"] == "1" * 40
+        assert state["inference"] is True
+        state["calls"] += 1
+        return _rank_result(0)
+
+    monkeypatch.setattr(worker, "execute_runtime_phase_a1", execute)
+
+    class _Base:
+        rank = 0
+
+        def run_model(self, *_args, **_kwargs):
+            assert state["inference"] is False
+            return "downstream"
+
+    class _Runner(worker._SegmentedAttributionModelRunnerMixin, _Base):
+        pass
+
+    runner = _Runner()
+    assert runner.arm_segmented_capture_attribution(
+        "a1-r1",
+        "1" * 40,
+    ) == {"rank": 0, "armed": True}
+    assert runner.run_model("ids", "positions", False) == "downstream"
+    assert runner.run_model("ids", "positions", False) == "downstream"
+    assert state["calls"] == 1
+    assert runner.segmented_capture_attribution_result()["complete"] is True
+
+
+def test_execute_runtime_phase_a1_allocates_eight_unused_scratch_slots():
+    runner = SimpleNamespace(
+        rank=2,
+        world_size=4,
+        block_size=2,
+        _physical_num_kvcache_blocks=20,
+        _last_hybrid_state_leases=tuple(range(8)),
+        _last_hybrid_state_request_ids=tuple(range(100, 108)),
+        _last_hybrid_state_token_counts=(1,) * 8,
+        kv_cache=torch.zeros(1),
+        model=SimpleNamespace(),
+    )
+    context = SimpleNamespace(
+        block_tables=torch.tensor(
+            [[0, 1], [2, 3]],
+            dtype=torch.int64,
+        ),
+    )
+    captured = {}
+
+    def backend_factory(current_runner, **kwargs):
+        assert current_runner is runner
+        captured.update(kwargs)
+        return SimpleNamespace(plan_sha256=kwargs["plan_sha256"])
+
+    matrix = {
+        "controls": (),
+        "control_results": [
+            {
+                "phase_rows": [{"row_id": "phase", "rank": 2}],
+                "scratch_rows": [{"row_id": "scratch", "rank": 2}],
+                "benefit": {
+                    "first_scratch_divergence": "S4",
+                    "restore_round_trip_exact": True,
+                },
+                "cost": {
+                    "diagnostic_capture_count": 16,
+                    "diagnostic_synchronization_count": 32,
+                    "scratch_snapshot_cpu_ns": 100,
+                    "peak_allocated_delta_bytes": 200,
+                    "peak_reserved_delta_bytes": 300,
+                },
+            }
+        ],
+        "isolated_pool_memory_gate_pass": True,
+    }
+    ticks = iter((100, 1_100))
+    result = worker.execute_runtime_phase_a1(
+        runner,
+        run_tag="a1-r1",
+        source_revision="1" * 40,
+        input_ids=torch.zeros(8, dtype=torch.int64),
+        positions=torch.zeros(8, dtype=torch.int64),
+        torch_module=torch,
+        context=context,
+        temporary_context=lambda **_kwargs: nullcontext(),
+        backend_factory=backend_factory,
+        matrix_runner=lambda _backend: matrix,
+        clock_ns=lambda: next(ticks),
+    )
+    assert captured["scratch_slots"] == [
+        8,
+        10,
+        12,
+        14,
+        16,
+        18,
+        20,
+        22,
+    ]
+    assert result["rank"] == 2
+    assert result["phase_rows"][0]["row_id"] == "phase"
+    assert result["scratch_rows"][0]["row_id"] == "scratch"
+    assert result["cost"]["total_worker_duration_ns"] == 1_000
+
+
+def test_cuda_backend_run_control_emits_phase_scratch_and_cost_rows():
+    contract = worker._load_attribution_contract()
+
+    class Backend:
+        rank = 1
+        source_revision = "1" * 40
+        plan_sha256 = "2" * 64
+
+        def __init__(self):
+            self.events = []
+            self._ticks = iter(range(0, 10_000, 10))
+
+        def clock_ns(self):
+            return next(self._ticks)
+
+        def restore_control_baseline(self):
+            self.events.append("restore-baseline")
+
+        def initialize_sentinel(self):
+            self.events.append("sentinel")
+
+        def checkpoint(self, name, *, segment_ordinal=None):
+            self.events.append(("checkpoint", name, segment_ordinal))
+            return {
+                "checkpoint": name,
+                "segment_ordinal": segment_ordinal,
+                "rank": self.rank,
+                "key_diff": {"equal_to_s0": True},
+                "value_diff": {"equal_to_s0": True},
+                "scratch_snapshot_cpu_ns": 2,
+            }
+
+        def restore_s0(self):
+            self.events.append("restore")
+
+        def scratch_equal_to_s0(self):
+            return True
+
+        def run_eager(self):
+            self.events.append("eager")
+
+        def capture_segment(self, ordinal):
+            graph = _FakeGraph(self.events)
+            accounting = contract.CapturePhaseAccounting(
+                snapshot_and_prepare_ns=1,
+                graph_object_create_ns=1,
+                capture_context_enter_ns=1,
+                capture_body_ns=1,
+                capture_context_exit_and_instantiate_ns=1,
+                post_capture_synchronize_ns=1,
+                post_capture_restore_ns=0,
+                graph_reset_ns=0,
+                segment_total_ns=8,
+                program_lifecycle_ns=8,
+            )
+            captured = worker._CapturedAttributionSegment(
+                graph=graph,
+                shared_pool="pool",
+                pool_identity="pool-digest",
+                accounting=accounting,
+                metadata={
+                    "control_id": "stitched_p4_repeat_0",
+                    "segment_ordinal": ordinal,
+                    "start_layer": ordinal * 16,
+                    "end_layer": (ordinal + 1) * 16,
+                    "rank": self.rank,
+                    "pool_mode": "shared",
+                    "allocated_delta_bytes": 10,
+                    "reserved_delta_bytes": 20,
+                },
+            )
+            self._captured_segments.append(captured)
+            return graph
+
+        def replay(self, graphs):
+            self.events.append(("replay", len(graphs)))
+
+        def reset_graph(self, graph):
+            graph.reset()
+
+        def synchronize(self):
+            self.events.append("synchronize")
+
+        def control_comparison(self, control):
+            assert control["kind"] == "stitched"
+            return {
+                "exact_output": True,
+                "exact_output_applicable": True,
+                "selected_state_exact": True,
+                "unselected_state_unchanged": True,
+                "scratch_kv_restored": True,
+                "graph_reset": True,
+            }
+
+    backend = Backend()
+    result = worker._AttributionCudaBackend.run_control(
+        backend,
+        worker.build_phase_a1_controls()[0],
+    )
+    assert len(result["phase_rows"]) == 4
+    assert len(result["scratch_rows"]) == 11
+    assert result["benefit"]["restore_round_trip_exact"] is True
+    assert result["cost"]["diagnostic_capture_count"] == 4
+    assert result["cost"]["scratch_snapshot_cpu_ns"] == 22
+    assert result["allocated_delta_bytes"] == 10
+    assert result["reserved_delta_bytes"] == 20
+    assert backend.events[-6:] == [
+        "graph-reset",
+        "graph-reset",
+        "graph-reset",
+        "graph-reset",
+        "synchronize",
+        ("checkpoint", "S7", None),
+    ]
+
+
+class _ConcreteAttributionModel:
+    def __init__(self):
+        self.selected = torch.tensor([1.0, 2.0])
+        self.manifest_sha256 = "a" * 64
+        self.layer_stack = SimpleNamespace(
+            layers=[
+                SimpleNamespace(
+                    block_type=(
+                        "full_attention"
+                        if index % 4 == 3
+                        else "linear_attention"
+                    )
+                )
+                for index in range(64)
+            ],
+            state_transaction=SimpleNamespace(
+                pool=SimpleNamespace(
+                    capacity=4,
+                    _tensors={
+                        "state": torch.arange(
+                            8,
+                            dtype=torch.float32,
+                        ).reshape(4, 2),
+                    },
+                )
+            ),
+        )
+
+    def exact_cuda_graph_lease_manifest(
+        self,
+        _leases,
+        _request_ids,
+    ):
+        return SimpleNamespace(
+            sha256=self.manifest_sha256,
+            slot_ids=(0, 2),
+        )
+
+    def snapshot_exact_cuda_graph_state(self, _leases):
+        return {"selected": self.selected.clone()}
+
+    def restore_exact_cuda_graph_state(self, _leases, snapshot):
+        self.selected.copy_(snapshot["selected"])
+
+    def embed_exact_graph_inputs(self, input_ids):
+        return input_ids.to(dtype=torch.float32).reshape(-1, 1)
+
+    def run_exact_cuda_graph_layer_range(
+        self,
+        *,
+        hidden_states,
+        start_layer,
+        end_layer,
+        **_kwargs,
+    ):
+        return SimpleNamespace(
+            hidden_states=hidden_states + (end_layer - start_layer),
+            candidates=(torch.tensor([float(end_layer)]),),
+        )
+
+    def run_exact_cuda_graph_step_by_pool_index(
+        self,
+        _state_slot_ids,
+        _token_counts,
+        input_ids,
+        positions,
+    ):
+        self.selected.add_(1)
+        return input_ids.to(dtype=torch.float32) + positions
+
+
+class _ConcreteAttributionRunner(_FakeRunner):
+    rank = 0
+    world_size = 4
+
+    def __init__(self):
+        super().__init__()
+        self.model = _ConcreteAttributionModel()
+        self._last_hybrid_state_leases = ("lease-0", "lease-2")
+        self._last_hybrid_state_request_ids = (10, 12)
+
+
+def _concrete_backend(*, torch_module=None, clock_ns=None):
+    runner = _ConcreteAttributionRunner()
+    if torch_module is None:
+        torch_module = _TorchFacade()
+    backend = worker._AttributionCudaBackend(
+        runner,
+        scratch_slots=SLOTS,
+        run_tag="phase-a1-concrete",
+        rank=0,
+        torch_module=torch_module,
+        input_ids=torch.tensor([3, 4]),
+        positions=torch.tensor([7, 8]),
+        state_slot_ids=torch.tensor([0, 2]),
+        token_counts=(1, 1),
+        runtime_context_factory=lambda: nullcontext(),
+        source_revision="1" * 40,
+        plan_sha256="2" * 64,
+        clock_ns=clock_ns,
+    )
+    return backend, runner
+
+
+def test_concrete_backend_restores_selected_and_scratch_baselines():
+    backend, runner = _concrete_backend()
+    backend.initialize_sentinel()
+    backend.checkpoint("S0", segment_ordinal=None)
+    selected_s0 = runner.model.selected.clone()
+    scratch_s0 = runner.snapshot_kv_slots(SLOTS)
+
+    runner.model.selected.add_(10)
+    runner.kv_cache.add_(5)
+    backend.restore_control_baseline()
+
+    assert torch.equal(runner.model.selected, selected_s0)
+    assert _snapshots_equal(
+        runner.snapshot_kv_slots(SLOTS),
+        scratch_s0,
+    )
+
+
+def test_concrete_backend_synchronizes_initial_selected_restore():
+    torch_facade = _TorchFacade()
+    backend, _runner = _concrete_backend(
+        torch_module=torch_facade,
+    )
+    backend.restore_control_baseline()
+    assert torch_facade.cuda.synchronize_count == 1
+    assert backend._synchronization_count == 1
+
+
+def test_concrete_backend_revalidates_lease_manifest_before_replay():
+    backend, runner = _concrete_backend()
+    runner.model.manifest_sha256 = "b" * 64
+    with pytest.raises(RuntimeError, match="lease manifest drift"):
+        backend.replay(())
+
+
+def test_concrete_backend_prepares_and_installs_isolated_hidden():
+    backend, _runner = _concrete_backend()
+    hidden = backend.embed_inputs()
+    prepared = backend.run_eager_prefix(
+        hidden,
+        start_layer=0,
+        end_layer=16,
+    )
+    backend.install_isolated_hidden(prepared)
+    backend.prepare_segment(
+        SimpleNamespace(start_layer=16, end_layer=32),
+        ordinal=0,
+    )
+    assert torch.equal(backend._hidden, prepared)
+
+
+def test_concrete_backend_uses_shared_pool_only_for_shared_control(
+    monkeypatch,
+):
+    backend, _runner = _concrete_backend()
+    calls = []
+
+    def capture(current, segment, **kwargs):
+        calls.append((segment.start_layer, kwargs["shared_pool"]))
+        return worker._CapturedAttributionSegment(
+            graph=f"graph-{len(calls)}",
+            shared_pool=f"pool-{len(calls)}",
+            pool_identity=f"digest-{len(calls)}",
+            accounting=SimpleNamespace(),
+            metadata={},
+        )
+
+    monkeypatch.setattr(worker, "capture_attributed_segment", capture)
+    backend._current_control = worker.build_phase_a1_controls()[0]
+    backend._captured_segments = []
+    backend.capture_segment(0)
+    backend.capture_segment(1)
+    assert calls == [(0, None), (16, "pool-1")]
+
+    calls.clear()
+    backend._current_control = {
+        **worker.build_phase_a1_controls()[2],
+        "pool_mode": "isolated",
+    }
+    backend._captured_segments = []
+    backend.capture_segment(0)
+    assert calls == [(0, None)]
+
+
+def test_concrete_backend_gathers_all_four_rank_isolated_rows():
+    class _Distributed:
+        @staticmethod
+        def is_available():
+            return True
+
+        @staticmethod
+        def is_initialized():
+            return True
+
+        @staticmethod
+        def all_gather_object(output, local):
+            for rank in range(4):
+                output[rank] = [
+                    {
+                        **local[0],
+                        "rank": rank,
+                    }
+                ]
+
+    torch_facade = _TorchFacade()
+    torch_facade.distributed = _Distributed()
+    backend, _runner = _concrete_backend(torch_module=torch_facade)
+    rows = backend.gather_isolated_rows([
+        {
+            "phase_rows": [{
+                "rank": 0,
+                "start_layer": 0,
+                "end_layer": 16,
+            }],
+        }
+    ])
+    assert [row["rank"] for row in rows] == [0, 1, 2, 3]
+
+
+def test_concrete_backend_measures_restore_and_idempotent_reset():
+    ticks = iter(range(0, 1_000, 10))
+    backend, runner = _concrete_backend(
+        clock_ns=lambda: next(ticks),
+    )
+    backend.initialize_sentinel()
+    backend.checkpoint("S0", segment_ordinal=None)
+    for _ in range(3):
+        backend.restore_s0()
+    assert backend._post_capture_restore_ns == 10
+
+    events = []
+    graph = _FakeGraph(events)
+    backend._active_graphs = [graph]
+    backend.reset_graph(graph)
+    backend.reset_graph(graph)
+    assert events == ["graph-reset"]
+    assert backend._graph_reset_durations_ns[id(graph)] == 10
+    assert backend._active_graphs == []
+    assert backend._synchronization_count >= 5
