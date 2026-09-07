@@ -1604,9 +1604,14 @@ def test_verifier_rejects_hash_mutation_extra_file_and_missing_row(tmp_path):
 
     missing = tmp_path / "missing"
     assemble_bundle(output_root=missing, **passing_inputs())
-    rows_path = missing / "paired_rows.jsonl"
-    rows = rows_path.read_text().splitlines()
-    rows_path.write_text("\n".join(rows[:-1]) + "\n")
+    for name in (
+        "paired_rows.jsonl",
+        "correctness_rows.jsonl",
+        "overlap_rows.jsonl",
+    ):
+        rows_path = missing / name
+        rows = rows_path.read_text().splitlines()
+        rows_path.write_text("\n".join(rows[:-1]) + "\n")
     rewrite_manifest(missing)
     with pytest.raises(ValueError, match="producer classification"):
         verify_bundle(missing)
