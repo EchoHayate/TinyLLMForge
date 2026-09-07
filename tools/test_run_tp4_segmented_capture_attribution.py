@@ -564,6 +564,89 @@ def test_freeze_source_rejects_an_existing_local_attempt(tmp_path, monkeypatch):
     assert (attempt / "preserve").read_text(encoding="utf-8") == "yes"
 
 
+@pytest.mark.parametrize(
+    ("local_free_bytes", "remote_free_bytes"),
+    (
+        (0, 8 * 1024**3),
+        (1 * 1024**3, 0),
+    ),
+)
+def test_storage_preflight_rejects_insufficient_artifact_space(
+    tmp_path,
+    monkeypatch,
+    local_free_bytes,
+    remote_free_bytes,
+):
+    adapter = object.__new__(controller.ProductionAdapter)
+    adapter.local_attempt_root = tmp_path / "attempt"
+    adapter.local_controller_root = (
+        adapter.local_attempt_root / "controller"
+    )
+    adapter.local_controller_root.mkdir(parents=True)
+    monkeypatch.setattr(
+        controller.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=local_free_bytes),
+    )
+    adapter._remote = lambda _argv: SimpleNamespace(
+        stdout=json.dumps({
+            "base_ready": True,
+            "remote_root_safe": True,
+            "attempt_exists": False,
+            "model_ready": True,
+            "model_revision_matches": True,
+            "remote_free_bytes": remote_free_bytes,
+            "stale_exact_tag_processes": [],
+            "text_profile": {
+                "num_hidden_layers": 64,
+                "hidden_size": 5120,
+                "vocab_size": 248320,
+                "dtype": "bfloat16",
+            },
+        })
+    )
+
+    with pytest.raises(ValueError, match="artifact space"):
+        adapter.ssh_storage_preflight(_seed(), _source())
+
+
+def test_storage_preflight_rejects_stale_exact_tag_process(
+    tmp_path,
+    monkeypatch,
+):
+    adapter = object.__new__(controller.ProductionAdapter)
+    adapter.local_attempt_root = tmp_path / "attempt"
+    adapter.local_controller_root = (
+        adapter.local_attempt_root / "controller"
+    )
+    adapter.local_controller_root.mkdir(parents=True)
+    monkeypatch.setattr(
+        controller.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=1 * 1024**3),
+    )
+    adapter._remote = lambda _argv: SimpleNamespace(
+        stdout=json.dumps({
+            "base_ready": True,
+            "remote_root_safe": True,
+            "attempt_exists": False,
+            "model_ready": True,
+            "model_revision_matches": True,
+            "remote_free_bytes": 8 * 1024**3,
+            "stale_exact_tag_processes": [{"pid": 123}],
+            "text_profile": {
+                "num_hidden_layers": 64,
+                "hidden_size": 5120,
+                "vocab_size": 248320,
+                "dtype": "bfloat16",
+            },
+        })
+    )
+
+    with pytest.raises(ValueError, match="stale exact-tag"):
+        adapter.ssh_storage_preflight(_seed(), _source())
+
+
 def test_diagnosis_is_derived_from_rows_not_hard_coded(tmp_path):
     scratch_rows = [
         {
@@ -625,6 +708,47 @@ def test_kerberos_guard_is_separate_and_persists_failure(tmp_path):
     assert json.loads(
         (tmp_path / "kerberos_ttl_guard.json").read_text()
     ) == receipt
+
+
+def test_launch_rechecks_kerberos_after_gpu_wait(
+    tmp_path,
+    monkeypatch,
+):
+    adapter = controller.ProductionAdapter(
+        run_tag="phase-a1-r61",
+        local_attempt_root=tmp_path / "attempt",
+        kerberos_query=lambda **kwargs: {
+            "classification": "BLOCKED_KERBEROS_TTL",
+            "remaining_lifetime_seconds": 100,
+            "minimum_required_lifetime_seconds": kwargs[
+                "minimum_lifetime_seconds"
+            ],
+        },
+    )
+    adapter.local_controller_root.mkdir(parents=True)
+    adapter._source = _source()
+    adapter._admission = {"selected_gpus": _gpus()}
+    monkeypatch.setattr(
+        controller,
+        "query_remote_gpu_inventory",
+        lambda **_kwargs: pytest.fail(
+            "GPU inventory must not run after TTL rejection"
+        ),
+    )
+    plan = controller.build_plan(
+        run_tag="phase-a1-r61",
+        source_identity=_source(),
+        selected_gpus=_gpus(),
+        admission_mode="strict_clean",
+    )
+
+    with pytest.raises(RuntimeError, match="Kerberos TTL"):
+        adapter.launch_once(
+            plan,
+            {"selected_gpus": _gpus()},
+        )
+
+    assert adapter._process is None
 
 
 def test_owned_cleanup_reaps_only_exact_tag_rows(tmp_path):
@@ -775,3 +899,47 @@ def test_remote_verifier_preserves_structured_incomplete_output(
 
     assert result["result"]["classification"] == "INCOMPLETE"
     assert result["bytes"] == stdout.encode()
+
+
+def test_local_verifier_archive_includes_frozen_worker(tmp_path):
+    calls = []
+    verification = _verification()
+
+    def command_runner(argv, **kwargs):
+        calls.append(list(argv))
+        if argv[:3] == ["git", "-C", str(Path(
+            controller.__file__
+        ).resolve().parents[1])]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=b"archive",
+                stderr=b"",
+            )
+        if argv[:3] == ["tar", "-xf", "-"]:
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=_canonical_bytes(verification),
+            stderr=b"",
+        )
+
+    adapter = controller.ProductionAdapter(
+        run_tag="phase-a1-r61",
+        local_attempt_root=tmp_path / "attempt",
+        local_command_runner=command_runner,
+    )
+    adapter.local_controller_root.mkdir(parents=True)
+    plan = controller.build_plan(
+        run_tag="phase-a1-r61",
+        source_identity=_source(),
+        selected_gpus=_gpus(),
+        admission_mode="strict_clean",
+    )
+
+    adapter.local_verify(plan, {"downloaded": True})
+
+    git_archive = calls[0]
+    assert (
+        "tools/tp4_segmented_capture_attribution_worker.py"
+        in git_archive
+    )

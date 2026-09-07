@@ -479,6 +479,7 @@ class _AttributionCudaBackend:
         self._candidates = []
         self._captured_logits = None
         self._pool_ordinals = {}
+        self._shared_capture_pool = None
         self._isolated_hidden = None
         self._captured_segments = []
         self._active_graphs = []
@@ -896,11 +897,15 @@ class _AttributionCudaBackend:
             ),
         )
         shared_pool = None
-        if (
-            control["pool_mode"] == "shared"
-            and self._captured_segments
-        ):
-            shared_pool = self._captured_segments[0].shared_pool
+        if control["pool_mode"] == "shared":
+            if self._captured_segments:
+                shared_pool = self._captured_segments[0].shared_pool
+            elif control["kind"] == "pool_control":
+                shared_pool = self._shared_capture_pool
+                if shared_pool is None:
+                    raise RuntimeError(
+                        "shared pool control has no retained pool"
+                    )
         captured = capture_attributed_segment(
             self,
             segment,
@@ -909,6 +914,8 @@ class _AttributionCudaBackend:
             pool_mode=control["pool_mode"],
             shared_pool=shared_pool,
         )
+        if control["kind"] == "stitched" and ordinal == 0:
+            self._shared_capture_pool = captured.shared_pool
         self._captured_segments.append(captured)
         self._active_graphs.append(captured.graph)
         return captured.graph

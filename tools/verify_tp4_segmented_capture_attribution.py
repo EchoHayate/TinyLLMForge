@@ -30,6 +30,14 @@ MANIFEST_SCHEMA = (
 )
 MODEL_REPOSITORY = "Qwen/Qwen3.8-27B"
 MODEL_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+REMOTE_BASE = (
+    "/data00/home/sitian/tinyllmforge-workspaces/"
+    "command-timeline-20260818"
+)
+REMOTE_ROOT = f"{REMOTE_BASE}/tp4-segmented-capture-attribution"
+MODEL_ROOT = (
+    f"{REMOTE_BASE}/models/Qwen3.8-27B/snapshots/{MODEL_REVISION}"
+)
 WORLD_SIZE = 4
 MAX_GPU_MEMORY_USED_MIB = 1_024
 MAX_GPU_UTILIZATION_PERCENT = 5
@@ -187,6 +195,7 @@ def _require_source_and_plan(bundle: dict) -> tuple[str, str, str, dict]:
     if (
         not isinstance(source, dict)
         or source.get("schema_version") != SOURCE_SCHEMA
+        or source.get("phase") != "A1"
         or not isinstance(source.get("run_tag"), str)
         or not source["run_tag"]
         or not re.fullmatch(
@@ -197,16 +206,43 @@ def _require_source_and_plan(bundle: dict) -> tuple[str, str, str, dict]:
             r"[0-9a-f]{64}",
             str(source.get("source_tree_sha256")),
         )
+        or not re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(source.get("worker_sha256")),
+        )
+        or not re.fullmatch(
+            r"[0-9a-f]{64}",
+            str(source.get("verifier_sha256")),
+        )
         or source.get("model_repository") != MODEL_REPOSITORY
         or source.get("model_revision") != MODEL_REVISION
     ):
         raise ValueError("source identity is invalid")
+    tools_root = Path(__file__).resolve().parent
+    frozen_source_files = {
+        "worker_sha256": (
+            tools_root / "tp4_segmented_capture_attribution_worker.py"
+        ),
+        "verifier_sha256": Path(__file__).resolve(),
+    }
+    for hash_name, path in frozen_source_files.items():
+        if (
+            not path.is_file()
+            or hashlib.sha256(path.read_bytes()).hexdigest()
+            != source[hash_name]
+        ):
+            raise ValueError(
+                f"source file hash mismatch: {hash_name}"
+            )
     plan = bundle.get("plan")
     expected_workload = {
         "phase": "A1",
         "run_tag": source["run_tag"],
         "source_revision": source["source_revision"],
         "source_tree_sha256": source["source_tree_sha256"],
+        "worker_sha256": source["worker_sha256"],
+        "verifier_sha256": source["verifier_sha256"],
+        "source_identity": source,
         "model_repository": MODEL_REPOSITORY,
         "model_revision": MODEL_REVISION,
         "dtype": "bfloat16",
@@ -233,16 +269,114 @@ def _require_source_and_plan(bundle: dict) -> tuple[str, str, str, dict]:
     ):
         raise ValueError("source plan or frozen workload is invalid")
     controls = plan.get("controls")
+    expected_controls = [
+        {
+            **row,
+            "ranges": [list(value) for value in row["ranges"]],
+        }
+        for row in BASE_CONTROL_SPEC
+    ] + [
+        {
+            "control_id": control_id,
+            "ranges": [],
+            "kind": "pool_control",
+            "pool_mode": (
+                "shared"
+                if control_id.endswith("_shared")
+                else "isolated"
+            ),
+            "formal_route_row": False,
+        }
+        for control_id in EXPECTED_CONTROLS[6:]
+    ]
     if (
         not isinstance(controls, list)
-        or tuple(
-            row.get("control_id")
-            for row in controls
-            if isinstance(row, dict)
-        )
-        != EXPECTED_CONTROLS
+        or controls != expected_controls
     ):
         raise ValueError("plan control inventory is invalid")
+    admission = bundle.get("admission")
+    admitted_gpus = (
+        admission.get("selected_gpus")
+        if isinstance(admission, dict)
+        else None
+    )
+    if not isinstance(admitted_gpus, list):
+        raise ValueError("source plan admission binding is invalid")
+    try:
+        ordered_admission = sorted(
+            admitted_gpus,
+            key=lambda row: row["rank"],
+        )
+        expected_selected_gpus = [
+            {
+                "gpu_index": row["index"],
+                "gpu_uuid": row["uuid"],
+                "memory_used_mib": row["memory_used_mib"],
+                "utilization_percent": row["utilization_percent"],
+                "compute_processes": row["compute_processes"],
+            }
+            for row in ordered_admission
+        ]
+        expected_gpu_indices = [
+            row["index"] for row in ordered_admission
+        ]
+    except (KeyError, TypeError):
+        raise ValueError(
+            "source plan admission binding is invalid"
+        ) from None
+    attempt_root = f"{REMOTE_ROOT}/{source['run_tag']}"
+    source_root = f"{attempt_root}/source"
+    runtime_root = f"{attempt_root}/runtime"
+    expected_execution = {
+        "admission_mode": "strict_clean",
+        "strict_clean": True,
+        "model_root": MODEL_ROOT,
+        "selected_gpus": expected_selected_gpus,
+        "selected_gpu_indices": expected_gpu_indices,
+        "paths": {
+            "attempt_root": attempt_root,
+            "source_root": source_root,
+            "raw_root": f"{attempt_root}/raw",
+            "bundle_root": f"{attempt_root}/final_bundle",
+            "controller_root": f"{attempt_root}/controller",
+            "worker_stdout_path": (
+                f"{attempt_root}/controller/worker.stdout"
+            ),
+            "worker_stderr_path": (
+                f"{attempt_root}/controller/worker.stderr"
+            ),
+            "remote_verification_path": (
+                f"{attempt_root}/controller/"
+                "remote_independent_verification.json"
+            ),
+            "post_verification_manifest_path": (
+                f"{attempt_root}/controller/"
+                "post_verification_manifest.json"
+            ),
+        },
+        "environment": {
+            "TMPDIR": f"{runtime_root}/tmp",
+            "XDG_CACHE_HOME": f"{runtime_root}/cache/xdg",
+            "HF_HOME": f"{runtime_root}/cache/huggingface",
+            "TRANSFORMERS_CACHE": (
+                f"{runtime_root}/cache/huggingface/transformers"
+            ),
+            "TORCH_EXTENSIONS_DIR": (
+                f"{runtime_root}/cache/torch-extensions"
+            ),
+            "CUDA_CACHE_PATH": f"{runtime_root}/cache/cuda",
+        },
+        "process_environment": {
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONPATH": f"{source_root}:{source_root}/tools",
+            "TINYLLMFORGE_RUN_TAG": source["run_tag"],
+        },
+    }
+    if any(
+        plan.get(name) != value
+        for name, value in expected_execution.items()
+    ):
+        raise ValueError("source plan execution binding is invalid")
     return (
         source["run_tag"],
         source["source_revision"],
@@ -445,6 +579,57 @@ def _phase_summary(
         ))
         if actual != tuple(sorted(ranges)):
             raise ValueError("fixed control range inventory is invalid")
+    expected_pool_modes = {
+        control_id: (
+            "shared"
+            if control_id.startswith("stitched_")
+            or control_id.endswith("_shared")
+            else "isolated"
+        )
+        for control_id in EXPECTED_CONTROLS
+    }
+    if any(
+        row.get("pool_mode")
+        != expected_pool_modes.get(row.get("control_id"))
+        or not isinstance(row.get("pool_identity"), str)
+        or not row["pool_identity"]
+        for row in rows
+    ):
+        raise ValueError("pool identity is invalid")
+    for rank in range(WORLD_SIZE):
+        rank_rows = [row for row in rows if row.get("rank") == rank]
+
+        def identities(*control_ids: str) -> set[str]:
+            return {
+                row["pool_identity"]
+                for row in rank_rows
+                if row["control_id"] in control_ids
+            }
+
+        repeat_zero = identities("stitched_p4_repeat_0")
+        repeat_one = identities("stitched_p4_repeat_1")
+        shared_controls = identities(
+            "pool_fastest_shared",
+            "pool_slowest_shared",
+        )
+        isolated_controls = identities(
+            "isolated_0_16",
+            "isolated_16_32",
+            "isolated_32_48",
+            "isolated_48_64",
+            "pool_fastest_isolated",
+            "pool_slowest_isolated",
+        )
+        if (
+            len(repeat_zero) != 1
+            or len(repeat_one) != 1
+            or shared_controls != repeat_one
+            or len(isolated_controls) != 6
+            or not isolated_controls.isdisjoint(
+                repeat_zero | repeat_one
+            )
+        ):
+            raise ValueError("pool identity disagrees with control mode")
     summary = {control_id: [] for control_id in EXPECTED_CONTROLS}
     formal_correct = True
     for identity, rank_rows in grouped.items():

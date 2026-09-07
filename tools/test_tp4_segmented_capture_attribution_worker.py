@@ -1561,6 +1561,16 @@ def test_concrete_backend_uses_shared_pool_only_for_shared_control(
     backend.capture_segment(0)
     assert calls == [(0, None)]
 
+    calls.clear()
+    backend._shared_capture_pool = "retained-shared-pool"
+    backend._current_control = {
+        **worker.build_pool_controls((0, 16), (16, 32))[0],
+        "pool_mode": "shared",
+    }
+    backend._captured_segments = []
+    backend.capture_segment(0)
+    assert calls == [(0, "retained-shared-pool")]
+
 
 def test_concrete_backend_gathers_all_four_rank_isolated_rows():
     class _Distributed:

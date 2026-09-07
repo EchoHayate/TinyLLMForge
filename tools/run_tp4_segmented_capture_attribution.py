@@ -81,6 +81,8 @@ DEFAULT_GPU_WAIT_TIMEOUT_S = 21_600
 DEFAULT_GPU_POLL_INTERVAL_S = 15
 DEFAULT_RETRY_COUNT = 3
 KERBEROS_GUARD_MARGIN_S = 900
+MIN_LOCAL_ARTIFACT_FREE_BYTES = 1 * 1024**3
+MIN_REMOTE_ARTIFACT_FREE_BYTES = 8 * 1024**3
 
 _BASE_RANGES = ((0, 16), (16, 32), (32, 48), (48, 64))
 _BASE_CONTROLS = (
@@ -1209,7 +1211,24 @@ class ProductionAdapter:
         attempt_root = f"{REMOTE_ROOT}/{seed['run_tag']}"
         script = "\n".join([
             "import json,os,sys",
-            "base,root,attempt,model,revision=sys.argv[1:]",
+            "base,root,attempt,model,revision,tag=sys.argv[1:]",
+            "storage=os.statvfs(base)",
+            "tag_entry=('TINYLLMFORGE_RUN_TAG='+tag).encode()",
+            "attempt_bytes=attempt.encode()",
+            "excluded={os.getpid(),os.getppid()}",
+            "stale=[]",
+            "for name in os.listdir('/proc'):",
+            "  if not name.isdigit(): continue",
+            "  pid=int(name)",
+            "  if pid in excluded: continue",
+            "  try: command=open('/proc/'+name+'/cmdline','rb').read()",
+            "  except OSError: command=b''",
+            "  try: environment=open('/proc/'+name+'/environ','rb').read()",
+            "  except OSError: environment=b''",
+            "  matched_cmdline=any(value==attempt_bytes or value.startswith(attempt_bytes+b'/') for value in command.split(b'\\0'))",
+            "  matched_environment=tag_entry in environment.split(b'\\0')",
+            "  if matched_cmdline or matched_environment:",
+            "    stale.append({'pid':pid,'matched_cmdline':matched_cmdline,'matched_environment':matched_environment})",
             "config_path=os.path.join(model,'config.json')",
             "config={}",
             "if os.path.isfile(config_path):",
@@ -1220,6 +1239,8 @@ class ProductionAdapter:
             "'base_ready':os.path.isdir(base) and os.access(base,os.R_OK|os.W_OK|os.X_OK),",
             "'remote_root_safe':not os.path.islink(root) and (not os.path.exists(root) or os.path.isdir(root)),",
             "'attempt_exists':os.path.lexists(attempt),",
+            "'remote_free_bytes':storage.f_bavail*storage.f_frsize,",
+            "'stale_exact_tag_processes':sorted(stale,key=lambda row:row['pid']),",
             "'model_ready':os.path.isdir(model) and os.access(model,os.R_OK|os.X_OK),",
             "'model_revision_matches':os.path.basename(os.path.realpath(model))==revision,",
             "'text_profile':{",
@@ -1239,6 +1260,7 @@ class ProductionAdapter:
             attempt_root,
             MODEL_ROOT,
             MODEL_REVISION,
+            seed["run_tag"],
         ])
         state = json.loads(result.stdout)
         expected_profile = {
@@ -1247,6 +1269,10 @@ class ProductionAdapter:
             "vocab_size": 248320,
             "dtype": "bfloat16",
         }
+        local_free_bytes = shutil.disk_usage(
+            self.local_attempt_root
+        ).free
+        remote_free_bytes = state.get("remote_free_bytes")
         if (
             not isinstance(state, dict)
             or state.get("base_ready") is not True
@@ -1257,6 +1283,20 @@ class ProductionAdapter:
             or state.get("text_profile") != expected_profile
         ):
             raise ValueError("remote storage or model preflight failed")
+        if (
+            isinstance(local_free_bytes, bool)
+            or not isinstance(local_free_bytes, int)
+            or local_free_bytes < MIN_LOCAL_ARTIFACT_FREE_BYTES
+            or isinstance(remote_free_bytes, bool)
+            or not isinstance(remote_free_bytes, int)
+            or remote_free_bytes < MIN_REMOTE_ARTIFACT_FREE_BYTES
+        ):
+            raise ValueError("insufficient local or remote artifact space")
+        stale_exact_tag_processes = state.get(
+            "stale_exact_tag_processes"
+        )
+        if stale_exact_tag_processes != []:
+            raise ValueError("stale exact-tag process exists")
         receipt = {
             "classification": "PASS",
             "attempt_exists": False,
@@ -1265,6 +1305,15 @@ class ProductionAdapter:
             "model_root": MODEL_ROOT,
             "model_revision": MODEL_REVISION,
             "text_profile": expected_profile,
+            "local_free_bytes": local_free_bytes,
+            "remote_free_bytes": remote_free_bytes,
+            "minimum_local_artifact_free_bytes": (
+                MIN_LOCAL_ARTIFACT_FREE_BYTES
+            ),
+            "minimum_remote_artifact_free_bytes": (
+                MIN_REMOTE_ARTIFACT_FREE_BYTES
+            ),
+            "stale_exact_tag_processes": [],
         }
         _atomic_write_json(
             self.local_controller_root / "ssh_storage_preflight.json",
@@ -1344,6 +1393,23 @@ class ProductionAdapter:
             raise RuntimeError("duplicate launch is forbidden")
         if self._source is None or self._admission is None:
             raise RuntimeError("launch prerequisites are incomplete")
+        launch_kerberos = self.kerberos_query(
+            minimum_lifetime_seconds=(
+                self.command_timeout_s + KERBEROS_GUARD_MARGIN_S
+            ),
+        )
+        _atomic_write_json(
+            self.local_controller_root
+            / "launch_kerberos_ttl_guard.json",
+            launch_kerberos,
+        )
+        if launch_kerberos.get("classification") not in {
+            "READY",
+            "PASS",
+        }:
+            raise RuntimeError(
+                "Kerberos TTL preflight failed at launch"
+            )
         observed = query_remote_gpu_inventory(
             ssh_target=self.ssh_target,
             control_path=self.control_path,
@@ -1744,6 +1810,7 @@ class ProductionAdapter:
                     "--format=tar",
                     plan["source_revision"],
                     "tinyvllm/engine/segmented_capture_attribution.py",
+                    "tools/tp4_segmented_capture_attribution_worker.py",
                     "tools/verify_tp4_segmented_capture_attribution.py",
                 ],
                 capture_output=True,

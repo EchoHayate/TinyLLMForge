@@ -71,6 +71,19 @@ def make_bundle():
     run_tag = "phase-a1-test"
     source_revision = "1" * 40
     source_tree_sha256 = "2" * 64
+    tools_root = Path(__file__).resolve().parent
+    worker_sha256 = hashlib.sha256(
+        (
+            tools_root
+            / "tp4_segmented_capture_attribution_worker.py"
+        ).read_bytes()
+    ).hexdigest()
+    verifier_sha256 = hashlib.sha256(
+        (
+            tools_root
+            / "verify_tp4_segmented_capture_attribution.py"
+        ).read_bytes()
+    ).hexdigest()
     base_controls = (
         {
             "control_id": "stitched_p4_repeat_0",
@@ -152,7 +165,12 @@ def make_bundle():
                         else "isolated"
                     ),
                     "pool_identity": (
-                        f"pool-{rank}-{control_id}"
+                        f"pool-{rank}-stitched_p4_repeat_1"
+                        if control_id in {
+                            "pool_fastest_shared",
+                            "pool_slowest_shared",
+                        }
+                        else f"pool-{rank}-{control_id}"
                     ),
                     "linear_attention_layer_count": 12,
                     "full_attention_layer_count": 4,
@@ -255,12 +273,35 @@ def make_bundle():
         "schema_version": (
             "tinyllmforge.tp4-segmented-attribution-source.v1"
         ),
+        "phase": "A1",
         "run_tag": run_tag,
         "source_revision": source_revision,
         "source_tree_sha256": source_tree_sha256,
+        "worker_sha256": worker_sha256,
+        "verifier_sha256": verifier_sha256,
         "model_repository": "Qwen/Qwen3.8-27B",
         "model_revision": MODEL_REVISION,
     }
+    selected_gpus = [
+        {
+            "rank": rank,
+            "index": rank,
+            "uuid": f"GPU-{rank}",
+            "memory_used_mib": 0,
+            "utilization_percent": 0,
+            "compute_processes": [],
+        }
+        for rank in range(4)
+    ]
+    remote_base = (
+        "/data00/home/sitian/tinyllmforge-workspaces/"
+        "command-timeline-20260818"
+    )
+    attempt_root = (
+        f"{remote_base}/tp4-segmented-capture-attribution/{run_tag}"
+    )
+    source_root = f"{attempt_root}/source"
+    runtime_root = f"{attempt_root}/runtime"
     plan = {
         "schema_version": (
             "tinyllmforge.tp4-segmented-attribution-plan.v1"
@@ -269,9 +310,18 @@ def make_bundle():
         "run_tag": run_tag,
         "source_revision": source_revision,
         "source_tree_sha256": source_tree_sha256,
+        "worker_sha256": worker_sha256,
+        "verifier_sha256": verifier_sha256,
+        "source_identity": source,
+        "admission_mode": "strict_clean",
+        "strict_clean": True,
         "plan_sha256": plan_sha256,
         "model_repository": "Qwen/Qwen3.8-27B",
         "model_revision": MODEL_REVISION,
+        "model_root": (
+            f"{remote_base}/models/Qwen3.8-27B/snapshots/"
+            f"{MODEL_REVISION}"
+        ),
         "dtype": "bfloat16",
         "tensor_parallel_size": 4,
         "batch_size": 8,
@@ -281,13 +331,84 @@ def make_bundle():
         "controls": [
             {
                 "control_id": name,
-                "ranges": [list(value) for value in ranges],
+                "ranges": (
+                    []
+                    if name.startswith("pool_")
+                    else [list(value) for value in ranges]
+                ),
+                "kind": (
+                    "stitched"
+                    if name.startswith("stitched_")
+                    else (
+                        "pool_control"
+                        if name.startswith("pool_")
+                        else "isolated"
+                    )
+                ),
+                "pool_mode": (
+                    "shared"
+                    if name.startswith("stitched_")
+                    or name.endswith("_shared")
+                    else "isolated"
+                ),
+                "formal_route_row": (
+                    name == "stitched_p4_repeat_0"
+                ),
             }
             for name, ranges in CONTROLS
         ],
         "max_segment_ns": 1_800_000_000,
         "max_lifecycle_ns": 4_500_000_000,
         "max_added_memory_bytes_per_rank": 512 * 1024 * 1024,
+        "selected_gpus": [
+            {
+                "gpu_index": row["index"],
+                "gpu_uuid": row["uuid"],
+                "memory_used_mib": row["memory_used_mib"],
+                "utilization_percent": row["utilization_percent"],
+                "compute_processes": row["compute_processes"],
+            }
+            for row in selected_gpus
+        ],
+        "selected_gpu_indices": [0, 1, 2, 3],
+        "paths": {
+            "attempt_root": attempt_root,
+            "source_root": source_root,
+            "raw_root": f"{attempt_root}/raw",
+            "bundle_root": f"{attempt_root}/final_bundle",
+            "controller_root": f"{attempt_root}/controller",
+            "worker_stdout_path": (
+                f"{attempt_root}/controller/worker.stdout"
+            ),
+            "worker_stderr_path": (
+                f"{attempt_root}/controller/worker.stderr"
+            ),
+            "remote_verification_path": (
+                f"{attempt_root}/controller/"
+                "remote_independent_verification.json"
+            ),
+            "post_verification_manifest_path": (
+                f"{attempt_root}/controller/"
+                "post_verification_manifest.json"
+            ),
+        },
+        "environment": {
+            "TMPDIR": f"{runtime_root}/tmp",
+            "XDG_CACHE_HOME": f"{runtime_root}/cache/xdg",
+            "HF_HOME": f"{runtime_root}/cache/huggingface",
+            "TRANSFORMERS_CACHE": (
+                f"{runtime_root}/cache/huggingface/transformers"
+            ),
+            "TORCH_EXTENSIONS_DIR": (
+                f"{runtime_root}/cache/torch-extensions"
+            ),
+            "CUDA_CACHE_PATH": f"{runtime_root}/cache/cuda",
+        },
+        "process_environment": {
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONPATH": f"{source_root}:{source_root}/tools",
+            "TINYLLMFORGE_RUN_TAG": run_tag,
+        },
     }
     return {
         "schema_version": (
@@ -302,17 +423,7 @@ def make_bundle():
             "run_tag": run_tag,
             "admission_mode": "strict_clean",
             "strict_clean": True,
-            "selected_gpus": [
-                {
-                    "rank": rank,
-                    "index": rank,
-                    "uuid": f"GPU-{rank}",
-                    "memory_used_mib": 0,
-                    "utilization_percent": 0,
-                    "compute_processes": [],
-                }
-                for rank in range(4)
-            ],
+            "selected_gpus": selected_gpus,
         },
         "phase_rows": phase_rows,
         "scratch_rows": scratch_rows,
@@ -443,6 +554,67 @@ def test_verifier_accepts_complete_phase_a1_bundle():
 
 
 @pytest.mark.parametrize(
+    "source_hash_name",
+    ("worker_sha256", "verifier_sha256"),
+)
+def test_verifier_rejects_frozen_source_file_hash_mismatch(
+    source_hash_name,
+):
+    bundle = make_bundle()
+    bundle["source_identity"][source_hash_name] = "f" * 64
+
+    result = verify_bundle(bundle)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert "source file hash mismatch" in " ".join(
+        result["failed_gates"]
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda bundle: bundle["source_identity"].update(phase="A2"),
+        lambda bundle: bundle["plan"].update(worker_sha256="f" * 64),
+        lambda bundle: bundle["plan"].update(verifier_sha256="f" * 64),
+        lambda bundle: bundle["plan"].update(source_identity={}),
+    ),
+)
+def test_verifier_rejects_source_and_plan_identity_disagreement(mutate):
+    bundle = make_bundle()
+    mutate(bundle)
+
+    result = verify_bundle(bundle)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert "source" in " ".join(result["failed_gates"])
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda bundle: bundle["plan"].update(
+            selected_gpu_indices=[0, 1, 2, 7]
+        ),
+        lambda bundle: bundle["plan"]["paths"].update(
+            attempt_root="/root/phase-a1-test"
+        ),
+        lambda bundle: bundle["plan"].update(
+            admission_mode="shared_capacity"
+        ),
+    ),
+)
+def test_verifier_rejects_plan_admission_or_path_disagreement(mutate):
+    bundle = make_bundle()
+    mutate(bundle)
+
+    result = verify_bundle(bundle)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert "plan" in " ".join(result["failed_gates"])
+
+
+@pytest.mark.parametrize(
     ("mutate", "gate"),
     (
         (
@@ -516,6 +688,26 @@ def test_verifier_reconstructs_pool_selection():
     result = verify_bundle(bundle)
     assert result["classification"] == "INCOMPLETE"
     assert "pool_selection_mismatch" in result["failed_gates"]
+
+
+def test_verifier_rejects_shared_pool_identity_disagreement():
+    bundle = make_bundle()
+    for row in bundle["phase_rows"]:
+        if (
+            row["rank"] == 0
+            and row["control_id"] == "pool_slowest_shared"
+        ):
+            row["pool_identity"] = "different-pool"
+    bundle["rank_results"][0]["phase_rows"] = [
+        row
+        for row in bundle["phase_rows"]
+        if row["rank"] == 0
+    ]
+
+    result = verify_bundle(bundle)
+
+    assert result["classification"] == "INCOMPLETE"
+    assert "pool identity" in " ".join(result["failed_gates"])
 
 
 def test_verifier_rejects_plan_hash_and_rank_payload_disagreement():
