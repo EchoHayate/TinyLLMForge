@@ -667,7 +667,19 @@ streams, events, work handles, and callbacks:
 ```python
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+import types
+
 import pytest
+
+
+ROOT = Path(__file__).resolve().parents[1]
+for package_name in ("tinyvllm", "tinyvllm.engine"):
+    package = types.ModuleType(package_name)
+    package.__path__ = [str(ROOT / package_name.replace(".", "/"))]
+    sys.modules.setdefault(package_name, package)
+
 
 from tinyvllm.engine.collective_side_effect_overlap import (
     LeaseSealedCollectiveSideEffect,
