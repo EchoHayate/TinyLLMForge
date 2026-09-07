@@ -236,7 +236,8 @@ def test_classifier_fails_closed(mutation, expected):
     elif mutation == "overlap":
         for row in rows:
             if row["active_tokens"] == 4:
-                row["overlap_intersection_ns"] = 5_000
+                row["state_copy_interval_ns"] = [58_000, 75_000]
+                row["overlap_intersection_ns"] = 2_000
     elif mutation == "median":
         for row in rows:
             if row["active_tokens"] in (4, 8):
@@ -278,7 +279,7 @@ def test_measurement_row_rejects_nonfinite_duplicate_or_wrong_order():
 Run:
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_lease_sealed_state_commit_overlap.py -q
 ```
 
@@ -618,9 +619,9 @@ def classify_stage0(rows, memory, cleanup):
 Run:
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_lease_sealed_state_commit_overlap.py -q
-/opt/homebrew/bin/python3.12 -m py_compile \
+python3 -m py_compile \
   tools/lease_sealed_state_commit_overlap.py
 git diff --check -- \
   tools/lease_sealed_state_commit_overlap.py \
@@ -841,7 +842,7 @@ def test_launch_rejects_empty_identity_and_reuse_of_active_resources():
 Run:
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_collective_side_effect_overlap.py -q
 ```
 
@@ -1023,9 +1024,9 @@ The implementation must set `published` only after the callback returns.
 - [ ] **Step 5: Run GREEN and static checks**
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_collective_side_effect_overlap.py -q
-/opt/homebrew/bin/python3.12 -m py_compile \
+python3 -m py_compile \
   tinyvllm/engine/collective_side_effect_overlap.py
 git diff --check -- \
   tinyvllm/engine/collective_side_effect_overlap.py \
@@ -1182,7 +1183,7 @@ def test_cli_requires_attempt_source_rank_and_output_identity():
 - [ ] **Step 2: Run the focused test and verify RED**
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_lease_sealed_state_commit_overlap_worker.py -q
 ```
 
@@ -1404,11 +1405,11 @@ The worker must reject:
 - [ ] **Step 6: Run GREEN and adjacent tests**
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_collective_side_effect_overlap.py \
   tools/test_lease_sealed_state_commit_overlap.py \
   tools/test_lease_sealed_state_commit_overlap_worker.py -q
-/opt/homebrew/bin/python3.12 -m py_compile \
+python3 -m py_compile \
   tinyvllm/engine/collective_side_effect_overlap.py \
   tools/lease_sealed_state_commit_overlap.py \
   tools/lease_sealed_state_commit_overlap_worker.py
@@ -1568,7 +1569,7 @@ failing at the hash layer.
 - [ ] **Step 3: Run both test files and verify RED**
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_assemble_lease_sealed_state_commit_overlap.py \
   tools/test_verify_lease_sealed_state_commit_overlap.py -q
 ```
@@ -1635,11 +1636,11 @@ The receipt contains:
 - [ ] **Step 6: Run GREEN, mutation tests, and static checks**
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_lease_sealed_state_commit_overlap.py \
   tools/test_assemble_lease_sealed_state_commit_overlap.py \
   tools/test_verify_lease_sealed_state_commit_overlap.py -q
-/opt/homebrew/bin/python3.12 -m py_compile \
+python3 -m py_compile \
   tools/assemble_lease_sealed_state_commit_overlap.py \
   tools/verify_lease_sealed_state_commit_overlap.py
 git diff --check -- \
@@ -1851,7 +1852,7 @@ def test_ssh_255_retries_only_within_fixed_budget():
 - [ ] **Step 2: Run the focused test and verify RED**
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_run_lease_sealed_state_commit_overlap.py -q
 ```
 
@@ -1934,9 +1935,9 @@ commands or send signals to an unowned PID.
 - [ ] **Step 5: Run GREEN and source-safety checks**
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_run_lease_sealed_state_commit_overlap.py -q
-/opt/homebrew/bin/python3.12 -m py_compile \
+python3 -m py_compile \
   tools/run_lease_sealed_state_commit_overlap.py
 rg -n \
   '(^|[^A-Za-z])(kinit|krenew|pkill|killall)([^A-Za-z]|$)|/tmp/' \
@@ -1952,7 +1953,7 @@ empty.
 - [ ] **Step 6: Run the complete Stage-0 local suite**
 
 ```bash
-/opt/homebrew/bin/python3.12 -m pytest \
+python3 -m pytest \
   tools/test_collective_side_effect_overlap.py \
   tools/test_lease_sealed_state_commit_overlap.py \
   tools/test_lease_sealed_state_commit_overlap_worker.py \
@@ -2024,7 +2025,7 @@ immediately when four strict-clean GPUs are simultaneously available:
 
 ```bash
 KRB5CCNAME=/Users/bytedance/krb5cc_sitian \
-/opt/homebrew/bin/python3.12 \
+python3 \
   tools/run_lease_sealed_state_commit_overlap.py \
   --attempt-tag \
   20260907-lease-sealed-state-commit-overlap-stage0-r1 \
@@ -2080,7 +2081,7 @@ manifest.sha256
 Run:
 
 ```bash
-/opt/homebrew/bin/python3.12 \
+python3 \
   tools/verify_lease_sealed_state_commit_overlap.py \
   artifacts/lease_sealed_state_commit_overlap/20260907-lease-sealed-state-commit-overlap-stage0-r1/final_bundle
 ```
