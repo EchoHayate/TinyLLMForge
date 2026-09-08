@@ -52955,3 +52955,50 @@ The full prompt-to-artifact checklist and per-control timing table are in:
 docs/superpowers/audits/
   2026-08-31-tp4-collective-stable-decode-replay-audit.md
 ```
+
+## 2026-09-07 Lease-Sealed State-Commit / AllReduce Overlap Stage-0
+
+```text
+Attempt:
+  20260908-lease-sealed-state-commit-overlap-stage0-r5
+Source:
+  20afc4174ae30187f3a73246049dde4860c2146e
+Source tree SHA-256:
+  8610eb6aadba787161ddb3c882cbfd5966dc7fde24b3d035914a5f8aa937ff02
+Producer classification:
+  NO_GO_CORRECTNESS_OR_LIFECYCLE
+Remote verifier:
+  PASS / NO_GO_CORRECTNESS_OR_LIFECYCLE
+Local verifier:
+  PASS / NO_GO_CORRECTNESS_OR_LIFECYCLE
+Cleanup:
+  CLEAN
+Stage-1 authorized:
+  false
+Evidence:
+  artifacts/lease_sealed_state_commit_overlap/20260908-lease-sealed-state-commit-overlap-stage0-r5/final_bundle
+Next action:
+  stop mechanism and preserve terminal evidence
+```
+
+The terminal r5 attempt ran on four strict-clean A100 GPUs and completed all
+180 frozen measurement rows. All 12 lifecycle rows passed, but
+`reduced_output_exact` failed on 12 rows and `final_output_exact` failed on
+176 rows. Median realized overlap was 0% for active-token shapes 1, 4, and 8,
+while host submission regressed by 67.95% to 77.87%. Apparent device-latency
+improvements are diagnostic only because exact correctness failed.
+
+The producer and both independent verifiers agree on
+`NO_GO_CORRECTNESS_OR_LIFECYCLE`; the local post-seal `--check-only`
+verification also passed. Qwen3.8 integration, Qwen-layer changes, model
+transaction changes, and edits to `tinyvllm/layers/linear.py` are prohibited
+from this evidence.
+
+The complete immutable result, attempt reconciliation, benefit/cost table,
+correctness breakdown, diagnostic root-cause boundary, and prompt-to-artifact
+checklist are recorded in:
+
+```text
+docs/superpowers/audits/
+  2026-09-07-lease-sealed-state-commit-overlap-stage0-audit.md
+```
