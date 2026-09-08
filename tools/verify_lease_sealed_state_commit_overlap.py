@@ -14,13 +14,17 @@ import tempfile
 if __package__:
     from tools.lease_sealed_state_commit_overlap import (
         ACTIVE_TOKEN_GROUPS,
+        DIAGNOSTIC_ITERATION_COUNT,
         HIDDEN_SIZE,
         LINEAR_LAYER_COUNT,
         MEASURED_PAIR_COUNT,
         STATE_BYTES_PER_TOKEN_PER_LAYER,
         WARMUP_PAIR_COUNT,
         WORLD_SIZE,
+        classify_stage01,
         classify_stage0,
+        validate_stage01_diagnostic_row,
+        validate_stage01_measurement_row,
         validate_measurement_row,
         validate_runtime_capabilities,
         validate_strict_clean_admission,
@@ -28,13 +32,17 @@ if __package__:
 else:
     from lease_sealed_state_commit_overlap import (
         ACTIVE_TOKEN_GROUPS,
+        DIAGNOSTIC_ITERATION_COUNT,
         HIDDEN_SIZE,
         LINEAR_LAYER_COUNT,
         MEASURED_PAIR_COUNT,
         STATE_BYTES_PER_TOKEN_PER_LAYER,
         WARMUP_PAIR_COUNT,
         WORLD_SIZE,
+        classify_stage01,
         classify_stage0,
+        validate_stage01_diagnostic_row,
+        validate_stage01_measurement_row,
         validate_measurement_row,
         validate_runtime_capabilities,
         validate_strict_clean_admission,
@@ -42,6 +50,9 @@ else:
 
 
 MANIFEST_SCHEMA = "lease-sealed-state-commit-overlap-manifest.v1"
+STAGE01_MANIFEST_SCHEMA = "tp4-completion-owned-overlap-manifest.v2"
+STAGE0_SOURCE_SCHEMA = "lease-sealed-state-commit-overlap-source.v1"
+STAGE01_SOURCE_SCHEMA = "tp4-completion-owned-overlap-source.v2"
 TERMINAL_MANIFEST_SCHEMA = (
     "lease-sealed-state-commit-overlap-terminal-manifest.v1"
 )
@@ -65,6 +76,9 @@ PRODUCER_FILES = frozenset(
         "producer_result.json",
         "report.md",
     }
+)
+STAGE01_PRODUCER_FILES = frozenset(
+    set(PRODUCER_FILES) | {"diagnostic_rows.jsonl"}
 )
 
 
@@ -160,22 +174,32 @@ def _sha256(path):
 
 def _verify_manifest(root):
     manifest = _load_json(root / "manifest.sha256")
+    manifest_schema = (
+        manifest.get("schema_version")
+        if isinstance(manifest, dict)
+        else None
+    )
     if (
         not isinstance(manifest, dict)
-        or manifest.get("schema_version") != MANIFEST_SCHEMA
+        or manifest_schema not in {MANIFEST_SCHEMA, STAGE01_MANIFEST_SCHEMA}
         or not isinstance(manifest.get("artifacts"), dict)
     ):
         raise ValueError("manifest is invalid")
+    producer_files = (
+        STAGE01_PRODUCER_FILES
+        if manifest_schema == STAGE01_MANIFEST_SCHEMA
+        else PRODUCER_FILES
+    )
     actual = {
         path.name
         for path in root.iterdir()
         if path.is_file() and path.name != "manifest.sha256"
     }
     accepted = {
-        PRODUCER_FILES,
-        PRODUCER_FILES | {LEGACY_RECEIPT_NAME},
-        PRODUCER_FILES | {REMOTE_RECEIPT_NAME},
-        PRODUCER_FILES
+        producer_files,
+        producer_files | {LEGACY_RECEIPT_NAME},
+        producer_files | {REMOTE_RECEIPT_NAME},
+        producer_files
         | {
             REMOTE_RECEIPT_NAME,
             LOCAL_RECEIPT_NAME,
@@ -191,9 +215,10 @@ def _verify_manifest(root):
             or _sha256(root / name) != expected
         ):
             raise ValueError("manifest artifact hash mismatch")
+    return manifest_schema
 
 
-def _rewrite_manifest(root):
+def _rewrite_manifest(root, manifest_schema):
     artifacts = {
         path.name: _sha256(path)
         for path in sorted(root.iterdir())
@@ -202,7 +227,7 @@ def _rewrite_manifest(root):
     _write_json(
         root / "manifest.sha256",
         {
-            "schema_version": MANIFEST_SCHEMA,
+            "schema_version": manifest_schema,
             "artifacts": artifacts,
         },
     )
@@ -279,40 +304,15 @@ def _project(row, fields):
     return {field: row[field] for field in fields}
 
 
-def verify_bundle(
+def _verify_bundle_for_schema(
     root,
+    source,
     *,
+    manifest_schema,
+    stage01,
     receipt_name=LEGACY_RECEIPT_NAME,
     seal_terminal=False,
 ):
-    root = Path(root).resolve()
-    if not root.is_dir():
-        raise ValueError("bundle root must be an existing directory")
-    if receipt_name not in {
-        None,
-        LEGACY_RECEIPT_NAME,
-        REMOTE_RECEIPT_NAME,
-        LOCAL_RECEIPT_NAME,
-    }:
-        raise ValueError("independent verification receipt name is invalid")
-    if seal_terminal and receipt_name != LOCAL_RECEIPT_NAME:
-        raise ValueError("terminal sealing requires the local receipt")
-    if (
-        (root / TERMINAL_MANIFEST_NAME).is_file()
-        and receipt_name is not None
-    ):
-        raise ValueError("sealed terminal bundle is read-only")
-    _verify_manifest(root)
-    source = _load_json(root / "source_manifest.json")
-    if (
-        source.get("schema_version")
-        != "lease-sealed-state-commit-overlap-source.v1"
-        or not isinstance(source.get("attempt"), str)
-        or not source["attempt"]
-        or not _is_hex(source.get("source_revision"), 40)
-        or not _is_hex(source.get("source_tree_sha256"), 64)
-    ):
-        raise ValueError("source identity mismatch")
     identity = _identity(source)
     environment = _load_json(root / "environment_manifest.json")
     gpu_ranks = _load_json(root / "gpu_rank_manifest.json")
@@ -321,6 +321,9 @@ def verify_bundle(
     cleanup = _load_json(root / "cleanup.json")
     producer = _load_json(root / "producer_result.json")
     rows = _load_jsonl(root / "paired_rows.jsonl")
+    diagnostic_rows = (
+        _load_jsonl(root / "diagnostic_rows.jsonl") if stage01 else None
+    )
     correctness_rows = _load_jsonl(root / "correctness_rows.jsonl")
     lifecycle_rows = _load_jsonl(root / "lifecycle_rows.jsonl")
     memory_rows = _load_jsonl(root / "memory_rows.jsonl")
@@ -334,6 +337,7 @@ def verify_bundle(
             "cleanup": cleanup,
             "producer": producer,
             "rows": rows,
+            "diagnostics": diagnostic_rows,
             "correctness": correctness_rows,
             "lifecycle": lifecycle_rows,
             "memory": memory_rows,
@@ -376,40 +380,89 @@ def verify_bundle(
         "output_dtype": "bfloat16",
         "state_dtype": "bfloat16",
     }
+    if stage01:
+        expected_workload.update({
+            "protocol": "completion-owned-stage01",
+            "diagnostic_iteration_count": DIAGNOSTIC_ITERATION_COUNT,
+            "formal_arms": ["baseline", "completion_owned"],
+            "diagnostic_arms": [
+                "baseline",
+                "event_only",
+                "completion_owned",
+            ],
+        })
     if any(workload.get(key) != value for key, value in expected_workload.items()):
         raise ValueError("workload identity mismatch")
 
     validated_rows = []
     for raw in rows:
         _require_identity(raw, identity, "measurement")
-        validated_rows.append(validate_measurement_row(raw))
-    correctness_fields = (
+        validated_rows.append(
+            (
+                validate_stage01_measurement_row
+                if stage01
+                else validate_measurement_row
+            )(raw)
+        )
+    validated_diagnostics = []
+    if stage01:
+        for raw in diagnostic_rows:
+            _require_identity(raw, identity, "diagnostic")
+            validated_diagnostics.append(
+                validate_stage01_diagnostic_row(raw)
+            )
+    common_fields = (
         "attempt",
         "source_revision",
         "source_tree_sha256",
         "active_tokens",
         "pair_index",
         "rank",
-        "reduced_output_exact",
-        "final_output_exact",
-        "shadow_payload_exact",
-        "active_state_preserved_before_publish",
-        "published_state_exact",
-        "abort_preserved_old_state",
-        "commit_identity_match",
-        "finite_output",
-        "timed_out",
     )
-    overlap_fields = (
-        "attempt",
-        "source_revision",
-        "source_tree_sha256",
-        "active_tokens",
-        "pair_index",
-        "rank",
-        "allreduce_interval_ns",
-        "state_copy_interval_ns",
-        "overlap_intersection_ns",
+    correctness_fields = common_fields + (
+        (
+            "expected_reduced_exact",
+            "baseline_reduced_exact",
+            "candidate_reduced_exact",
+            "baseline_final_exact",
+            "candidate_final_exact",
+            "baseline_candidate_exact",
+            "shadow_payload_exact",
+            "active_state_preserved_before_publish",
+            "published_state_exact",
+            "abort_preserved_old_state",
+            "commit_identity_match",
+            "collective_wait_invoked",
+            "collective_dependency_transferred",
+            "side_effect_dependency_joined",
+            "finite_output",
+            "timed_out",
+        )
+        if stage01
+        else (
+            "reduced_output_exact",
+            "final_output_exact",
+            "shadow_payload_exact",
+            "active_state_preserved_before_publish",
+            "published_state_exact",
+            "abort_preserved_old_state",
+            "commit_identity_match",
+            "finite_output",
+            "timed_out",
+        )
+    )
+    overlap_fields = common_fields + (
+        (
+            "collective_outstanding_window_ns",
+            "side_effect_window_ns",
+            "overlap_intersection_ns",
+        )
+        if stage01
+        else (
+            "allreduce_interval_ns",
+            "state_copy_interval_ns",
+            "overlap_intersection_ns",
+        )
     )
     if correctness_rows != [
         _project(row, correctness_fields) for row in validated_rows
@@ -458,14 +511,25 @@ def verify_bundle(
             else "DIRTY"
         )
     }
-    reconstructed = classify_stage0(
-        validated_rows,
-        {"rank_rows": memory_rows},
-        cleanup_for_classifier,
+    reconstructed = (
+        classify_stage01(
+            validated_rows,
+            validated_diagnostics,
+            {"rank_rows": memory_rows},
+            cleanup_for_classifier,
+        )
+        if stage01
+        else classify_stage0(
+            validated_rows,
+            {"rank_rows": memory_rows},
+            cleanup_for_classifier,
+        )
     )
     expected_producer = {
         "schema_version": (
-            "lease-sealed-state-commit-overlap-producer-result.v1"
+            "tp4-completion-owned-overlap-producer-result.v2"
+            if stage01
+            else "lease-sealed-state-commit-overlap-producer-result.v1"
         ),
         "classification": reconstructed["classification"],
         "stage1_authorized": reconstructed["stage1_authorized"],
@@ -473,11 +537,20 @@ def verify_bundle(
         "measurement_row_count": reconstructed["measurement_row_count"],
         "shape_summaries": reconstructed["shape_summaries"],
     }
+    if stage01:
+        expected_producer["diagnostic_row_count"] = reconstructed[
+            "diagnostic_row_count"
+        ]
     if producer != expected_producer:
         raise ValueError("producer classification or summary disagreement")
     receipt = {
         "schema_version": (
-            "lease-sealed-state-commit-overlap-independent-verification.v1"
+            "tp4-completion-owned-overlap-independent-verification.v2"
+            if stage01
+            else (
+                "lease-sealed-state-commit-overlap-"
+                "independent-verification.v1"
+            )
         ),
         "status": "PASS",
         "producer_classification": producer["classification"],
@@ -485,6 +558,10 @@ def verify_bundle(
         "artifact_hashes_verified": True,
         "measurement_row_count": reconstructed["measurement_row_count"],
     }
+    if stage01:
+        receipt["diagnostic_row_count"] = reconstructed[
+            "diagnostic_row_count"
+        ]
     _validate_existing_receipts(root, receipt)
     _validate_terminal_manifest(
         root,
@@ -505,8 +582,106 @@ def verify_bundle(
             ),
         )
     if receipt_name is not None or seal_terminal:
-        _rewrite_manifest(root)
+        _rewrite_manifest(root, manifest_schema)
     return receipt
+
+
+def _verify_stage0_bundle(
+    root,
+    source,
+    *,
+    receipt_name,
+    seal_terminal,
+):
+    return _verify_bundle_for_schema(
+        root,
+        source,
+        manifest_schema=MANIFEST_SCHEMA,
+        stage01=False,
+        receipt_name=receipt_name,
+        seal_terminal=seal_terminal,
+    )
+
+
+def _verify_stage01_bundle(
+    root,
+    source,
+    *,
+    receipt_name,
+    seal_terminal,
+):
+    return _verify_bundle_for_schema(
+        root,
+        source,
+        manifest_schema=STAGE01_MANIFEST_SCHEMA,
+        stage01=True,
+        receipt_name=receipt_name,
+        seal_terminal=seal_terminal,
+    )
+
+
+def _verify_by_schema(root, source, *, receipt_name, seal_terminal):
+    if source["schema_version"] == STAGE0_SOURCE_SCHEMA:
+        return _verify_stage0_bundle(
+            root,
+            source,
+            receipt_name=receipt_name,
+            seal_terminal=seal_terminal,
+        )
+    if source["schema_version"] == STAGE01_SOURCE_SCHEMA:
+        return _verify_stage01_bundle(
+            root,
+            source,
+            receipt_name=receipt_name,
+            seal_terminal=seal_terminal,
+        )
+    raise ValueError("source schema is unsupported")
+
+
+def verify_bundle(
+    root,
+    *,
+    receipt_name=LEGACY_RECEIPT_NAME,
+    seal_terminal=False,
+):
+    root = Path(root).resolve()
+    if not root.is_dir():
+        raise ValueError("bundle root must be an existing directory")
+    if receipt_name not in {
+        None,
+        LEGACY_RECEIPT_NAME,
+        REMOTE_RECEIPT_NAME,
+        LOCAL_RECEIPT_NAME,
+    }:
+        raise ValueError("independent verification receipt name is invalid")
+    if seal_terminal and receipt_name != LOCAL_RECEIPT_NAME:
+        raise ValueError("terminal sealing requires the local receipt")
+    if (
+        (root / TERMINAL_MANIFEST_NAME).is_file()
+        and receipt_name is not None
+    ):
+        raise ValueError("sealed terminal bundle is read-only")
+    manifest_schema = _verify_manifest(root)
+    source = _load_json(root / "source_manifest.json")
+    expected_source_schema = (
+        STAGE01_SOURCE_SCHEMA
+        if manifest_schema == STAGE01_MANIFEST_SCHEMA
+        else STAGE0_SOURCE_SCHEMA
+    )
+    if (
+        source.get("schema_version") != expected_source_schema
+        or not isinstance(source.get("attempt"), str)
+        or not source["attempt"]
+        or not _is_hex(source.get("source_revision"), 40)
+        or not _is_hex(source.get("source_tree_sha256"), 64)
+    ):
+        raise ValueError("source identity mismatch")
+    return _verify_by_schema(
+        root,
+        source,
+        receipt_name=receipt_name,
+        seal_terminal=seal_terminal,
+    )
 
 
 def build_argument_parser():
