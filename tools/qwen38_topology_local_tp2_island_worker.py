@@ -1717,6 +1717,7 @@ def _migrate_state_once(
     )
     started = torch.cuda.Event(enable_timing=True)
     completed = torch.cuda.Event(enable_timing=True)
+    distributed.barrier()
     started.record()
     distributed.all_gather(
         convolution_quarters,

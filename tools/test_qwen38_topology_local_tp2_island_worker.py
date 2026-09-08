@@ -968,6 +968,16 @@ def test_measurement_rows_report_frozen_execution_boundary_counters():
     assert '"timed_allocation_count": 0' in source
 
 
+def test_migration_aligns_ranks_before_starting_latency_interval():
+    worker = _load()
+    source = inspect.getsource(worker._migrate_state_once)
+
+    barrier = source.index("distributed.barrier()")
+    start = source.index("started.record()")
+
+    assert barrier < start
+
+
 def test_candidate_timed_path_has_only_pair_local_collective():
     worker = _load()
     source = inspect.getsource(worker.run_candidate_mixer)
