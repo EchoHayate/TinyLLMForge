@@ -387,6 +387,26 @@ def _run_lifecycle_probe(
     }
 
 
+def _device_uuid(torch, device, properties):
+    uuid = str(getattr(properties, "uuid", "")).strip()
+    if uuid:
+        return uuid
+    raw_uuid_query = getattr(torch.cuda, "_raw_device_uuid_nvml", None)
+    nvml_index_query = getattr(torch.cuda, "_get_nvml_device_index", None)
+    if not callable(raw_uuid_query) or not callable(nvml_index_query):
+        return ""
+    uuids = raw_uuid_query()
+    physical_index = nvml_index_query(device)
+    if (
+        not isinstance(uuids, list)
+        or type(physical_index) is not int
+        or physical_index not in range(len(uuids))
+        or not isinstance(uuids[physical_index], str)
+    ):
+        return ""
+    return uuids[physical_index]
+
+
 def _runtime_capability_row(rank, device, torch, dist):
     properties = torch.cuda.get_device_properties(device)
     driver = subprocess.run(
@@ -413,7 +433,7 @@ def _runtime_capability_row(rank, device, torch, dist):
         "rank": rank,
         "device_index": rank,
         "device_name": properties.name,
-        "device_uuid": str(getattr(properties, "uuid", "")),
+        "device_uuid": _device_uuid(torch, device, properties),
         "compute_capability": [
             int(properties.major),
             int(properties.minor),

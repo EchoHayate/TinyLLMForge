@@ -213,3 +213,39 @@ def test_runtime_capability_records_driver_cuda_nccl_and_device_identity(
     assert row["nccl_available"] is True
     assert isinstance(row["hostname"], str) and row["hostname"]
     assert isinstance(row["python_version"], str) and row["python_version"]
+
+
+def test_runtime_capability_uses_nvml_uuid_when_properties_omit_uuid(
+    monkeypatch,
+):
+    properties = SimpleNamespace(
+        name="NVIDIA A100 80GB PCIe",
+        major=8,
+        minor=0,
+    )
+    uuids = [f"GPU-physical-{index}" for index in range(8)]
+    cuda = SimpleNamespace(
+        get_device_properties=lambda _device: properties,
+        _get_nvml_device_index=lambda _device: 6,
+        _raw_device_uuid_nvml=lambda: uuids,
+        nccl=SimpleNamespace(version=lambda: (2, 20, 5)),
+    )
+    torch = SimpleNamespace(
+        cuda=cuda,
+        version=SimpleNamespace(cuda="12.1"),
+        __version__="2.4.1+cu121",
+    )
+    dist = SimpleNamespace(is_nccl_available=lambda: True)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="535.261.03\n",
+            stderr="",
+        ),
+    )
+
+    row = _runtime_capability_row(2, "cuda:2", torch, dist)
+
+    assert row["device_uuid"] == "GPU-physical-6"
