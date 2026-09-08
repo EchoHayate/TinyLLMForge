@@ -98,6 +98,10 @@ def _kerberos():
     }
 
 
+def test_kerberos_launch_floor_is_three_hours():
+    assert MINIMUM_KERBEROS_LIFETIME_SECONDS == 10_800
+
+
 def test_plan_freezes_safe_paths_four_gpus_and_best_pair_map():
     plan = _plan()
     approved = PurePosixPath(APPROVED_REMOTE_ROOT)

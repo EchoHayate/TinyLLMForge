@@ -57,6 +57,10 @@ at source anchor `3521872de3e48ba17872a458ce894a7c4b13189b`.
   physical memory; migration temporaries released before steady timing.
 - Do not run `kinit` or `krenew`. Kerberos commands use
   `KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian`.
+- Require at least 10,800 seconds of TGT lifetime at launch: the two-hour
+  worker timeout plus one hour for staging, verification, and compact
+  download. External automatic cache refresh is allowed; the controller does
+  not perform renewal itself.
 - Never terminate, pause, adopt, or modify foreign GPU/process workloads.
 - Remote task-owned files must remain below
   `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/`;
@@ -1112,9 +1116,8 @@ Run:
 KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian klist
 ```
 
-Expected: the `sitian@BYTEDANCE.COM` TGT has enough remaining lifetime for the
-controller's frozen minimum. If not, stop before remote mutation and record
-`BLOCKED_ADMISSION`.
+Expected: the `sitian@BYTEDANCE.COM` TGT has at least 10,800 seconds remaining.
+If not, stop before remote mutation and record `BLOCKED_KERBEROS`.
 
 - [ ] **Step 2: Run a non-mutating dry-run**
 
@@ -1126,7 +1129,8 @@ python3 tools/run_qwen38_topology_local_tp2_island.py \
   --attempt 20260908-qwen38-topology-local-tp2-island-stage0-r1 \
   --remote-root \
     /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818 \
-  --model-revision 1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0 \
+  --model-root \
+    /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/models/Qwen3.8-27B/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0 \
   --dry-run
 ```
 
