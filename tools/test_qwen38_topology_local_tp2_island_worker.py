@@ -356,6 +356,35 @@ def test_logical_view_selects_contiguous_half_and_pair_group():
     )
 
 
+def test_tensor_digest_is_device_independent():
+    worker = _load()
+
+    left = FakeTensor((2, 3), label="same", device="cuda:0")
+    right = FakeTensor((2, 3), label="same", device="cuda:3")
+
+    assert worker._tensor_digest(left) == worker._tensor_digest(right)
+
+
+def test_parameter_identity_requires_exact_checkpoint_reconstruction():
+    worker = _load()
+    candidate = {"slice": "a" * 64}
+    checkpoint = {"full": "b" * 64}
+
+    record = worker.build_parameter_identity_record(
+        candidate_slice_digests=candidate,
+        checkpoint_full_digests=checkpoint,
+        reconstructed_full_digests=dict(checkpoint),
+    )
+
+    assert record["checkpoint_reconstruction_match"] is True
+    with pytest.raises(ValueError, match="reconstruct"):
+        worker.build_parameter_identity_record(
+            candidate_slice_digests=candidate,
+            checkpoint_full_digests=checkpoint,
+            reconstructed_full_digests={"full": "c" * 64},
+        )
+
+
 @pytest.mark.parametrize(
     "mutation",
     (
@@ -517,8 +546,26 @@ def test_locate_layer_zero_requires_linear_attention():
         worker.locate_layer_zero_linear_attention(model)
 
 
-def test_checkpoint_state_loader_reads_only_layer_zero_sources(tmp_path):
+def test_checkpoint_state_loader_reads_only_layer_zero_sources(
+    tmp_path,
+    monkeypatch,
+):
     worker = _load()
+    monkeypatch.setattr(
+        worker,
+        "build_parameter_identity_record",
+        lambda **kwargs: {
+            **kwargs,
+            "parameter_digests": kwargs["candidate_slice_digests"],
+            "checkpoint_full_parameter_digests": (
+                kwargs["checkpoint_full_digests"]
+            ),
+            "reconstructed_full_parameter_digests": (
+                kwargs["reconstructed_full_digests"]
+            ),
+            "checkpoint_reconstruction_match": True,
+        },
+    )
     names = {
         "model.language_model.layers.0.linear_attn.conv1d.weight":
             "model-00001-of-00002.safetensors",
@@ -578,7 +625,13 @@ def test_checkpoint_state_loader_reads_only_layer_zero_sources(tmp_path):
     assert result["A_log"].shape == (24,)
     assert result["A_log"].dtype == "torch.float32"
     assert result["dt_bias"].shape == (24,)
-    assert all(value.device == "cuda:3" for value in result.values())
+    assert all(
+        result[name].device == "cuda:3"
+        for name in ("conv_weight", "A_log", "dt_bias")
+    )
+    assert result["parameter_identity"][
+        "checkpoint_reconstruction_match"
+    ] is True
 
 
 def test_decode_norm_padding_uses_logical_parallel_size_two():
@@ -729,6 +782,33 @@ def test_success_cleanup_retires_published_candidate_state():
     assert receipt["candidate_state_unpublished"] is True
 
 
+def test_lifecycle_record_requires_observed_runtime_proofs():
+    worker = _load()
+    record = worker.build_lifecycle_record(
+        state_identity_match=True,
+        stale_generation_rejected=True,
+        different_request_rejected=True,
+        publish_after_success=True,
+        baseline_state_unchanged=True,
+        temporary_state_retired=True,
+        fallback_count=0,
+    )
+
+    assert record["state_identity_match"] is True
+    assert record["stale_generation_rejected"] is True
+    assert record["different_request_rejected"] is True
+    with pytest.raises(ValueError, match="proof"):
+        worker.build_lifecycle_record(
+            state_identity_match=True,
+            stale_generation_rejected=False,
+            different_request_rejected=True,
+            publish_after_success=True,
+            baseline_state_unchanged=True,
+            temporary_state_retired=True,
+            fallback_count=0,
+        )
+
+
 def test_timed_pair_preclones_inputs_and_syncs_after_both_submissions():
     worker = _load()
     source = inspect.getsource(worker.run_mixer_pair)
@@ -765,6 +845,14 @@ def test_campaign_binds_rank_device_before_cuda_use():
     capability = source.index("_runtime_capability(rank, device)")
 
     assert device_assignment < set_device < capability
+
+
+def test_campaign_only_registers_the_member_pair_group_for_cleanup():
+    worker = _load()
+    source = inspect.getsource(worker.run_worker_campaign)
+
+    assert "process_groups=[None, pair_group]" in source
+    assert "process_groups=[None, *created_groups]" not in source
 
 
 def test_component_diagnostics_run_only_after_formal_pair_sync():

@@ -16,6 +16,8 @@ import time
 
 if __package__:
     from tools.run_qwen38_tp4_communication_profile import (
+        MAX_GPU_MEMORY_USED_MIB,
+        MAX_GPU_UTILIZATION_PERCENT,
         parse_nvidia_smi_inventory,
         query_local_kerberos,
         select_strict_clean_gpus,
@@ -29,6 +31,8 @@ if __package__:
     )
 else:
     from run_qwen38_tp4_communication_profile import (
+        MAX_GPU_MEMORY_USED_MIB,
+        MAX_GPU_UTILIZATION_PERCENT,
         parse_nvidia_smi_inventory,
         query_local_kerberos,
         select_strict_clean_gpus,
@@ -294,8 +298,9 @@ def build_remote_worker_commands(
     visible = ",".join(
         str(row["gpu_index"]) for row in selected
     )
-    pair_groups = json.dumps(
-        plan["pair_groups"], separators=(",", ":")
+    pair_groups = ";".join(
+        ",".join(str(rank) for rank in group)
+        for group in plan["pair_groups"]
     )
     commands = []
     for rank in range(4):
@@ -435,7 +440,6 @@ def compact_download_members(plan):
         "controller/plan.json",
         "controller/launch_admission.json",
         "controller/supervisor_receipt.json",
-        "controller/controller_result.json",
     )
 
 
@@ -457,14 +461,12 @@ def _validate_frozen_clean_inventory(selected, observed):
         observed=observed,
         owned_pids=set(),
     )
-    clean = select_strict_clean_gpus(list(observed))
-    clean_identities = {
-        (row["gpu_index"], row["gpu_uuid"]) for row in clean
-    }
-    frozen_identities = {
-        (row["gpu_index"], row["gpu_uuid"]) for row in selected
-    }
-    if not frozen_identities.issubset(clean_identities):
+    if any(
+        row["memory_used_mib"] > MAX_GPU_MEMORY_USED_MIB
+        or row["utilization_percent"] > MAX_GPU_UTILIZATION_PERCENT
+        or row["compute_processes"]
+        for row in validated
+    ):
         raise ValueError("frozen GPU selection is no longer strict-clean")
     return validated
 
@@ -844,6 +846,64 @@ def _write_jsonl(path, rows):
     ))
 
 
+def _build_parameter_slice_manifest(rows, *, identity):
+    by_logical_rank = {}
+    for row in rows:
+        by_logical_rank.setdefault(
+            row["logical_rank"],
+            [],
+        ).append(row.get("parameter_digests"))
+    replica_digest_match = (
+        set(by_logical_rank) == {0, 1}
+        and all(
+            len(values) == 2
+            and values[0] == values[1]
+            and isinstance(values[0], dict)
+            and bool(values[0])
+            for values in by_logical_rank.values()
+        )
+    )
+    reconstruction_match = (
+        len(rows) == 4
+        and all(
+            row.get("checkpoint_reconstruction_match") is True
+            and isinstance(
+                row.get("checkpoint_full_parameter_digests"),
+                dict,
+            )
+            and row.get("checkpoint_full_parameter_digests")
+            == row.get("reconstructed_full_parameter_digests")
+            for row in rows
+        )
+    )
+    return {
+        **identity,
+        "layer_index": 0,
+        "linear_attention_only": True,
+        "full_attention_parameters_changed": False,
+        "mlp_parameters_changed": False,
+        "replica_digest_match": replica_digest_match,
+        "checkpoint_reconstruction_match": reconstruction_match,
+        "rank_parameter_evidence": [
+            {
+                "rank": row["rank"],
+                "logical_rank": row["logical_rank"],
+                "parameter_digests": row.get("parameter_digests"),
+                "checkpoint_full_parameter_digests": row.get(
+                    "checkpoint_full_parameter_digests"
+                ),
+                "reconstructed_full_parameter_digests": row.get(
+                    "reconstructed_full_parameter_digests"
+                ),
+                "checkpoint_reconstruction_match": row.get(
+                    "checkpoint_reconstruction_match"
+                ),
+            }
+            for row in sorted(rows, key=lambda value: value["rank"])
+        ],
+    }
+
+
 def _finalize_worker_outputs(plan, rank_exit_codes):
     raw = Path(plan["raw_root"])
     identity = {
@@ -911,45 +971,27 @@ def _finalize_worker_outputs(plan, rank_exit_codes):
         **identity,
         **plan["workload"],
     })
-    digests = [
-        row.get("parameter_digests")
+    parameter_rows = [
+        row
         for row in timing_rows
         if row.get("active_tokens") == 1
         and row.get("repetition") == 0
     ]
-    by_logical_rank = {}
-    for row in timing_rows:
-        if row.get("active_tokens") == 1 and row.get("repetition") == 0:
-            by_logical_rank.setdefault(
-                row["logical_rank"], []
-            ).append(row.get("parameter_digests"))
-    digest_match = all(
-        len(values) == 2 and values[0] == values[1]
-        for values in by_logical_rank.values()
+    write_json_atomic(
+        raw / "parameter_slice_manifest.json",
+        _build_parameter_slice_manifest(
+            parameter_rows,
+            identity=identity,
+        ),
     )
-    write_json_atomic(raw / "parameter_slice_manifest.json", {
-        **identity,
-        "layer_index": 0,
-        "linear_attention_only": True,
-        "full_attention_parameters_changed": False,
-        "mlp_parameters_changed": False,
-        "replica_digest_match": digest_match and len(digests) == 4,
-        "checkpoint_reconstruction_match": digest_match,
-        "rank_parameter_digests": digests,
-    })
     lifecycle_rows = [
-        {
-            **identity,
-            "rank": row["rank"],
-            "state_identity_match": rank_exit_codes[row["rank"]] == 0,
-            "publish_after_success": rank_exit_codes[row["rank"]] == 0,
-            "baseline_state_unchanged": rank_exit_codes[row["rank"]] == 0,
-            "temporary_state_retired": row.get(
-                "candidate_state_unpublished"
-            ) is True,
-            "fallback_count": 0,
-        }
-        for row in cleanup_rows
+        _enrich(
+            identity,
+            json.loads(
+                (raw / f"lifecycle.rank-{rank}.json").read_text()
+            ),
+        )
+        for rank in range(4)
     ]
     _write_jsonl(raw / "lifecycle_rows.jsonl", lifecycle_rows)
     cleanup = {
@@ -979,6 +1021,63 @@ def _finalize_worker_outputs(plan, rank_exit_codes):
         "migration_row_count": len(migration_rows),
         "cleanup": cleanup,
     }
+
+
+def _reap_worker_processes(
+    processes,
+    *,
+    terminate=True,
+    terminate_grace_s=10,
+    kill_grace_s=10,
+):
+    if terminate:
+        for process in processes:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+    terminate_deadline = time.monotonic() + terminate_grace_s
+    codes = []
+    survivors = []
+    for process in processes:
+        code = process.poll()
+        if code is not None:
+            codes.append(code)
+            continue
+        try:
+            codes.append(process.wait(timeout=max(
+                0,
+                terminate_deadline - time.monotonic(),
+            )))
+        except subprocess.TimeoutExpired:
+            codes.append(None)
+            survivors.append(process)
+    for process in survivors:
+        if process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    kill_deadline = time.monotonic() + kill_grace_s
+    for index, process in enumerate(processes):
+        if codes[index] is not None:
+            continue
+        try:
+            codes[index] = process.wait(timeout=max(
+                0,
+                kill_deadline - time.monotonic(),
+            ))
+        except subprocess.TimeoutExpired:
+            codes[index] = None
+    return codes
+
+
+def _completed_worker_failure(processes):
+    return any(
+        code is not None and code != 0
+        for code in (process.poll() for process in processes)
+    )
 
 
 def supervise_remote_workers(
@@ -1021,7 +1120,12 @@ def supervise_remote_workers(
                 start_new_session=True,
             )
             processes.append(process)
+        stop_requested = False
         while any(process.poll() is None for process in processes):
+            if _completed_worker_failure(processes):
+                violations.append("worker rank exited non-zero")
+                stop_requested = True
+                break
             owned = _descendant_pids({process.pid for process in processes})
             try:
                 inventory = _local_gpu_inventory()
@@ -1032,18 +1136,40 @@ def supervise_remote_workers(
                 )
             except Exception as error:
                 violations.append(f"{type(error).__name__}: {error}")
+                stop_requested = True
+                break
             if time.monotonic() - started > timeout_s:
                 violations.append("worker timeout")
-                for process in processes:
-                    if process.poll() is None:
-                        os.killpg(process.pid, signal.SIGTERM)
+                stop_requested = True
                 break
             time.sleep(poll_interval_s)
-        codes = [process.wait() for process in processes]
+        codes = _reap_worker_processes(
+            processes,
+            terminate=stop_requested,
+        )
     finally:
         for stream in streams:
             stream.close()
-    finalized = _finalize_worker_outputs(plan, codes)
+    try:
+        finalized = _finalize_worker_outputs(plan, codes)
+        finalization = {"complete": True, "error": None}
+    except Exception as error:
+        violations.append(
+            f"worker output finalization failed: "
+            f"{type(error).__name__}: {error}"
+        )
+        finalized = {
+            "timing_row_count": 0,
+            "migration_row_count": 0,
+            "cleanup": {
+                "classification": "DIRTY",
+                "rank_rows": [],
+            },
+        }
+        finalization = {
+            "complete": False,
+            "error": f"{type(error).__name__}: {error}",
+        }
     receipt = {
         "classification": (
             "PASS"
@@ -1057,6 +1183,7 @@ def supervise_remote_workers(
         "owned_pids": [process.pid for process in processes],
         "rank_exit_codes": codes,
         "violations": violations,
+        "finalization": finalization,
         **finalized,
     }
     write_json_atomic(

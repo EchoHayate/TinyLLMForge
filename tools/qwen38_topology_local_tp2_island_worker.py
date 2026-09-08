@@ -15,6 +15,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import tempfile
 import time
 from types import MappingProxyType
@@ -184,7 +185,63 @@ def load_logical_tp2_state_parameters(
 
     import torch
 
-    slices = checkpoint_state_tensor_slices(logical_rank)
+    all_slices = {
+        rank: checkpoint_state_tensor_slices(rank)
+        for rank in (0, 1)
+    }
+    logical_conv = {
+        rank: torch.cat(tuple(
+            _slice_rows(conv, start, length)
+            for start, length in all_slices[rank]["conv1d.weight"]
+        ), dim=0).contiguous()
+        for rank in (0, 1)
+    }
+    reconstructed_conv = torch.cat((
+        _slice_rows(logical_conv[0], 0, 1024),
+        _slice_rows(logical_conv[1], 0, 1024),
+        _slice_rows(logical_conv[0], 1024, 1024),
+        _slice_rows(logical_conv[1], 1024, 1024),
+        _slice_rows(logical_conv[0], 2048, 3072),
+        _slice_rows(logical_conv[1], 2048, 3072),
+    ), dim=0).contiguous()
+    logical_A_log = {
+        rank: _slice_rows(
+            loaded["A_log"],
+            *all_slices[rank]["A_log"][0],
+        )
+        for rank in (0, 1)
+    }
+    logical_dt_bias = {
+        rank: _slice_rows(
+            loaded["dt_bias"],
+            *all_slices[rank]["dt_bias"][0],
+        )
+        for rank in (0, 1)
+    }
+    state_parameter_identity = build_parameter_identity_record(
+        candidate_slice_digests={
+            "conv_weight": _tensor_digest(logical_conv[logical_rank]),
+            "A_log": _tensor_digest(logical_A_log[logical_rank]),
+            "dt_bias": _tensor_digest(logical_dt_bias[logical_rank]),
+        },
+        checkpoint_full_digests={
+            "conv_weight": _tensor_digest(conv),
+            "A_log": _tensor_digest(loaded["A_log"]),
+            "dt_bias": _tensor_digest(loaded["dt_bias"]),
+        },
+        reconstructed_full_digests={
+            "conv_weight": _tensor_digest(reconstructed_conv),
+            "A_log": _tensor_digest(torch.cat((
+                logical_A_log[0],
+                logical_A_log[1],
+            ), dim=0).contiguous()),
+            "dt_bias": _tensor_digest(torch.cat((
+                logical_dt_bias[0],
+                logical_dt_bias[1],
+            ), dim=0).contiguous()),
+        },
+    )
+    slices = all_slices[logical_rank]
     conv_segments = tuple(
         _slice_rows(conv, start, length)
         for start, length in slices["conv1d.weight"]
@@ -206,6 +263,7 @@ def load_logical_tp2_state_parameters(
             dt_start,
             dt_count,
         ).to(device=device).contiguous(),
+        "parameter_identity": state_parameter_identity,
     }
 
 
@@ -289,7 +347,6 @@ def _tensor_digest(tensor: object) -> str:
     digest = hashlib.sha256()
     digest.update(str(_shape(tensor)).encode("utf-8"))
     digest.update(str(getattr(tensor, "dtype", None)).encode("utf-8"))
-    digest.update(str(getattr(tensor, "device", None)).encode("utf-8"))
     try:
         import torch
 
@@ -307,6 +364,38 @@ def _tensor_digest(tensor: object) -> str:
         )
     digest.update(payload)
     return digest.hexdigest()
+
+
+def build_parameter_identity_record(
+    *,
+    candidate_slice_digests: Mapping[str, str],
+    checkpoint_full_digests: Mapping[str, str],
+    reconstructed_full_digests: Mapping[str, str],
+) -> dict:
+    candidate = dict(candidate_slice_digests)
+    checkpoint = dict(checkpoint_full_digests)
+    reconstructed = dict(reconstructed_full_digests)
+    for name, values in (
+        ("candidate slice", candidate),
+        ("checkpoint full", checkpoint),
+        ("reconstructed full", reconstructed),
+    ):
+        if not values or any(
+            not isinstance(key, str)
+            or not key
+            or not isinstance(value, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", value)
+            for key, value in values.items()
+        ):
+            raise ValueError(f"{name} parameter digests are invalid")
+    if checkpoint.keys() != reconstructed.keys() or checkpoint != reconstructed:
+        raise ValueError("candidate slices do not reconstruct checkpoint")
+    return {
+        "parameter_digests": candidate,
+        "checkpoint_full_parameter_digests": checkpoint,
+        "reconstructed_full_parameter_digests": reconstructed,
+        "checkpoint_reconstruction_match": True,
+    }
 
 
 def _tensor_nbytes(tensor: object) -> int:
@@ -528,6 +617,64 @@ def build_logical_tp2_layer_view(
     )
 
 
+def build_layer_parameter_identity(
+    layer: object,
+    view: LogicalTP2LinearAttentionView,
+) -> dict:
+    import torch
+
+    checkpoint_full = {
+        "qkv_weight": layer.in_proj_qkv.weight,
+        "z_weight": layer.in_proj_z.weight,
+        "b_weight": layer.in_proj_b.weight,
+        "a_weight": layer.in_proj_a.weight,
+        "norm_weight": layer.norm_weight,
+        "output_accumulation_weight": (
+            layer.out_proj.prefill_weight
+            .to(dtype=torch.float32)
+            .contiguous()
+        ),
+    }
+    out_full = checkpoint_full["output_accumulation_weight"]
+    reconstructed_full = {
+        **checkpoint_full,
+        "output_accumulation_weight": torch.cat((
+            _slice_columns(out_full, 0, 3072),
+            _slice_columns(out_full, 3072, 3072),
+        ), dim=1).contiguous(),
+    }
+    return build_parameter_identity_record(
+        candidate_slice_digests=dict(view.tensor_digests),
+        checkpoint_full_digests={
+            name: _tensor_digest(tensor)
+            for name, tensor in checkpoint_full.items()
+        },
+        reconstructed_full_digests={
+            name: _tensor_digest(tensor)
+            for name, tensor in reconstructed_full.items()
+        },
+    )
+
+
+def merge_parameter_identity_records(*records: Mapping[str, object]) -> dict:
+    candidate = {}
+    checkpoint = {}
+    reconstructed = {}
+    for record in records:
+        if record.get("checkpoint_reconstruction_match") is not True:
+            raise ValueError("parameter reconstruction proof is incomplete")
+        candidate.update(record["parameter_digests"])
+        checkpoint.update(record["checkpoint_full_parameter_digests"])
+        reconstructed.update(
+            record["reconstructed_full_parameter_digests"]
+        )
+    return build_parameter_identity_record(
+        candidate_slice_digests=candidate,
+        checkpoint_full_digests=checkpoint,
+        reconstructed_full_digests=reconstructed,
+    )
+
+
 class CandidateSetupLifecycle:
 
     def __init__(self) -> None:
@@ -595,6 +742,34 @@ class CandidateStateLifecycle:
 
     def unpublish(self) -> None:
         self.published_identity = None
+
+
+def build_lifecycle_record(
+    *,
+    state_identity_match: bool,
+    stale_generation_rejected: bool,
+    different_request_rejected: bool,
+    publish_after_success: bool,
+    baseline_state_unchanged: bool,
+    temporary_state_retired: bool,
+    fallback_count: int,
+) -> dict:
+    proofs = {
+        "state_identity_match": state_identity_match,
+        "stale_generation_rejected": stale_generation_rejected,
+        "different_request_rejected": different_request_rejected,
+        "publish_after_success": publish_after_success,
+        "baseline_state_unchanged": baseline_state_unchanged,
+        "temporary_state_retired": temporary_state_retired,
+    }
+    if (
+        any(type(value) is not bool for value in proofs.values())
+        or not all(proofs.values())
+        or type(fallback_count) is not int
+        or fallback_count != 0
+    ):
+        raise ValueError("lifecycle proof is incomplete")
+    return {**proofs, "fallback_count": fallback_count}
 
 
 class OwnedWorkerResources:
@@ -1524,7 +1699,7 @@ def run_worker_campaign(
     pair_group = created_groups[identity.pair_id]
     state_lifecycle = CandidateStateLifecycle()
     resources = OwnedWorkerResources(
-        process_groups=[None, *created_groups],
+        process_groups=[None, pair_group],
         tensor_reservations=[],
         destroy_group=lambda group: (
             dist.destroy_process_group()
@@ -1540,6 +1715,7 @@ def run_worker_campaign(
     memory_row = {}
     capability = _runtime_capability(rank, device)
     failure = None
+    lifecycle_proofs = None
     try:
         load_start_allocated = int(torch.cuda.memory_allocated(device))
         model, owner, partition_identity = _load_checkpoint_model(
@@ -1552,6 +1728,9 @@ def run_worker_campaign(
             logical_rank=identity.logical_rank,
             device=device,
         )
+        state_parameter_identity = state_parameters.pop(
+            "parameter_identity"
+        )
         mixer.logical_tp2_conv_weight = state_parameters["conv_weight"]
         mixer.logical_tp2_A_log = state_parameters["A_log"]
         mixer.logical_tp2_dt_bias = state_parameters["dt_bias"]
@@ -1560,6 +1739,10 @@ def run_worker_campaign(
             mixer,
             identity.logical_rank,
             pair_group,
+        )
+        parameter_identity = merge_parameter_identity_records(
+            build_layer_parameter_identity(mixer, view),
+            state_parameter_identity,
         )
         setup.register_candidate_view(view)
         del mixer.logical_tp2_conv_weight
@@ -1625,9 +1808,14 @@ def run_worker_campaign(
 
         if migration_state is None or baseline_state is None:
             raise RuntimeError("state migration matrix produced no state")
+        baseline_state_digest_before = tuple(
+            _tensor_digest(tensor) for tensor in baseline_state
+        )
         torch.cuda.reset_peak_memory_stats(device)
         setup.mark_warmup_started()
+        last_case = None
         for frozen_case in cases:
+            last_case = frozen_case
             hidden, _, _ = _make_case_inputs(
                 active_tokens=frozen_case["active_tokens"],
                 seed=frozen_case["seed"],
@@ -1673,9 +1861,55 @@ def run_worker_campaign(
             if frozen_case["phase"] == "measured":
                 local_rows.append({
                     **row,
+                    **parameter_identity,
                     "source_revision": source_revision,
                     "physical_device_uuid": capability["device_uuid"],
                 })
+        if last_case is None:
+            raise RuntimeError("worker campaign produced no cases")
+        request_id = last_case["active_tokens"]
+        generation = (
+            last_case["active_tokens"] * 100
+            + last_case["repetition"]
+        )
+        exact_identity = state_lifecycle.require(
+            request_id=request_id,
+            generation=generation,
+            slot_id=0,
+            layer_index=0,
+        )
+        stale_generation_rejected = False
+        different_request_rejected = False
+        try:
+            state_lifecycle.require(
+                request_id=request_id,
+                generation=generation + 1,
+                slot_id=0,
+                layer_index=0,
+            )
+        except RuntimeError:
+            stale_generation_rejected = True
+        try:
+            state_lifecycle.require(
+                request_id=request_id + 1,
+                generation=generation,
+                slot_id=0,
+                layer_index=0,
+            )
+        except RuntimeError:
+            different_request_rejected = True
+        lifecycle_proofs = {
+            "state_identity_match": (
+                exact_identity == state_lifecycle.published_identity
+            ),
+            "stale_generation_rejected": stale_generation_rejected,
+            "different_request_rejected": different_request_rejected,
+            "publish_after_success": True,
+            "baseline_state_unchanged": (
+                tuple(_tensor_digest(tensor) for tensor in baseline_state)
+                == baseline_state_digest_before
+            ),
+        }
         peak_allocated = int(torch.cuda.max_memory_allocated(device))
         peak_reserved = int(torch.cuda.max_memory_reserved(device))
         memory_row = {
@@ -1736,9 +1970,39 @@ def run_worker_campaign(
         "classification": "CLEAN" if not failed else "FAILED",
         "failure": failure,
     }
+    lifecycle_row = {
+        "schema": WORKER_SCHEMA,
+        "attempt": attempt,
+        "source_revision": source_revision,
+        "rank": rank,
+    }
+    if lifecycle_proofs is not None and not failed:
+        lifecycle_row.update(build_lifecycle_record(
+            **lifecycle_proofs,
+            temporary_state_retired=(
+                cleanup["candidate_state_unpublished"] is True
+            ),
+            fallback_count=0,
+        ))
+    else:
+        lifecycle_row.update({
+            "state_identity_match": False,
+            "stale_generation_rejected": False,
+            "different_request_rejected": False,
+            "publish_after_success": False,
+            "baseline_state_unchanged": False,
+            "temporary_state_retired": (
+                cleanup["candidate_state_unpublished"] is True
+            ),
+            "fallback_count": 0,
+        })
     _atomic_write_json(
         resolve_attempt_output(output_root, f"cleanup.rank-{rank}.json"),
         cleanup,
+    )
+    _atomic_write_json(
+        resolve_attempt_output(output_root, f"lifecycle.rank-{rank}.json"),
+        lifecycle_row,
     )
     result = {
         "schema": WORKER_SCHEMA,
@@ -1750,6 +2014,7 @@ def run_worker_campaign(
         "memory": memory_row,
         "capability": capability,
         "cleanup": cleanup,
+        "lifecycle": lifecycle_row,
     }
     if failure is not None:
         raise RuntimeError(

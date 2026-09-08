@@ -139,6 +139,7 @@ def _memory_rows():
 
 def passing_inputs():
     identity = _identity()
+    checkpoint_digests = {"full": "c" * 64}
     return {
         "source_identity": {
             **identity,
@@ -189,6 +190,23 @@ def passing_inputs():
             "mlp_parameters_changed": False,
             "replica_digest_match": True,
             "checkpoint_reconstruction_match": True,
+            "rank_parameter_evidence": [
+                {
+                    "rank": rank,
+                    "logical_rank": rank % 2,
+                    "parameter_digests": {
+                        "slice": ("a" if rank % 2 == 0 else "b") * 64,
+                    },
+                    "checkpoint_full_parameter_digests": (
+                        dict(checkpoint_digests)
+                    ),
+                    "reconstructed_full_parameter_digests": (
+                        dict(checkpoint_digests)
+                    ),
+                    "checkpoint_reconstruction_match": True,
+                }
+                for rank in range(4)
+            ],
         },
         "timing_rows": _timing_rows(),
         "migration_rows": _migration_rows(),
@@ -198,6 +216,8 @@ def passing_inputs():
                 **identity,
                 "rank": rank,
                 "state_identity_match": True,
+                "stale_generation_rejected": True,
+                "different_request_rejected": True,
                 "publish_after_success": True,
                 "baseline_state_unchanged": True,
                 "temporary_state_retired": True,
@@ -310,6 +330,14 @@ def test_assembler_accepts_any_frozen_rank_partition(tmp_path):
         row["pair_groups"] = pair_groups
     for row in inputs["cleanup"]["rank_rows"]:
         row["pair_groups"] = pair_groups
+    for row in inputs["parameter_slices"]["rank_parameter_evidence"]:
+        rank = row["rank"]
+        pair_id = 0 if rank in pair_groups[0] else 1
+        logical_rank = pair_groups[pair_id].index(rank)
+        row["logical_rank"] = logical_rank
+        row["parameter_digests"] = {
+            "slice": ("a" if logical_rank == 0 else "b") * 64,
+        }
 
     assert assemble_bundle(tmp_path, **inputs)["classification"] == (
         "GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE"
@@ -354,6 +382,7 @@ def test_assembler_enforces_frozen_boundaries(
         "candidate_global_collective",
         "fallback",
         "incomplete_cleanup",
+        "parameter_reconstruction_mismatch",
     ),
 )
 def test_assembler_rejects_invalid_evidence(tmp_path, mutation):
@@ -380,6 +409,10 @@ def test_assembler_rejects_invalid_evidence(tmp_path, mutation):
         inputs["cleanup"]["rank_rows"][0][
             "candidate_state_unpublished"
         ] = False
+    elif mutation == "parameter_reconstruction_mismatch":
+        inputs["parameter_slices"]["rank_parameter_evidence"][3][
+            "reconstructed_full_parameter_digests"
+        ]["full"] = "d" * 64
 
     result = assemble_bundle(tmp_path, **inputs)
 

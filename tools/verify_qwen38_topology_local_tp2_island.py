@@ -250,6 +250,47 @@ def _pair_identity(rank, pair_groups):
     raise ValueError("rank is absent from pair groups")
 
 
+def _valid_parameter_slices(payload, pair_groups):
+    rows = payload.get("rank_parameter_evidence")
+    if (
+        payload.get("replica_digest_match") is not True
+        or payload.get("checkpoint_reconstruction_match") is not True
+        or not _validate_rank_rows(rows)
+    ):
+        return False
+    by_logical_rank = {}
+    checkpoint_digests = []
+    for row in rows:
+        rank = row["rank"]
+        _, logical_rank = _pair_identity(rank, pair_groups)
+        candidate = row.get("parameter_digests")
+        checkpoint = row.get("checkpoint_full_parameter_digests")
+        reconstructed = row.get("reconstructed_full_parameter_digests")
+        if (
+            row.get("logical_rank") != logical_rank
+            or row.get("checkpoint_reconstruction_match") is not True
+            or not isinstance(candidate, dict)
+            or not candidate
+            or not isinstance(checkpoint, dict)
+            or not checkpoint
+            or checkpoint != reconstructed
+        ):
+            return False
+        by_logical_rank.setdefault(logical_rank, []).append(candidate)
+        checkpoint_digests.append(checkpoint)
+    return (
+        all(
+            len(values) == 2 and values[0] == values[1]
+            for values in by_logical_rank.values()
+        )
+        and len(by_logical_rank) == 2
+        and all(
+            value == checkpoint_digests[0]
+            for value in checkpoint_digests[1:]
+        )
+    )
+
+
 def _valid_timing_rows(rows, identity):
     if not isinstance(rows, list) or len(rows) != 180:
         return False
@@ -498,8 +539,10 @@ def _evidence_is_valid(payloads):
             or parameter_slices.get("linear_attention_only") is not True
             or parameter_slices.get("full_attention_parameters_changed") is not False
             or parameter_slices.get("mlp_parameters_changed") is not False
-            or parameter_slices.get("replica_digest_match") is not True
-            or parameter_slices.get("checkpoint_reconstruction_match") is not True
+            or not _valid_parameter_slices(
+                parameter_slices,
+                identity["pair_groups"],
+            )
             or not _valid_timing_rows(timing_rows, identity)
             or not _valid_migration_rows(migration_rows, identity)
             or not _validate_rank_rows(payloads["memory_rows"])
@@ -546,6 +589,8 @@ def _correctness_passes(payloads):
         )
         and all(
             row.get("state_identity_match") is True
+            and row.get("stale_generation_rejected") is True
+            and row.get("different_request_rejected") is True
             and row.get("publish_after_success") is True
             and row.get("baseline_state_unchanged") is True
             and row.get("temporary_state_retired") is True

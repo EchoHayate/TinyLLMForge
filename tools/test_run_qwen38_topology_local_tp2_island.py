@@ -143,6 +143,9 @@ def test_worker_commands_freeze_world_rank_gpu_map_and_pair_groups():
         assert command["environment"]["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
         assert command["environment"]["MASTER_PORT"] == "29683"
         assert "--pair-groups" in command["argv"]
+        assert command["argv"][
+            command["argv"].index("--pair-groups") + 1
+        ] == "0,1;2,3"
 
 
 def test_ssh_255_retries_only_within_fixed_budget():
@@ -197,6 +200,7 @@ def test_compact_download_excludes_raw_and_runtime():
     encoded = " ".join(members)
 
     assert "final_bundle" in encoded
+    assert "controller/controller_result.json" not in members
     assert "/raw" not in encoded
     assert "/runtime" not in encoded
 
@@ -271,6 +275,21 @@ def test_changed_memory_inventory_blocks_before_worker_launch():
     assert result["worker_started"] is False
 
 
+def test_extra_clean_gpu_does_not_displace_frozen_selection():
+    selected = [_gpu(index) for index in range(1, 5)]
+    clean = [_gpu(index) for index in range(5)]
+    plan = _plan(selected_gpus=selected)
+
+    result = run_attempt(
+        plan,
+        dry_run=True,
+        kerberos_probe=lambda: _kerberos(),
+        gpu_probe=lambda: clean,
+    )
+
+    assert result["classification"] == "DRY_RUN_READY"
+
+
 def test_run_attempt_requires_dual_verifier_agreement():
     events = []
     clean = [_gpu(index) for index in range(4)]
@@ -336,6 +355,162 @@ def test_failure_path_writes_terminal_receipt():
 
     assert result["classification"] == "FAILED_CONTROLLER"
     assert terminal == [result]
+
+
+def test_worker_reaper_escalates_without_unbounded_wait(monkeypatch):
+    signals = []
+
+    class Process:
+        pid = 123
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            assert timeout is not None
+            if len(signals) == 1:
+                raise controller_module.subprocess.TimeoutExpired(
+                    cmd=["worker"],
+                    timeout=timeout,
+                )
+            return -9
+
+    monkeypatch.setattr(
+        controller_module.os,
+        "killpg",
+        lambda pid, sent_signal: signals.append((pid, sent_signal)),
+    )
+
+    codes = controller_module._reap_worker_processes(
+        [Process()],
+        terminate_grace_s=0.01,
+        kill_grace_s=0.01,
+    )
+
+    assert signals == [
+        (123, controller_module.signal.SIGTERM),
+        (123, controller_module.signal.SIGKILL),
+    ]
+    assert codes == [-9]
+
+
+def test_worker_reaper_tolerates_process_group_exit_race(monkeypatch):
+    class Process:
+        pid = 123
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            assert timeout is not None
+            return -15
+
+    monkeypatch.setattr(
+        controller_module.os,
+        "killpg",
+        lambda _pid, _signal: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+
+    assert controller_module._reap_worker_processes(
+        [Process()],
+        terminate_grace_s=0.01,
+        kill_grace_s=0.01,
+    ) == [-15]
+
+
+def test_completed_nonzero_rank_requests_peer_termination():
+    class Process:
+        def __init__(self, code):
+            self.code = code
+
+        def poll(self):
+            return self.code
+
+    assert controller_module._completed_worker_failure([
+        Process(0),
+        Process(None),
+        Process(7),
+    ]) is True
+    assert controller_module._completed_worker_failure([
+        Process(0),
+        Process(None),
+    ]) is False
+
+
+def test_parameter_manifest_does_not_infer_reconstruction_from_replicas():
+    rows = [
+        {
+            "rank": rank,
+            "logical_rank": rank % 2,
+            "parameter_digests": {"slice": str(rank % 2)},
+            "checkpoint_full_parameter_digests": {"full": "a" * 64},
+            "reconstructed_full_parameter_digests": {
+                "full": ("a" if rank != 3 else "b") * 64
+            },
+            "checkpoint_reconstruction_match": rank != 3,
+        }
+        for rank in range(4)
+    ]
+
+    manifest = controller_module._build_parameter_slice_manifest(
+        rows,
+        identity={"attempt": "a", "source_revision": "b" * 40},
+    )
+
+    assert manifest["replica_digest_match"] is True
+    assert manifest["checkpoint_reconstruction_match"] is False
+
+
+def test_supervisor_writes_failure_receipt_when_worker_outputs_missing(
+    tmp_path,
+    monkeypatch,
+):
+    plan = _plan()
+    plan.update({
+        "attempt_root": str(tmp_path / "attempt"),
+        "raw_root": str(tmp_path / "attempt" / "raw"),
+        "controller_root": str(tmp_path / "attempt" / "controller"),
+        "source_root": str(tmp_path / "attempt" / "source"),
+        "environment": {
+            "HF_HOME": str(tmp_path / "attempt" / "hf"),
+            "TMPDIR": str(tmp_path / "attempt" / "tmp"),
+            "TORCH_HOME": str(tmp_path / "attempt" / "torch"),
+        },
+    })
+
+    class Process:
+        def __init__(self, *args, **kwargs):
+            self.pid = 100 + len(processes)
+            processes.append(self)
+
+        def poll(self):
+            return 7
+
+        def wait(self, timeout=None):
+            assert timeout is not None
+            return 7
+
+    processes = []
+    monkeypatch.setattr(
+        controller_module,
+        "_validate_plan",
+        lambda _plan: _plan["selected_gpus"],
+    )
+    monkeypatch.setattr(controller_module.subprocess, "Popen", Process)
+
+    receipt = controller_module.supervise_remote_workers(
+        plan,
+        poll_interval_s=0,
+        timeout_s=1,
+    )
+
+    assert receipt["classification"] == "FAIL"
+    assert receipt["rank_exit_codes"] == [7, 7, 7, 7]
+    assert receipt["finalization"]["complete"] is False
+    assert "FileNotFoundError" in receipt["finalization"]["error"]
+    assert (
+        tmp_path / "attempt" / "controller" / "supervisor_receipt.json"
+    ).is_file()
 
 
 def test_receipt_names_are_frozen():
