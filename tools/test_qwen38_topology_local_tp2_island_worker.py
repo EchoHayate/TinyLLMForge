@@ -904,6 +904,31 @@ def test_correctness_gather_contiguousizes_input_and_destinations():
     assert calls[0][1].label == "strided.contiguous"
 
 
+def test_correctness_failure_summary_names_false_gates_and_errors():
+    worker = _load()
+    row = {
+        "output_within_tolerance": False,
+        "convolution_within_tolerance": True,
+        "recurrent_within_tolerance": False,
+        "pair_replicas_within_tolerance": True,
+        "greedy_argmax_equal": True,
+        "finite": True,
+        "output_max_abs_error": 0.25,
+        "recurrent_max_abs_error": 0.5,
+    }
+
+    summary = worker.build_correctness_failure_summary(row)
+
+    assert summary["failed_fields"] == [
+        "output_within_tolerance",
+        "recurrent_within_tolerance",
+    ]
+    assert summary["error_metrics"] == {
+        "output_max_abs_error": 0.25,
+        "recurrent_max_abs_error": 0.5,
+    }
+
+
 def test_candidate_timed_path_has_only_pair_local_collective():
     worker = _load()
     source = inspect.getsource(worker.run_candidate_mixer)

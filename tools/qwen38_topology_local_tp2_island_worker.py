@@ -44,6 +44,14 @@ CONV_KERNEL_WIDTH = 4
 LINEAR_ATTENTION_LAYERS = 48
 STATE_CAPACITY = 8
 PROJECTED_STEADY_INCREMENT_CEILING_BYTES = 1920 * 1024 * 1024
+CORRECTNESS_FIELDS = (
+    "output_within_tolerance",
+    "convolution_within_tolerance",
+    "recurrent_within_tolerance",
+    "pair_replicas_within_tolerance",
+    "greedy_argmax_equal",
+    "finite",
+)
 
 
 def checkpoint_state_tensor_slices(
@@ -1213,6 +1221,22 @@ def gather_contiguous_world(
     return gathered
 
 
+def build_correctness_failure_summary(row: Mapping[str, object]) -> dict:
+    if not isinstance(row, Mapping):
+        raise ValueError("correctness row must be a mapping")
+    return {
+        "failed_fields": [
+            field for field in CORRECTNESS_FIELDS
+            if row.get(field) is not True
+        ],
+        "error_metrics": {
+            key: value
+            for key, value in sorted(row.items())
+            if key.endswith("_error")
+        },
+    }
+
+
 def run_mixer_pair(
     *,
     attempt: str,
@@ -1921,17 +1945,15 @@ def run_worker_campaign(
                 candidate_states=migration_state,
                 downstream_weight=downstream_weight,
             )
-            correctness_fields = (
-                "output_within_tolerance",
-                "convolution_within_tolerance",
-                "recurrent_within_tolerance",
-                "pair_replicas_within_tolerance",
-                "greedy_argmax_equal",
-                "finite",
-            )
-            if not all(row[field] is True for field in correctness_fields):
+            if not all(
+                row[field] is True for field in CORRECTNESS_FIELDS
+            ):
                 raise RuntimeError(
-                    "mixer correctness or lifecycle gate failed"
+                    "mixer correctness or lifecycle gate failed: "
+                    + json.dumps(
+                        build_correctness_failure_summary(row),
+                        sort_keys=True,
+                    )
                 )
             state_lifecycle.publish(
                 request_id=frozen_case["active_tokens"],
