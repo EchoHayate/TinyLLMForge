@@ -673,6 +673,7 @@ def _query_remote_inventory(args):
 
 
 def _parse_topology_rows(matrix, selected):
+    matrix = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", matrix)
     lines = [line.split() for line in matrix.splitlines() if line.strip()]
     header = next(
         row for row in lines

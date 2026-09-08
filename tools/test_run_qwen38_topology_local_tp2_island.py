@@ -16,6 +16,7 @@ from tools.run_qwen38_topology_local_tp2_island import (
     build_attempt_plan,
     build_remote_worker_commands,
     compact_download_members,
+    _parse_topology_rows,
     run_attempt,
     run_ssh_with_retry,
     select_owned_process_groups,
@@ -100,6 +101,32 @@ def _kerberos():
 
 def test_kerberos_launch_floor_is_three_hours():
     assert MINIMUM_KERBEROS_LIFETIME_SECONDS == 10_800
+
+
+def test_topology_parser_accepts_ansi_styled_nvidia_smi_header():
+    matrix = "\n".join([
+        "\t\x1b[4mGPU0\tGPU1\tGPU2\tGPU3\tGPU4\tGPU5\tGPU6\tGPU7"
+        "\tCPU Affinity\x1b[0m",
+        "GPU0\t X \tPIX\tPXB\tPXB\tSYS\tSYS\tSYS\tSYS\t0-15",
+        "GPU1\tPIX\t X \tPXB\tPXB\tSYS\tSYS\tSYS\tSYS\t0-15",
+        "GPU2\tPXB\tPXB\t X \tPIX\tSYS\tSYS\tSYS\tSYS\t0-15",
+        "GPU3\tPXB\tPXB\tPIX\t X \tSYS\tSYS\tSYS\tSYS\t0-15",
+        "GPU4\tSYS\tSYS\tSYS\tSYS\t X \tPIX\tPXB\tPXB\t16-31",
+        "GPU5\tSYS\tSYS\tSYS\tSYS\tPIX\t X \tPXB\tPXB\t16-31",
+        "GPU6\tSYS\tSYS\tSYS\tSYS\tPXB\tPXB\t X \tPIX\t16-31",
+        "GPU7\tSYS\tSYS\tSYS\tSYS\tPXB\tPXB\tPIX\t X \t16-31",
+    ])
+    selected = [_gpu(index) for index in (2, 3, 6, 7)]
+
+    rows = _parse_topology_rows(matrix, selected)
+
+    links = {
+        (row["left_rank"], row["right_rank"]): row["link"]
+        for row in rows
+    }
+    assert links[(0, 1)] == "PIX"
+    assert links[(2, 3)] == "PIX"
+    assert links[(0, 2)] == "SYS"
 
 
 def test_plan_freezes_safe_paths_four_gpus_and_best_pair_map():
