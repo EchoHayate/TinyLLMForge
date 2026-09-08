@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import time
 
 import torch
 
 from tinyvllm.engine.qwen38_topology_local_tp2_state import (
+    build_qwen38_tp4_state_component_digests,
     build_qwen38_topology_local_tp2_state_owner,
 )
 from tinyvllm.layers.qwen38_topology_local_tp2_linear_attention import (
@@ -23,6 +25,16 @@ _PAIR_GROUPS = ((0, 1), (2, 3))
 _LINEAR_LAYER_INDICES = tuple(
     index for index in range(64) if index % 4 != 3
 )
+
+
+def _tensor_digest(tensor) -> str:
+    digest = hashlib.sha256()
+    digest.update(str(tuple(tensor.shape)).encode("utf-8"))
+    digest.update(str(tensor.dtype).encode("utf-8"))
+    digest.update(
+        tensor.detach().contiguous().view(torch.uint8).cpu().numpy().tobytes()
+    )
+    return digest.hexdigest()
 
 
 def _cohort_identity(leases: tuple[object, ...]) -> tuple[
@@ -51,6 +63,10 @@ def _cohort_identity(leases: tuple[object, ...]) -> tuple[
     if len({row[0] for row in rows}) != len(rows):
         raise ValueError(
             "candidate leases must reference distinct slots"
+        )
+    if len({row[2] for row in rows}) != len(rows):
+        raise ValueError(
+            "candidate leases must reference distinct request ids"
         )
     return tuple(rows)
 
@@ -213,6 +229,98 @@ class Qwen38TopologyLocalTP2Runtime:
         self._transition_count = 0
         self._last_transition_latency_ns = None
         self._candidate_state_released = False
+        self._fallback_calls = 0
+        self._post_warmup_request_path_allocations = 0
+        self._prefix_restore_calls = 0
+        self._prefix_publication_calls = 0
+        self._retry_after_mutation_calls = 0
+        self._duplicate_commit_calls = 0
+        self._pair_replica_comparison_failures = 0
+
+    def enable_correctness_trace(self, enabled: bool) -> dict:
+        for mixer in self.mixers:
+            mixer.enable_correctness_trace(enabled)
+        return {
+            "rank": int(self.pair_context.identity.global_rank),
+            "enabled": bool(enabled),
+        }
+
+    def correctness_checkpoint(
+        self,
+        leases: tuple[object, ...],
+    ) -> dict:
+        leases = tuple(leases)
+        cohort = _cohort_identity(leases)
+        if self.phase == "tp4_prefill":
+            state_layout = "tp4_source_quarter"
+            state_rows = ()
+            canonical_state_components = (
+                build_qwen38_tp4_state_component_digests(
+                    source_transaction=(
+                        self.baseline_owner.state_transaction
+                    ),
+                    leases=leases,
+                    global_rank=int(
+                        self.pair_context.identity.global_rank
+                    ),
+                )
+            )
+        elif (
+            self.phase == "tp2_decode"
+            and cohort == _cohort_identity(self._active_leases)
+        ):
+            state_layout = "tp2_logical_half"
+            state_rows = self.candidate_state_owner.gather(
+                leases
+            )
+            canonical_state_components = (
+                self.candidate_state_owner
+                .correctness_state_component_digests(leases)
+            )
+        else:
+            raise RuntimeError(
+                "correctness checkpoint requires an active "
+                "prefill or fixed decode cohort"
+            )
+        return {
+            "rank": int(self.pair_context.identity.global_rank),
+            "pair_id": int(self.pair_context.identity.pair_id),
+            "logical_rank": int(
+                self.pair_context.identity.logical_rank
+            ),
+            "state_layout": state_layout,
+            "cohort": [{
+                "slot_id": slot_id,
+                "generation": generation,
+                "request_id": request_id,
+            } for slot_id, generation, request_id in cohort],
+            "output_digests": [
+                {
+                    "layer_index": layer_index,
+                    "sha256": mixer.correctness_output_digest(),
+                }
+                for layer_index, mixer in zip(
+                    self.linear_layer_indices,
+                    self.mixers,
+                )
+            ] if self.phase == "tp2_decode" else [],
+            "state_digests": [
+                {
+                    "layer_index": row["layer_index"],
+                    "convolution_sha256": _tensor_digest(
+                        row["convolution_states"]
+                    ),
+                    "recurrent_sha256": _tensor_digest(
+                        row["recurrent_states"]
+                    ),
+                }
+                for row in state_rows
+            ],
+            "canonical_state_components": (
+                canonical_state_components
+            ),
+            "runtime_snapshot": self.snapshot(),
+        }
 
     def prepare_decode(self, leases: tuple[object, ...]) -> dict:
         cohort = _cohort_identity(leases)
@@ -232,6 +340,7 @@ class Qwen38TopologyLocalTP2Runtime:
                 leases
             )
             published = True
+            self._active_leases = leases
             self.model.layer_stack.state_transaction = (
                 self.candidate_state_owner.destination_transaction
             )
@@ -261,7 +370,6 @@ class Qwen38TopologyLocalTP2Runtime:
         self._last_transition_latency_ns = (
             time.monotonic_ns() - started_ns
         )
-        self._active_leases = leases
         if release_rows:
             self._release_rows = release_rows
             self._decode_accumulation_released = True
@@ -294,6 +402,8 @@ class Qwen38TopologyLocalTP2Runtime:
             )
         try:
             self.candidate_state_owner.release(leases)
+            self._active_leases = ()
+            self._candidate_state_released = True
             self.model.layer_stack.state_transaction = (
                 self.baseline_owner.state_transaction
             )
@@ -304,8 +414,6 @@ class Qwen38TopologyLocalTP2Runtime:
             raise
         self.phase = "tp4_prefill"
         self._fixed_cohort = None
-        self._active_leases = ()
-        self._candidate_state_released = True
         return {
             "released_requests": len(leases),
             "phase": self.phase,
@@ -332,6 +440,16 @@ class Qwen38TopologyLocalTP2Runtime:
                 int(row["released_bytes"])
                 for row in self._release_rows
             ),
+            "fallback_calls": self._fallback_calls,
+            "post_warmup_request_path_allocations":
+                self._post_warmup_request_path_allocations,
+            "prefix_restore_calls": self._prefix_restore_calls,
+            "prefix_publication_calls": self._prefix_publication_calls,
+            "retry_after_mutation_calls":
+                self._retry_after_mutation_calls,
+            "duplicate_commit_calls": self._duplicate_commit_calls,
+            "pair_replica_comparison_failures":
+                self._pair_replica_comparison_failures,
             "state": self.candidate_state_owner.snapshot(),
             "mixers": tuple(
                 mixer.telemetry_snapshot()

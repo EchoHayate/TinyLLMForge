@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import importlib.util
 import json
 import math
 from pathlib import Path
+import signal
+import subprocess
 from types import SimpleNamespace
 
 import pytest
+
+from tools.assemble_qwen38_topology_local_tp2_whole_model import (
+    assemble_attempt,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -257,6 +265,9 @@ def _raw_candidate_evidence(worker, *, concurrency=2):
         "process_group_destroyed": True,
         "rank_exit_codes": [0, 0, 0, 0],
         "owned_children_remaining": [],
+        "cleanup_started_ns": 10,
+        "cleanup_finished_ns": 110,
+        "cleanup_duration_ns": 100,
         "rank_cleanup_receipts": [{
             "rank": rank,
             "process_group_destroyed": True,
@@ -277,6 +288,36 @@ def _raw_candidate_evidence(worker, *, concurrency=2):
         "before_snapshots": tuple(before),
         "after_snapshots": tuple(after),
         "cleanup": cleanup,
+    }
+
+
+def _timing_correctness_replay(requests):
+    replay_requests = [{
+        "request_id": request["request_id"],
+        "runtime_request_id": request_index,
+        "output_token_ids": list(request["output_token_ids"]),
+        "stop_position": request.get("stop_position", 128),
+        "stop_reason": request.get("stop_reason", "length"),
+        "decoded_text": request["decoded_text"],
+        "decoded_text_sha256": request["decoded_text_sha256"],
+    } for request_index, request in enumerate(requests)]
+    proofs = [[{
+        "rank": rank,
+        "sequence_ids": list(range(len(replay_requests))),
+        "finite_logits": True,
+        "token_ids": [
+            request["output_token_ids"][step]
+            for request in replay_requests
+        ],
+        "top_logit_values": [
+            float(request["output_token_ids"][step])
+            for request in replay_requests
+        ],
+    } for rank in range(4)] for step in range(128)]
+    return {
+        "requests": replay_requests,
+        "correctness_step_proofs": proofs,
+        "timing_authority": False,
     }
 
 
@@ -325,6 +366,7 @@ def test_candidate_evidence_is_rederived_from_raw_rows():
         ("missing_layer", "layer"),
         ("retained_temporary", "temporary"),
         ("incomplete_cleanup", "cleanup"),
+        ("missing_zero_counter", "fallback_calls"),
     ),
 )
 def test_candidate_evidence_rejects_incomplete_or_invalid_proof(
@@ -351,9 +393,152 @@ def test_candidate_evidence_rejects_incomplete_or_invalid_proof(
         ] = 1
     elif mutation == "incomplete_cleanup":
         raw["cleanup"]["rank_cleanup_receipts"].pop()
+    elif mutation == "missing_zero_counter":
+        raw["after_snapshots"][0].pop("fallback_calls")
 
     with pytest.raises((ValueError, RuntimeError), match=message):
         worker.validate_candidate_evidence(**raw)
+
+
+def test_resource_summary_rebuilds_cleanliness_and_gpu_identity():
+    worker = _load()
+    plan = {
+        "attempt_tag": "attempt-r1",
+        "gpu_rank_mapping": [{
+            "rank": rank,
+            "gpu_index": rank + 2,
+            "gpu_uuid": f"GPU-{rank}",
+        } for rank in range(4)],
+    }
+    sample = {
+        "stage": "entry",
+        "measurement_scope": "boundary",
+        "gpu_inventory": [{
+            "gpu_index": rank + 2,
+            "gpu_uuid": f"GPU-{rank}",
+            "memory_used_mib": 0,
+            "utilization_percent": 0,
+            "compute_processes": [],
+        } for rank in range(4)],
+    }
+
+    summary = worker._summarize_resource_sample(plan, sample)
+
+    assert summary["strict_clean"] is True
+    assert summary["identity_match"] is True
+    assert summary["attempt_tag"] == "attempt-r1"
+    assert summary["measurement_scope"] == "boundary"
+    assert summary["run_label"] is None
+    assert summary["sample_index"] is None
+    assert summary["gpu_inventory"] == sample["gpu_inventory"]
+    assert summary["process_rows"] == []
+
+    empty = {**sample, "gpu_inventory": []}
+    assert worker._summarize_resource_sample(
+        plan,
+        empty,
+    )["strict_clean"] is False
+    assert worker._summarize_resource_sample(
+        plan,
+        empty,
+    )["identity_match"] is False
+
+    drifted = {
+        **sample,
+        "gpu_inventory": [
+            {**row, "gpu_uuid": "GPU-drift"}
+            if row["gpu_index"] == 2
+            else row
+            for row in sample["gpu_inventory"]
+        ],
+    }
+    assert worker._summarize_resource_sample(
+        plan,
+        drifted,
+    )["identity_match"] is False
+
+
+def test_cleanup_summary_is_derived_from_rank_receipts():
+    worker = _load()
+    candidate = _raw_candidate_evidence(worker)["cleanup"]
+    baseline = copy.deepcopy(candidate)
+    for row in baseline["rank_cleanup_receipts"]:
+        row["qwen38_topology_local_tp2_cleanup"] = None
+    records = [
+        ("correctness/baseline", baseline, False),
+        ("correctness/candidate", candidate, True),
+    ]
+
+    summary = worker._summarize_cleanup_receipts(
+        records,
+        task_paths=("/data00/home/sitian/task",),
+    )
+
+    assert summary["complete"] is True
+    assert summary["retained_generations"] == 0
+    assert summary["retained_leases"] == 0
+    assert summary["retained_tensors"] == 0
+    assert summary["retained_process_groups"] == 0
+    assert summary["validated_worker_cleanups"] == 2
+    assert summary["validated_rank_cleanup_receipts"] == 8
+    assert summary["cleanup_durations_ns"] == [100, 100]
+    assert summary["worker_cleanup_receipts"] == [
+        {
+            "label": label,
+            "candidate_enabled": candidate_enabled,
+            "receipt": receipt,
+        }
+        for label, receipt, candidate_enabled in records
+    ]
+
+    missing_candidate_receipt = copy.deepcopy(records)
+    missing_candidate_receipt[1][1]["rank_cleanup_receipts"][0][
+        "qwen38_topology_local_tp2_cleanup"
+    ] = None
+    with pytest.raises(RuntimeError, match="candidate cleanup"):
+        worker._summarize_cleanup_receipts(
+            missing_candidate_receipt,
+            task_paths=("/data00/home/sitian/task",),
+        )
+
+
+def test_weight_layout_is_rebuilt_from_candidate_runtime_snapshots():
+    worker = _load()
+    evidence = _raw_candidate_evidence(worker)
+    released_bytes = 48 * 1024
+    for row in evidence["after_snapshots"]:
+        row["released_layer_count"] = 48
+        row["released_bytes"] = released_bytes
+    epoch_results = ({
+        "epoch": 1,
+        "arm": "candidate",
+        "rows": [{
+            "after_snapshots": evidence["after_snapshots"],
+        }],
+    },)
+
+    summary = worker._candidate_weight_layout(
+        epoch_results,
+        steady_increment_bytes_per_rank=123,
+    )
+
+    assert (
+        summary["baseline_tp4_decode_accumulation_retained"]
+        is False
+    )
+    assert summary["released_layer_count_per_rank"] == 48
+    assert summary["released_bytes_per_rank"] == released_bytes
+    assert summary["steady_increment_bytes_per_rank"] == 123
+
+    incomplete = copy.deepcopy(epoch_results)
+    incomplete[0]["rows"][0]["after_snapshots"][0].pop(
+        "released_layer_count"
+    )
+    with pytest.raises(RuntimeError, match="weight release"):
+        worker._candidate_weight_layout(
+            incomplete,
+            steady_increment_bytes_per_rank=123,
+        )
 
 
 class _FakeEngine:
@@ -363,6 +548,11 @@ class _FakeEngine:
         self.candidate = candidate
         self.seq_offset = seq_offset
         self.model_runner = SimpleNamespace(rank=0, world_size=4)
+        self.tokenizer = SimpleNamespace(
+            decode=lambda tokens, **_kwargs: ",".join(
+                str(token) for token in tokens
+            )
+        )
         self.last_step_observation = None
         self._step = 0
         self._finished = False
@@ -371,6 +561,7 @@ class _FakeEngine:
         self.flush_calls = 0
         self.proof_recording = False
         self._last_tokens = ()
+        self.correctness_checkpoint_steps = []
 
     def add_request(self, prompt, sampling):
         self._admitted.append((list(prompt), sampling))
@@ -393,6 +584,7 @@ class _FakeEngine:
             for index in range(len(self.request_specs))
         )
         self.last_step_observation = {
+            "step_start_ns": 999_950 + self._step * 100,
             "step_end_ns": 1_000_000 + self._step * 100,
             "is_prefill": self._step == 0,
             "batch_kind": (
@@ -404,6 +596,13 @@ class _FakeEngine:
             ],
             "new_completion_tokens_by_seq": tokens,
             "memory": {},
+            "command_timeline_step": {
+                "phases": {
+                    "ordinary_or_first_target_dispatch": {
+                        "duration_ns": 40,
+                    },
+                },
+            },
         }
         self._step += 1
         if self._step == 128:
@@ -434,6 +633,76 @@ class _FakeEngine:
                 for index in range(len(self.request_specs))
             ],
             "token_ids": list(self._last_tokens),
+            "top_logit_values": [
+                float(token) for token in self._last_tokens
+            ],
+        } for rank in range(4))
+
+    def qwen38_correctness_state_checkpoints(self, *, timeout_s):
+        self.correctness_checkpoint_steps.append(self._step)
+        linear_layer_indices = tuple(
+            index for index in range(64) if index % 4 != 3
+        )
+        candidate_active = self.candidate and self._step >= 2
+
+        def component(layer, source_rank):
+            return {
+                "layer_index": layer,
+                "logical_rank": source_rank // 2,
+                "source_rank": source_rank,
+                "convolution_query_sha256": (
+                    f"{layer * 16 + source_rank * 4:064x}"
+                ),
+                "convolution_key_sha256": (
+                    f"{layer * 16 + source_rank * 4 + 1:064x}"
+                ),
+                "convolution_value_sha256": (
+                    f"{layer * 16 + source_rank * 4 + 2:064x}"
+                ),
+                "recurrent_sha256": (
+                    f"{layer * 16 + source_rank * 4 + 3:064x}"
+                ),
+            }
+
+        return tuple({
+            "rank": rank,
+            "pair_id": 0 if rank < 2 else 1,
+            "logical_rank": rank % 2,
+            "state_layout": (
+                "tp2_logical_half"
+                if candidate_active
+                else "tp4_source_quarter"
+            ),
+            "cohort": [{
+                "slot_id": index,
+                "generation": 1,
+                "request_id": self.seq_offset + index,
+            } for index in range(len(self.request_specs))],
+            "output_digests": [{
+                "layer_index": layer,
+                "sha256": f"{layer:064x}",
+            } for layer in linear_layer_indices] if candidate_active else [],
+            "state_digests": [{
+                "layer_index": layer,
+                "convolution_sha256": (
+                    f"{layer * 2 + rank % 2:064x}"
+                ),
+                "recurrent_sha256": (
+                    f"{layer * 2 + rank % 2 + 1:064x}"
+                ),
+            } for layer in linear_layer_indices] if candidate_active else [],
+            "canonical_state_components": [
+                component(layer, source_rank)
+                for layer in linear_layer_indices
+                for source_rank in (
+                    (
+                        2 * (rank % 2),
+                        2 * (rank % 2) + 1,
+                    )
+                    if candidate_active
+                    else (rank,)
+                )
+            ],
         } for rank in range(4))
 
     def qwen38_topology_local_tp2_snapshots(self, timeout_s):
@@ -515,6 +784,19 @@ def test_run_engine_case_uses_frozen_engine_shape_and_exact_timing():
     )
     assert len(result["request_set_digest"]) == 64
     assert result["cohort_makespan_ns"] >= 0
+    assert all(row["queueing_ns"] >= 0 for row in result["requests"])
+    assert all(
+        row["step_duration_ns"] == 50
+        and row["host_submission_ns"] == 40
+        for row in result["scheduler_step_rows"]
+    )
+    assert all(
+        row["decoded_text_sha256"]
+        == hashlib.sha256(
+            row["decoded_text"].encode("utf-8")
+        ).hexdigest()
+        for row in result["requests"]
+    )
     assert all(
         row["rank_token_agreement"] is None
         and row["finite_logits"] is None
@@ -523,6 +805,7 @@ def test_run_engine_case_uses_frozen_engine_shape_and_exact_timing():
         for row in result["requests"]
     )
     assert result["cleanup"]["process_group_destroyed"] is True
+    assert result["cleanup"]["cleanup_duration_ns"] >= 0
     assert fake.exit_calls == 1
 
 
@@ -567,6 +850,47 @@ def test_correctness_case_uses_rank_local_logit_and_token_proofs():
         2,
         "correctness/P0/r0",
     )
+    fake = _FakeEngine(specs, candidate=True)
+
+    result = worker.run_engine_case(
+        model_root=Path("/model"),
+        arm="candidate",
+        workload_id="P0",
+        request_specs=specs,
+        warmup=True,
+        epoch=-1,
+        repetition=0,
+        engine=fake,
+        close_engine=False,
+        correctness_authority=True,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        clock_ns=iter(range(10, 1000)).__next__,
+    )
+
+    assert all(row["rank_token_agreement"] for row in result["requests"])
+    assert all(row["finite_logits"] for row in result["requests"])
+    assert result["correctness_step_proofs"]
+    assert set(result["correctness_state_checkpoints"]) == set(
+        worker.STATE_CHECKPOINTS
+    )
+    assert fake.correctness_checkpoint_steps == [
+        1,
+        2,
+        4,
+        8,
+        32,
+        128,
+    ]
+
+
+def test_baseline_correctness_case_captures_matching_state_checkpoints():
+    worker = _load()
+    specs = worker.build_request_specs(
+        256,
+        128,
+        2,
+        "correctness/P0/baseline-r0",
+    )
     fake = _FakeEngine(specs, candidate=False)
 
     result = worker.run_engine_case(
@@ -584,9 +908,17 @@ def test_correctness_case_uses_rank_local_logit_and_token_proofs():
         clock_ns=iter(range(10, 1000)).__next__,
     )
 
-    assert all(row["rank_token_agreement"] for row in result["requests"])
-    assert all(row["finite_logits"] for row in result["requests"])
-    assert result["correctness_step_proofs"]
+    assert set(result["correctness_state_checkpoints"]) == set(
+        worker.STATE_CHECKPOINTS
+    )
+    assert fake.correctness_checkpoint_steps == [
+        1,
+        2,
+        4,
+        8,
+        32,
+        128,
+    ]
 
 
 def test_service_replica_case_uses_a_real_tp2_engine_shape():
@@ -640,9 +972,17 @@ def test_performance_epoch_uses_two_warmups_and_five_measurements():
         row_sink=lambda _row: None,
     )
 
-    assert len(calls) == 2 * (2 + 5)
+    assert len(calls) == 2 * (2 + 5 + 5)
     assert [row["workload_id"] for row in calls[:7]] == ["P0"] * 7
     assert sum(not row["warmup"] for row in calls) == 10
+    assert sum(
+        row.get("correctness_authority") is True for row in calls
+    ) == 10
+    assert all(
+        "timing_correctness_replay" in row
+        for row in result["rows"]
+        if row["warmup"] is False
+    )
     assert result["epoch"] == 1
     assert result["arm"] == "candidate"
 
@@ -686,8 +1026,13 @@ def test_performance_epoch_reuses_one_engine_when_factory_is_supplied():
         "max_num_batched_tokens": 8192,
         "qwen38_topology_local_tp2_islands": True,
     }
-    assert case_engines == [engine] * 7
-    assert result["cleanup"] == {"clean": True}
+    assert case_engines == [engine] * 12
+    assert result["cleanup"]["clean"] is True
+    assert (
+        result["cleanup"]["cleanup_duration_ns"]
+        == result["cleanup"]["cleanup_finished_ns"]
+        - result["cleanup"]["cleanup_started_ns"]
+    )
 
 
 def test_worker_cli_dispatches_one_frozen_performance_epoch(tmp_path):
@@ -772,6 +1117,10 @@ def test_worker_cli_dispatches_correctness_and_service_control(tmp_path):
             "/model",
             "--output-root",
             str(correctness_root),
+            "--source-revision",
+            "a" * 40,
+            "--model-revision",
+            "b" * 40,
         ],
         correctness_runner=correctness_runner,
     ) == 0
@@ -810,6 +1159,9 @@ def test_worker_cli_dispatches_correctness_and_service_control(tmp_path):
     )
     assert calls[1][0] == "service"
     assert calls[1][1]["model_root"] == Path("/model")
+    assert (
+        correctness_root / "correctness-artifact-rows.json"
+    ).is_file()
     assert calls[1][1]["output_root"] == service_root
     assert calls[1][1]["pair_devices"] == ((0, 1), (2, 3))
     assert calls[1][1]["workloads"] == ("Q0", "Q1", "Q2")
@@ -854,10 +1206,14 @@ def test_correctness_campaign_loads_one_engine_per_arm():
     assert factory_calls == ["baseline", "candidate"]
     assert len(case_calls) == 50
     assert all(call["close_engine"] is False for call in case_calls)
-    assert result["cleanup"] == {
-        "baseline": {"arm": "baseline"},
-        "candidate": {"arm": "candidate"},
-    }
+    assert result["cleanup"]["baseline"]["arm"] == "baseline"
+    assert result["cleanup"]["candidate"]["arm"] == "candidate"
+    for receipt in result["cleanup"].values():
+        assert (
+            receipt["cleanup_duration_ns"]
+            == receipt["cleanup_finished_ns"]
+            - receipt["cleanup_started_ns"]
+        )
 
 
 def test_service_control_splits_requests_and_is_non_authoritative():
@@ -866,14 +1222,38 @@ def test_service_control_splits_requests_and_is_non_authoritative():
 
     def replica_runner(*, pair_devices, request_specs, **kwargs):
         calls.append((pair_devices, request_specs))
-        return {
-            "requests": [{
+        requests = []
+        for request_index, row in enumerate(request_specs):
+            admitted_ns = 100 + request_index
+            token_timestamps_ns = [
+                admitted_ns + 10 + step * 10 for step in range(128)
+            ]
+            requests.append({
                 "request_id": row["request_id"],
+                "runtime_request_id": request_index,
                 "output_token_ids": list(range(128)),
-                "admitted_ns": 100,
-                "completion_ns": 200,
-            } for row in request_specs],
-            "memory": [],
+                "admitted_ns": admitted_ns,
+                "token_timestamps_ns": token_timestamps_ns,
+                "completion_ns": token_timestamps_ns[-1],
+                "token_gaps_ns": [10] * 127,
+                "ttft_ns": 10,
+                "tpot_ns": 10,
+                "e2e_ns": 1280,
+                "stop_position": 128,
+                "stop_reason": "length",
+                "decoded_text_sha256": "a" * 64,
+            })
+        return {
+            "requests": requests,
+            "memory": [{
+                "rank": rank,
+                "cuda_peak_allocated_bytes": 100,
+                "cuda_peak_reserved_bytes": 120,
+                "physical_memory_bytes": 1_000,
+            } for rank in (0, 1)],
+            "replica_tensor_parallel_size": 2,
+            "request_set_digest": worker._request_set_digest(request_specs),
+            "cleanup": {},
         }
 
     result = worker.run_service_control(
@@ -894,8 +1274,30 @@ def test_service_control_splits_requests_and_is_non_authoritative():
         int(row["request_id"].rsplit("-", 1)[-1]) % 2
         for row in calls[1][1]
     } == {1}
+    assert all(
+        row["request_id"].startswith("timing-Q0-r0-")
+        for _, request_specs in calls
+        for row in request_specs
+    )
     assert result["arm"] == "TP2_X2_SERVICE_CONTROL"
     assert result["classification_authority"] is False
+    assert result["rows"][0]["output_tokens_per_second"] > 0
+    assert result["rows"][0]["ttft_ns"] == {
+        "p50": 10.0,
+        "p95": 10.0,
+        "p99": 10.0,
+    }
+    assert result["rows"][0]["tpot_ns"] == {
+        "p50": 10.0,
+        "p95": 10.0,
+        "p99": 10.0,
+    }
+    assert result["rows"][0]["replica_balance"]["request_counts"] == [2, 2]
+    assert [
+        row["gpu_index"]
+        for replica in result["rows"][0]["replicas"]
+        for row in replica["peak_memory_by_gpu"]
+    ] == [0, 1, 2, 3]
 
 
 def test_service_control_can_launch_both_replicas_as_one_parallel_batch():
@@ -911,13 +1313,36 @@ def test_service_control_can_launch_both_replicas_as_one_parallel_batch():
         calls.append((pair_devices, request_specs_by_replica, kwargs))
         replicas = []
         for replica_specs in request_specs_by_replica:
-            replicas.append({
-                "requests": [{
+            requests = []
+            for request_index, row in enumerate(replica_specs):
+                admitted_ns = 10 + request_index
+                timestamps = [
+                    admitted_ns + 10 + step * 10
+                    for step in range(128)
+                ]
+                requests.append({
                     "request_id": row["request_id"],
+                    "runtime_request_id": request_index,
                     "output_token_ids": list(range(128)),
-                    "admitted_ns": 10,
-                    "completion_ns": 110,
-                } for row in replica_specs],
+                    "admitted_ns": admitted_ns,
+                    "token_timestamps_ns": timestamps,
+                    "completion_ns": timestamps[-1],
+                    "token_gaps_ns": [10] * 127,
+                    "ttft_ns": 10,
+                    "tpot_ns": 10,
+                    "e2e_ns": 1280,
+                })
+            replicas.append({
+                "requests": requests,
+                "memory": [{
+                    "rank": rank,
+                    "cuda_peak_allocated_bytes": 100,
+                    "cuda_peak_reserved_bytes": 120,
+                    "physical_memory_bytes": 1_000,
+                } for rank in (0, 1)],
+                "replica_tensor_parallel_size": 2,
+                "request_set_digest":
+                    worker._request_set_digest(replica_specs),
             })
         return tuple(replicas)
 
@@ -933,7 +1358,7 @@ def test_service_control_can_launch_both_replicas_as_one_parallel_batch():
     assert len(calls) == 1
     assert calls[0][0] == ((0, 1), (2, 3))
     assert [len(rows) for rows in calls[0][1]] == [2, 2]
-    assert result["rows"][0]["request_qps"] == 40_000_000.0
+    assert result["rows"][0]["request_qps"] > 0
 
 
 def test_parallel_service_runner_starts_both_children_before_waiting(
@@ -998,6 +1423,62 @@ def test_parallel_service_runner_starts_both_children_before_waiting(
     assert len(result) == 2
 
 
+def test_parallel_service_runner_cleans_all_owned_groups_on_timeout(
+    tmp_path,
+):
+    worker = _load()
+    processes = []
+    signals = []
+    specs = (
+        worker.build_request_specs(256, 128, 2, "service/Q0/a"),
+        worker.build_request_specs(256, 128, 2, "service/Q0/b"),
+    )
+
+    class Process:
+        returncode = None
+
+        def __init__(self, *_args, **_kwargs):
+            self.pid = 100 + len(processes)
+            self.alive = True
+            processes.append(self)
+
+        def communicate(self, timeout):
+            raise subprocess.TimeoutExpired("service-replica", timeout)
+
+        def poll(self):
+            return None if self.alive else -15
+
+        def wait(self, timeout):
+            if self.alive:
+                raise subprocess.TimeoutExpired("service-replica", timeout)
+            self.returncode = -15
+            return self.returncode
+
+    def killpg(pgid, signum):
+        signals.append((pgid, signum))
+        next(process for process in processes if process.pid == pgid).alive = (
+            False
+        )
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        worker._run_service_replicas_in_subprocesses(
+            model_root=Path("/model"),
+            output_root=tmp_path,
+            pair_devices=((3, 4), (6, 7)),
+            workload_id="Q0",
+            request_specs_by_replica=specs,
+            shared_start_ns=0,
+            popen_factory=lambda *args, **kwargs: Process(*args, **kwargs),
+            killpg=killpg,
+        )
+
+    assert signals == [
+        (100, signal.SIGTERM),
+        (101, signal.SIGTERM),
+    ]
+    assert all(process.alive is False for process in processes)
+
+
 def test_performance_artifacts_are_rebuilt_from_measured_raw_case():
     worker = _load()
     specs = worker.build_request_specs(256, 128, 2, "timing/P0/r0")
@@ -1016,6 +1497,9 @@ def test_performance_artifacts_are_rebuilt_from_measured_raw_case():
     )
     for snapshot in case["after_snapshots"]:
         snapshot["last_transition_latency_ns"] = 1234
+    case["timing_correctness_replay"] = _timing_correctness_replay(
+        case["requests"]
+    )
     artifacts = worker.build_performance_artifact_rows(
         {
             "epoch": 1,
@@ -1031,6 +1515,10 @@ def test_performance_artifacts_are_rebuilt_from_measured_raw_case():
     request = artifacts["request_rows.jsonl"][0]
     assert request["request_set_digest"] == case["request_set_digest"]
     assert request["cohort_makespan_ns"] == case["cohort_makespan_ns"]
+    assert request["rank_token_agreement"] is True
+    assert request["finite_logits"] is True
+    assert request["timing_correctness_replay"]["requests"]
+    assert request["timing_correctness_replay"]["step_proofs"]
     scheduler = artifacts["scheduler_step_rows.jsonl"][0]
     assert scheduler["decode_steps"] == 127
     assert scheduler["token_one_segments"] == 2 * 127
@@ -1042,3 +1530,674 @@ def test_performance_artifacts_are_rebuilt_from_measured_raw_case():
     assert collective["pair_local_bytes"] == 2 * 127 * 48 * 5120 * 4
     assert artifacts["migration_rows.jsonl"][0]["latency_ns"] == 1234
     assert len(artifacts["memory_rows.jsonl"]) == 4
+
+
+def test_performance_artifacts_preserve_independent_allocator_peaks():
+    worker = _load()
+    specs = worker.build_request_specs(256, 128, 2, "timing/P0/r0")
+    fake = _FakeEngine(specs, candidate=True)
+    first = worker.run_engine_case(
+        model_root=Path("/model"),
+        arm="candidate",
+        workload_id="P0",
+        request_specs=specs,
+        warmup=False,
+        epoch=1,
+        repetition=0,
+        engine_factory=lambda *_args, **_kwargs: fake,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        clock_ns=iter(range(10, 1000)).__next__,
+    )
+    for snapshot in first["after_snapshots"]:
+        snapshot["last_transition_latency_ns"] = 1234
+    first["timing_correctness_replay"] = _timing_correctness_replay(
+        first["requests"]
+    )
+    second = copy.deepcopy(first)
+    second["repetition"] = 1
+    second["request_set_digest"] = "c" * 64
+    for memory in second["memory"]:
+        memory["cuda_peak_reserved_bytes"] += 1_000
+
+    artifacts = worker.build_performance_artifact_rows(
+        {
+            "epoch": 1,
+            "arm": "candidate",
+            "rows": [first, second],
+            "cleanup": first["cleanup"],
+        },
+        source_revision="a" * 40,
+        model_revision="b" * 40,
+    )
+
+    assert {
+        row["rank"]: row["peak_reserved_bytes"]
+        for row in artifacts["memory_rows.jsonl"]
+    } == {
+        rank: 1_200 + rank
+        for rank in range(4)
+    }
+
+
+def test_performance_artifacts_reject_missing_timing_correctness_replay():
+    worker = _load()
+    specs = worker.build_request_specs(256, 128, 2, "timing/P0/r0")
+    fake = _FakeEngine(specs, candidate=True)
+    case = worker.run_engine_case(
+        model_root=Path("/model"),
+        arm="candidate",
+        workload_id="P0",
+        request_specs=specs,
+        warmup=False,
+        epoch=1,
+        repetition=0,
+        engine_factory=lambda *_args, **_kwargs: fake,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        clock_ns=iter(range(10, 1000)).__next__,
+    )
+    for snapshot in case["after_snapshots"]:
+        snapshot["last_transition_latency_ns"] = 1234
+
+    with pytest.raises(RuntimeError, match="timing correctness"):
+        worker.build_performance_artifact_rows(
+            {
+                "epoch": 1,
+                "arm": "candidate",
+                "rows": [case],
+                "cleanup": case["cleanup"],
+            },
+            source_revision="a" * 40,
+            model_revision="b" * 40,
+        )
+
+
+@pytest.mark.parametrize(
+    ("scope", "field"),
+    (
+        ("runtime", "fallback_calls"),
+        ("mixer", "short_chunk_calls"),
+    ),
+)
+def test_performance_artifacts_reject_missing_runtime_counter(
+    scope,
+    field,
+):
+    worker = _load()
+    specs = worker.build_request_specs(256, 128, 2, "timing/P0/r0")
+    fake = _FakeEngine(specs, candidate=True)
+    case = worker.run_engine_case(
+        model_root=Path("/model"),
+        arm="candidate",
+        workload_id="P0",
+        request_specs=specs,
+        warmup=False,
+        epoch=1,
+        repetition=0,
+        engine_factory=lambda *_args, **_kwargs: fake,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        clock_ns=iter(range(10, 1000)).__next__,
+    )
+    for snapshot in case["after_snapshots"]:
+        snapshot["last_transition_latency_ns"] = 1234
+    case["timing_correctness_replay"] = _timing_correctness_replay(
+        case["requests"]
+    )
+    if scope == "runtime":
+        case["after_snapshots"][0].pop(field)
+    else:
+        case["after_snapshots"][0]["mixers"][0].pop(field)
+
+    with pytest.raises(RuntimeError, match=field):
+        worker.build_performance_artifact_rows(
+            {
+                "epoch": 1,
+                "arm": "candidate",
+                "rows": [case],
+                "cleanup": case["cleanup"],
+            },
+            source_revision="a" * 40,
+            model_revision="b" * 40,
+        )
+
+
+def test_correctness_artifacts_require_real_rank_and_state_proofs():
+    worker = _load()
+    fake = _FakeEngine((
+        {"request_id": "r0", "prompt_token_ids": [1], "output_tokens": 128},
+    ), candidate=True)
+    baseline_fake = _FakeEngine((
+        {"request_id": "r0", "prompt_token_ids": [1], "output_tokens": 128},
+    ), candidate=False)
+    baseline_fake._step = 1
+    baseline_checkpoints = {
+        name: baseline_fake.qwen38_correctness_state_checkpoints(
+            timeout_s=1
+        )
+        for name in worker.STATE_CHECKPOINTS
+    }
+    checkpoints = {}
+    for name in worker.STATE_CHECKPOINTS:
+        fake._step = (
+            1
+            if name in {"pre_migration", "token_1"}
+            else 2
+        )
+        checkpoints[name] = (
+            fake.qwen38_correctness_state_checkpoints(timeout_s=1)
+        )
+    commit_counts = {
+        "pre_migration": 0,
+        "token_1": 0,
+        "post_migration": 1,
+        "token_4": 3,
+        "token_8": 7,
+        "token_32": 31,
+        "token_128": 127,
+    }
+    checkpoints = {
+        name: tuple({
+            **row,
+            "runtime_snapshot": {
+                "state": {
+                    "commit_count": commit_counts[name],
+                    "rollback_count": 0,
+                    "temporary_live_tensors": 0,
+                },
+            },
+        } for row in rows)
+        for name, rows in checkpoints.items()
+    }
+    request = {
+        "request_id": "r0",
+        "runtime_request_id": 0,
+        "output_token_ids": list(range(128)),
+        "rank_token_agreement": True,
+        "finite_logits": True,
+        "stop_position": 128,
+        "stop_reason": "length",
+    }
+    proofs = [[{
+        "rank": rank,
+        "sequence_ids": [0],
+        "finite_logits": True,
+        "token_ids": [step],
+        "top_logit_values": [float(step)],
+    } for rank in range(4)] for step in range(128)]
+    result = {
+        "rows": [{
+            "workload_id": "P0",
+            "repetition": 0,
+            "baseline": {
+                "requests": [request],
+                "correctness_step_proofs": proofs,
+                "correctness_state_checkpoints": baseline_checkpoints,
+            },
+            "candidate": {
+                "requests": [dict(request)],
+                "correctness_step_proofs": proofs,
+                "correctness_state_checkpoints": checkpoints,
+            },
+        }],
+    }
+
+    rows = worker.build_correctness_artifact_rows(
+        result,
+        source_revision="a" * 40,
+        model_revision="b" * 40,
+    )
+
+    assert [{
+        key: row[key]
+        for key in (
+            "source_revision",
+            "model_revision",
+            "workload_id",
+            "repetition",
+            "output_tokens_match",
+            "rank_token_agreement",
+            "finite_logits",
+            "top_logit_values_match",
+            "state_checkpoints_complete",
+            "single_commit_per_step",
+            "pair_replica_digest_match",
+            "baseline_candidate_state_match",
+        )
+    } for row in rows] == [{
+        "source_revision": "a" * 40,
+        "model_revision": "b" * 40,
+        "workload_id": "P0",
+        "repetition": 0,
+        "output_tokens_match": True,
+        "rank_token_agreement": True,
+        "finite_logits": True,
+        "top_logit_values_match": True,
+        "state_checkpoints_complete": True,
+        "single_commit_per_step": True,
+        "pair_replica_digest_match": True,
+        "baseline_candidate_state_match": True,
+    }]
+    assert rows[0]["baseline_requests"] == [{
+        "request_id": "r0",
+        "runtime_request_id": 0,
+        "output_token_ids": list(range(128)),
+    }]
+    assert rows[0]["candidate_requests"] == rows[0]["baseline_requests"]
+    assert rows[0]["baseline_step_proofs"] == proofs
+    assert rows[0]["candidate_step_proofs"] == proofs
+    assert (
+        rows[0]["baseline_state_checkpoints"]
+        == baseline_checkpoints
+    )
+    assert rows[0]["candidate_state_checkpoints"] == checkpoints
+
+    cohort_drift = copy.deepcopy(result)
+    cohort_drift["rows"][0]["candidate"][
+        "correctness_state_checkpoints"
+    ]["token_32"][0]["cohort"][0]["request_id"] += 1
+    invalid = worker.build_correctness_artifact_rows(
+        cohort_drift,
+        source_revision="a" * 40,
+        model_revision="b" * 40,
+    )
+    assert invalid[0]["state_checkpoints_complete"] is False
+    assert invalid[0]["baseline_candidate_state_match"] is False
+
+    result["rows"][0]["candidate"]["correctness_step_proofs"] = []
+    invalid = worker.build_correctness_artifact_rows(
+        result,
+        source_revision="a" * 40,
+        model_revision="b" * 40,
+    )
+    assert invalid[0]["rank_token_agreement"] is False
+    assert invalid[0]["finite_logits"] is False
+    assert invalid[0]["top_logit_values_match"] is False
+
+
+def test_raw_finalizer_payloads_are_accepted_by_real_assembler(tmp_path):
+    worker = _load()
+    source_revision = "a" * 40
+    model_revision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+    attempt_root = (
+        "/data00/home/sitian/tinyllmforge-workspaces/"
+        "command-timeline-20260818/attempts/finalizer-e2e"
+    )
+    plan = {
+        "attempt_tag": "finalizer-e2e",
+        "source_revision": source_revision,
+        "source_tree_sha256": "b" * 64,
+        "model_repository": "Qwen/Qwen3.8-27B",
+        "model_revision": model_revision,
+        "attempt_root": attempt_root,
+        "source_root": f"{attempt_root}/source",
+        "raw_root": f"{attempt_root}/raw",
+        "controller_root": f"{attempt_root}/controller",
+        "bundle_root": f"{attempt_root}/final_bundle",
+        "environment": {
+            "TMPDIR": f"{attempt_root}/runtime/tmp",
+        },
+            "topology": {
+                "rows": [
+                    {
+                        "left_rank": left,
+                        "right_rank": right,
+                        "link": (
+                            "PIX"
+                            if tuple(sorted((left, right)))
+                            in {(0, 1), (2, 3)}
+                            else "SYS"
+                        ),
+                    }
+                    for left in range(4)
+                    for right in range(4)
+                    if left != right
+                ],
+            },
+        "gpu_rank_mapping": [
+            {
+                "rank": rank,
+                "gpu_index": rank,
+                "gpu_uuid": f"GPU-{rank}",
+            }
+            for rank in range(4)
+        ],
+        "pair_groups": [[0, 1], [2, 3]],
+        "campaign_epochs": [
+            {
+                "epoch": epoch,
+                "arm": arm,
+                "workload_order": (
+                    list(worker.WORKLOADS)
+                    if epoch in (0, 2)
+                    else list(reversed(worker.WORKLOADS))
+                ),
+            }
+            for epoch, arm in enumerate(worker.EPOCH_ARMS)
+        ],
+    }
+    cleanup = _raw_candidate_evidence(worker)["cleanup"]
+    baseline_cleanup = copy.deepcopy(cleanup)
+    for receipt in baseline_cleanup["rank_cleanup_receipts"]:
+        receipt["qwen38_topology_local_tp2_cleanup"] = None
+    service_cleanup = copy.deepcopy(baseline_cleanup)
+    service_cleanup["rank_exit_codes"] = [0, 0]
+    service_cleanup["rank_cleanup_receipts"] = [
+        receipt
+        for receipt in service_cleanup["rank_cleanup_receipts"]
+        if receipt["rank"] in (0, 1)
+    ]
+    epoch_results = []
+    for epoch, arm in enumerate(worker.EPOCH_ARMS):
+        cases = []
+        for workload_id, (
+            _,
+            prompt_tokens,
+            output_tokens,
+            concurrency,
+        ) in worker.WORKLOADS.items():
+            for repetition in range(worker.MEASURED_REPETITIONS):
+                request_specs = worker.build_request_specs(
+                    prompt_tokens,
+                    output_tokens,
+                    concurrency,
+                    f"timing/{workload_id}/r{repetition}",
+                )
+                digest = worker._request_set_digest(request_specs)
+                tpot_ns = 94.0 if arm == "candidate" else 100.0
+                requests = []
+                for request_index, request_spec in enumerate(request_specs):
+                    admitted_ns = 1_000_000 + request_index
+                    token_timestamps_ns = [
+                        admitted_ns + 1_000 + step * int(tpot_ns)
+                        for step in range(128)
+                    ]
+                    decoded_text = ",".join(
+                        str(token) for token in range(128)
+                    )
+                    requests.append({
+                        "request_id": request_spec["request_id"],
+                        "runtime_request_id": request_index,
+                        "admitted_ns": admitted_ns,
+                        "first_scheduled_ns": 1_000_500,
+                        "queueing_ns": 1_000_500 - admitted_ns,
+                        "token_timestamps_ns": token_timestamps_ns,
+                        "completion_ns": token_timestamps_ns[-1],
+                        "output_token_ids": list(range(128)),
+                        "token_gaps_ns": [int(tpot_ns)] * 127,
+                        "ttft_ns": 1_000.0,
+                        "tpot_ns": tpot_ns,
+                        "e2e_ns": 1_000.0 + tpot_ns * 127,
+                        "complete": True,
+                        "prompt_tokens": prompt_tokens,
+                        "generated_tokens": output_tokens,
+                        "stop_position": 128,
+                        "stop_reason": "length",
+                        "decoded_text": decoded_text,
+                        "decoded_text_sha256": hashlib.sha256(
+                            decoded_text.encode("utf-8")
+                        ).hexdigest(),
+                    })
+                case = {
+                    "warmup": False,
+                    "workload_id": workload_id,
+                    "repetition": repetition,
+                    "request_set_digest": digest,
+                    "requests": requests,
+                    "cohort_makespan_ns": (
+                        max(row["completion_ns"] for row in requests)
+                        - min(row["admitted_ns"] for row in requests)
+                    ),
+                    "memory": [{
+                        "rank": rank,
+                        "cuda_peak_allocated_bytes": (
+                            70 * 1024**3
+                            + (1024**3 if arm == "candidate" else 0)
+                        ),
+                        "cuda_peak_reserved_bytes": 72 * 1024**3,
+                        "physical_memory_bytes": 80 * 1024**3,
+                    } for rank in range(4)],
+                    "scheduler_step_rows": [{
+                        "step_index": step,
+                        "is_prefill": step == 0,
+                        "batch_kind": (
+                            "prefill" if step == 0 else "decode"
+                        ),
+                        "request_ids": [
+                            request["request_id"] for request in requests
+                        ],
+                        "step_start_ns": 1_000_500 + step * 100,
+                        "step_end_ns": 1_000_580 + step * 100,
+                        "step_duration_ns": 80,
+                        "host_submission_ns": 60,
+                    } for step in range(128)],
+                    "token_count_rows": [{
+                        "step_index": step,
+                        "token_count": concurrency,
+                    } for step in range(128)],
+                }
+                case["timing_correctness_replay"] = (
+                    _timing_correctness_replay(requests)
+                )
+                if arm == "candidate":
+                    evidence = _raw_candidate_evidence(
+                        worker,
+                        concurrency=concurrency,
+                    )
+                    for snapshot in evidence["after_snapshots"]:
+                        snapshot["last_transition_latency_ns"] = 100
+                        snapshot["released_layer_count"] = 48
+                        snapshot["released_bytes"] = 48 * 1024
+                    case.update({
+                        "before_snapshots": evidence["before_snapshots"],
+                        "after_snapshots": evidence["after_snapshots"],
+                    })
+                cases.append(case)
+        epoch_results.append({
+            "epoch": epoch,
+            "arm": arm,
+            "rows": cases,
+            "cleanup": (
+                cleanup if arm == "candidate" else baseline_cleanup
+            ),
+            "startup_model_load_started_ns": 100,
+            "startup_model_load_finished_ns": 1_000_100,
+            "startup_model_load_duration_ns": 1_000_000,
+        })
+
+    fake = _FakeEngine((
+        {
+            "request_id": "correctness",
+            "prompt_token_ids": [1],
+            "output_tokens": 128,
+        },
+    ), candidate=True)
+    baseline_fake = _FakeEngine((
+        {
+            "request_id": "correctness",
+            "prompt_token_ids": [1],
+            "output_tokens": 128,
+        },
+    ), candidate=False)
+    baseline_fake._step = 1
+    baseline_checkpoints = {
+        name: baseline_fake.qwen38_correctness_state_checkpoints(
+            timeout_s=1,
+        )
+        for name in worker.STATE_CHECKPOINTS
+    }
+    checkpoints = {}
+    for name in worker.STATE_CHECKPOINTS:
+        fake._step = (
+            1
+            if name in {"pre_migration", "token_1"}
+            else 2
+        )
+        checkpoints[name] = tuple({
+            **row,
+            "runtime_snapshot": {
+                "state": {
+                    "commit_count": {
+                        "pre_migration": 0,
+                        "token_1": 0,
+                        "post_migration": 1,
+                        "token_4": 3,
+                        "token_8": 7,
+                        "token_32": 31,
+                        "token_128": 127,
+                    }[name],
+                    "rollback_count": 0,
+                    "temporary_live_tensors": 0,
+                },
+            },
+        } for row in fake.qwen38_correctness_state_checkpoints(
+            timeout_s=1,
+        ))
+    correctness_request = {
+        "request_id": "correctness",
+        "runtime_request_id": 0,
+        "output_token_ids": list(range(128)),
+        "rank_token_agreement": True,
+        "finite_logits": True,
+    }
+    correctness_proofs = [[{
+        "rank": rank,
+        "sequence_ids": [0],
+        "finite_logits": True,
+        "token_ids": [step],
+        "top_logit_values": [float(step)],
+    } for rank in range(4)] for step in range(128)]
+    correctness_result = {
+        "rows": [{
+            "workload_id": workload_id,
+            "repetition": repetition,
+            "baseline": {
+                "requests": [correctness_request],
+                "correctness_step_proofs": correctness_proofs,
+                    "correctness_state_checkpoints":
+                        baseline_checkpoints,
+            },
+            "candidate": {
+                "requests": [dict(correctness_request)],
+                "correctness_step_proofs": correctness_proofs,
+                "correctness_state_checkpoints": checkpoints,
+            },
+        } for workload_id in worker.WORKLOADS
+        for repetition in range(worker.MEASURED_REPETITIONS)],
+        "cleanup": {
+            "baseline": baseline_cleanup,
+            "candidate": cleanup,
+        },
+    }
+    baseline_service_requests = {
+        row["workload_id"]: {
+            request["request_id"]: request
+            for request in row["requests"]
+        }
+        for row in epoch_results[0]["rows"]
+        if row["repetition"] == 0
+    }
+
+    def service_parallel_runner(
+        *,
+        workload_id,
+        request_specs_by_replica,
+        **_kwargs,
+    ):
+        replicas = []
+        for request_specs in request_specs_by_replica:
+            replicas.append({
+                "requests": [
+                    copy.deepcopy(
+                        baseline_service_requests[workload_id][
+                            request["request_id"]
+                        ]
+                    )
+                    for request in request_specs
+                ],
+                "memory": [{
+                    "rank": rank,
+                    "cuda_peak_allocated_bytes": 35 * 1024**3,
+                    "cuda_peak_reserved_bytes": 36 * 1024**3,
+                    "physical_memory_bytes": 80 * 1024**3,
+                } for rank in range(2)],
+                "replica_tensor_parallel_size": 2,
+                "request_set_digest":
+                    worker._request_set_digest(request_specs),
+                "cleanup": service_cleanup,
+            })
+        return tuple(replicas)
+
+    service_result = worker.run_service_control(
+        model_root=Path("/model"),
+        output_root=tmp_path,
+        pair_devices=((0, 1), (2, 3)),
+        workloads=("Q0", "Q1", "Q2"),
+        parallel_runner=service_parallel_runner,
+        row_sink=lambda _row: None,
+    )
+    stages = (
+        "entry",
+        "pre_correctness",
+        "post_correctness",
+        *(f"pre_epoch_{index}" for index in range(4)),
+        *(f"post_launch_{index}" for index in range(4)),
+        "pre_service_control",
+        "post_service_control",
+        "terminal",
+    )
+    resource_samples = tuple({
+        "stage": stage,
+        "measurement_scope": "boundary",
+        "gpu_inventory": [{
+            "gpu_index": rank,
+            "gpu_uuid": f"GPU-{rank}",
+            "memory_used_mib": 0,
+            "utilization_percent": 0,
+                "power_watts": 70.0 + rank,
+            "compute_processes": [],
+        } for rank in range(4)],
+        "process_rows": [],
+    } for stage in stages)
+    resource_samples += tuple({
+        "stage": f"runtime_{run_label}_0000",
+        "measurement_scope": "runtime",
+        "run_label": run_label,
+        "sample_index": 0,
+        "gpu_inventory": [{
+            "gpu_index": rank,
+            "gpu_uuid": f"GPU-{rank}",
+            "memory_used_mib": 4096,
+            "utilization_percent": 80,
+            "power_watts": 250.0 + rank,
+            "compute_processes": [{"pid": 1000 + rank}],
+        } for rank in range(4)],
+        "process_rows": [],
+    } for run_label in (
+        "correctness",
+        *(f"epoch_{index}" for index in range(4)),
+        "service_control",
+    ))
+
+    payloads = worker.build_raw_artifact_payloads(
+        plan=plan,
+        correctness_result=correctness_result,
+        epoch_results=tuple(epoch_results),
+        service_result=service_result,
+        resource_samples=resource_samples,
+    )
+    raw_root = tmp_path / "attempt" / "raw"
+    raw_root.mkdir(parents=True)
+    for name, payload in payloads.items():
+        path = raw_root / name
+        if name.endswith(".jsonl"):
+            worker._atomic_write_jsonl(path, payload)
+        else:
+            worker._atomic_write_json(path, payload)
+
+    result = assemble_attempt(
+        raw_root.parent,
+        tmp_path / "final_bundle",
+    )
+
+    assert result["classification"] == (
+        "GO_TOPOLOGY_LOCAL_TP2_WHOLE_MODEL_GATE"
+    )

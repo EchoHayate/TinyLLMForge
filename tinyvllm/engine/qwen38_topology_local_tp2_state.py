@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import gc
+import hashlib
 
 import torch
 
@@ -25,6 +26,16 @@ from tinyvllm.engine.topology_local_tp2_island import (
 _SNAPSHOT_SCHEMA = "qwen38.topology-local-tp2-state-snapshot.v1"
 _MIGRATION_SCHEMA = "qwen38.topology-local-tp2-state-migration.v1"
 _COMMIT_SCHEMA = "qwen38.topology-local-tp2-state-commit.v1"
+
+
+def _tensor_digest(tensor: torch.Tensor) -> str:
+    digest = hashlib.sha256()
+    digest.update(str(tuple(tensor.shape)).encode("utf-8"))
+    digest.update(str(tensor.dtype).encode("utf-8"))
+    digest.update(
+        tensor.detach().contiguous().view(torch.uint8).cpu().numpy().tobytes()
+    )
+    return digest.hexdigest()
 
 
 def _lease_key(lease: HybridStateLease) -> tuple[int, int, int]:
@@ -92,6 +103,120 @@ def _assemble_segmented_state_half(
     return torch.cat(tuple(segments), dim=0)
 
 
+def _state_component_digest_rows(
+    state_rows,
+    *,
+    source_ranks: tuple[int, ...],
+) -> tuple[dict, ...]:
+    if (
+        not isinstance(source_ranks, tuple)
+        or not source_ranks
+        or len(source_ranks) not in (1, 2)
+        or any(
+            isinstance(rank, bool)
+            or not isinstance(rank, int)
+            or rank not in range(4)
+            for rank in source_ranks
+        )
+        or tuple(source_ranks)
+        != tuple(range(source_ranks[0], source_ranks[0] + len(source_ranks)))
+        or source_ranks[0] % 2 != 0
+        and len(source_ranks) == 2
+    ):
+        raise ValueError("source ranks do not identify a logical TP2 half")
+    partition_count = len(source_ranks)
+    logical_rank = source_ranks[0] // 2
+    result = []
+    for row in state_rows:
+        layer_index = row.get("layer_index")
+        convolution = row.get("convolution_states")
+        recurrent = row.get("recurrent_states")
+        if (
+            isinstance(layer_index, bool)
+            or not isinstance(layer_index, int)
+            or not isinstance(convolution, torch.Tensor)
+            or not isinstance(recurrent, torch.Tensor)
+            or convolution.ndim < 3
+            or recurrent.ndim < 4
+            or convolution.shape[0] != recurrent.shape[0]
+            or convolution.shape[1] % partition_count != 0
+            or recurrent.shape[1] % partition_count != 0
+        ):
+            raise ValueError("state component tensor layout is invalid")
+        quarter_convolution_width = (
+            convolution.shape[1] // partition_count
+        )
+        quarter_recurrent_heads = recurrent.shape[1] // partition_count
+        value_width = quarter_recurrent_heads * recurrent.shape[2]
+        remaining = quarter_convolution_width - value_width
+        if remaining <= 0 or remaining % 2:
+            raise ValueError(
+                "state convolution segments do not match Qwen3.8"
+            )
+        key_width = remaining // 2
+        segment_widths = (key_width, key_width, value_width)
+        for partition_index, source_rank in enumerate(source_ranks):
+            segment_digests = []
+            segment_offset = 0
+            for width in segment_widths:
+                start = (
+                    segment_offset * partition_count
+                    + partition_index * width
+                )
+                segment_digests.append(_tensor_digest(
+                    convolution.narrow(1, start, width)
+                ))
+                segment_offset += width
+            result.append({
+                "layer_index": layer_index,
+                "logical_rank": logical_rank,
+                "source_rank": source_rank,
+                "convolution_query_sha256": segment_digests[0],
+                "convolution_key_sha256": segment_digests[1],
+                "convolution_value_sha256": segment_digests[2],
+                "recurrent_sha256": _tensor_digest(
+                    recurrent.narrow(
+                        1,
+                        partition_index * quarter_recurrent_heads,
+                        quarter_recurrent_heads,
+                    )
+                ),
+            })
+    return tuple(result)
+
+
+def build_qwen38_tp4_state_component_digests(
+    *,
+    source_transaction: Qwen35CrossLayerStateTransaction,
+    leases: tuple[HybridStateLease, ...],
+    global_rank: int,
+) -> tuple[dict, ...]:
+    if (
+        isinstance(global_rank, bool)
+        or not isinstance(global_rank, int)
+        or global_rank not in range(4)
+    ):
+        raise ValueError("global_rank must be an integer rank in [0, 3]")
+    leases = _validate_lease_batch(leases)
+    source_transaction.pool.validate_leases(leases)
+    gathered = source_transaction.gather(leases)
+    state_rows = tuple(
+        {
+            "layer_index": adapter.layer_index,
+            "convolution_states": state[0],
+            "recurrent_states": state[1],
+        }
+        for adapter, state in zip(
+            source_transaction.adapters,
+            gathered,
+        )
+    )
+    return _state_component_digest_rows(
+        state_rows,
+        source_ranks=(global_rank,),
+    )
+
+
 class Qwen38TopologyLocalTP2StateOwner:
 
     def __init__(
@@ -124,6 +249,7 @@ class Qwen38TopologyLocalTP2StateOwner:
         self._migration_rows: list[dict] = []
         self._publication_count = 0
         self._rollback_count = 0
+        self._commit_count = 0
         self._temporary_live_tensors = 0
 
     def phase_for(self, lease: HybridStateLease) -> str:
@@ -300,6 +426,16 @@ class Qwen38TopologyLocalTP2StateOwner:
             )
         )
 
+    def correctness_state_component_digests(
+        self,
+        leases: tuple[HybridStateLease, ...],
+    ) -> tuple[dict, ...]:
+        state_rows = self.gather(leases)
+        return _state_component_digest_rows(
+            state_rows,
+            source_ranks=tuple(self.pair_identity.pair_ranks),
+        )
+
     def commit(
         self,
         leases: tuple[HybridStateLease, ...],
@@ -334,6 +470,7 @@ class Qwen38TopologyLocalTP2StateOwner:
             leases,
             tuple(transaction_candidates),
         )
+        self._commit_count += 1
         return tuple(
             {
                 "schema_version": _COMMIT_SCHEMA,
@@ -388,6 +525,7 @@ class Qwen38TopologyLocalTP2StateOwner:
             "temporary_live_tensors": self._temporary_live_tensors,
             "publication_count": self._publication_count,
             "rollback_count": self._rollback_count,
+            "commit_count": self._commit_count,
         }
 
 

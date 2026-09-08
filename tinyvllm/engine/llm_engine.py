@@ -1759,6 +1759,36 @@ class LLMEngine:
             )
         return tuple(rows)
 
+    def qwen38_correctness_state_checkpoints(self, *, timeout_s):
+        local, acknowledgements = self.call_model_runner_acknowledged(
+            "qwen38_correctness_state_checkpoint",
+            timeout_s=timeout_s,
+        )
+        ranked = [(0, local)]
+        ranked.extend(
+            (acknowledgement.rank, acknowledgement.result)
+            for acknowledgement in acknowledgements
+        )
+        rows = {}
+        for outer_rank, row in ranked:
+            if (
+                isinstance(outer_rank, bool)
+                or not isinstance(outer_rank, int)
+                or not isinstance(row, dict)
+                or outer_rank in rows
+                or row.get("rank") != outer_rank
+            ):
+                raise ValueError(
+                    "Qwen3.8 state checkpoint rank mismatch"
+                )
+            rows[outer_rank] = dict(row)
+        expected = tuple(range(self.model_runner.world_size))
+        if tuple(sorted(rows)) != expected:
+            raise ValueError(
+                "Qwen3.8 state checkpoint rank inventory mismatch"
+            )
+        return tuple(rows[rank] for rank in expected)
+
     def configure_h2d_slot_reuse_diagnostic(
         self,
         mode,

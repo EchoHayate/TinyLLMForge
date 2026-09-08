@@ -477,6 +477,7 @@ def _load_runtime_owner_module():
             self.pair_reduce = pair_reduce
             self.phase = "tp4_prefill"
             self.activations = 0
+            self.correctness_trace_enabled = False
 
         def activate_tp2_decode(self):
             if self.phase != "tp4_prefill":
@@ -488,6 +489,14 @@ def _load_runtime_owner_module():
             if self.phase != "tp2_decode":
                 raise RuntimeError("TP2 decode phase is not active")
             self.phase = "tp4_prefill"
+
+        def enable_correctness_trace(self, enabled):
+            self.correctness_trace_enabled = bool(enabled)
+
+        def correctness_output_digest(self):
+            if not self.correctness_trace_enabled:
+                raise RuntimeError("correctness trace is disabled")
+            return "a" * 64
 
         def telemetry_snapshot(self):
             return {
@@ -546,6 +555,32 @@ def _load_runtime_owner_module():
                 "released": True,
             } for lease in leases)
 
+        def gather(self, leases):
+            return tuple({
+                "layer_index": layer_index,
+                "convolution_states": FakeTensor(
+                    (len(leases), 12, 3),
+                    label=f"conv-{layer_index}",
+                ),
+                "recurrent_states": FakeTensor(
+                    (len(leases), 2, 2, 2),
+                    label=f"recurrent-{layer_index}",
+                    dtype="torch.float32",
+                ),
+            } for layer_index in range(48))
+
+        def correctness_state_component_digests(self, leases):
+            del leases
+            return ({
+                "layer_index": 0,
+                "logical_rank": 0,
+                "source_rank": 0,
+                "convolution_query_sha256": "b" * 64,
+                "convolution_key_sha256": "c" * 64,
+                "convolution_value_sha256": "d" * 64,
+                "recurrent_sha256": "e" * 64,
+            },)
+
         def snapshot(self):
             return {
                 "publication_count": sum(
@@ -556,6 +591,17 @@ def _load_runtime_owner_module():
 
     state_module.build_qwen38_topology_local_tp2_state_owner = (
         lambda **_kwargs: FakeStateOwner()
+    )
+    state_module.build_qwen38_tp4_state_component_digests = (
+        lambda **_kwargs: ({
+            "layer_index": 0,
+            "logical_rank": 0,
+            "source_rank": 0,
+            "convolution_query_sha256": "b" * 64,
+            "convolution_key_sha256": "c" * 64,
+            "convolution_value_sha256": "d" * 64,
+            "recurrent_sha256": "e" * 64,
+        },)
     )
 
     try:
@@ -877,6 +923,27 @@ def test_runtime_rejects_empty_cohort_without_changing_authority():
     assert all(mixer.phase == "tp4_prefill" for mixer in runtime.mixers)
 
 
+def test_runtime_rejects_duplicate_request_identity_in_cohort():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+
+    with pytest.raises(ValueError, match="distinct request"):
+        runtime.prepare_decode((
+            SimpleNamespace(slot_id=0, generation=1, request_id=10),
+            SimpleNamespace(slot_id=1, generation=1, request_id=10),
+        ))
+
+    assert runtime.phase == "tp4_prefill"
+
+
 def test_runtime_migration_failure_keeps_baseline_authoritative():
     runtime_module = _load_runtime_owner_module()
     model, owner, pair_context = _runtime_fixture()
@@ -933,6 +1000,45 @@ def test_runtime_post_publication_failure_quarantines_without_replay():
     assert model.layer_stack.state_transaction is not baseline_transaction
     with pytest.raises(RuntimeError, match="already active"):
         runtime.prepare_decode(leases)
+
+
+def test_runtime_close_releases_state_after_post_publication_failure():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    runtime.mixers[0].activate_tp2_decode = (
+        lambda: (_ for _ in ()).throw(
+            RuntimeError("activation failed")
+        )
+    )
+    leases = (
+        SimpleNamespace(slot_id=0, generation=1, request_id=10),
+    )
+
+    with pytest.raises(RuntimeError, match="activation failed"):
+        runtime.prepare_decode(leases)
+
+    destroyed = []
+    fake_torch.distributed = SimpleNamespace(
+        destroy_process_group=lambda group: destroyed.append(group),
+    )
+    receipt = runtime.close()
+
+    assert receipt == {
+        "pair_groups_destroyed": 2,
+        "candidate_state_released": True,
+        "published_generations_remaining": 0,
+        "temporary_live_tensors": 0,
+    }
+    assert runtime.candidate_state_owner.releases == [leases]
+    assert destroyed == ["pair-a", "pair-b"]
 
 
 def test_runtime_snapshot_reports_installation_and_transition_state():
@@ -1028,9 +1134,17 @@ def test_runtime_releases_completed_cohort_and_accepts_next_cohort():
     assert second_receipt["release_rows"] == ()
     assert second_receipt["released_layer_count"] == 0
     assert second_receipt["released_bytes"] == 0
+    assert second_receipt["transition_latency_ns"] >= 0
     assert runtime.snapshot()["transition_count"] == 2
+    assert runtime.snapshot()["last_transition_latency_ns"] >= 0
     assert runtime.snapshot()["released_layer_count"] == 48
     assert runtime.snapshot()["fixed_cohort"] == ((1, 2, 11),)
+    assert runtime.snapshot()["fallback_calls"] == 0
+    assert runtime.snapshot()["post_warmup_request_path_allocations"] == 0
+    assert runtime.snapshot()["prefix_restore_calls"] == 0
+    assert runtime.snapshot()["prefix_publication_calls"] == 0
+    assert runtime.snapshot()["retry_after_mutation_calls"] == 0
+    assert runtime.snapshot()["duplicate_commit_calls"] == 0
 
 
 def test_runtime_rejects_partial_or_wrong_cohort_release():
@@ -1054,6 +1168,41 @@ def test_runtime_rejects_partial_or_wrong_cohort_release():
         runtime.release_decode_cohort(leases[:1])
 
     assert runtime.snapshot()["phase"] == "tp2_decode"
+
+
+def test_runtime_close_does_not_double_release_after_restore_failure():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    leases = (
+        SimpleNamespace(slot_id=0, generation=1, request_id=10),
+    )
+    runtime.prepare_decode(leases)
+    runtime.mixers[0].activate_tp4_prefill = (
+        lambda: (_ for _ in ()).throw(
+            RuntimeError("restore failed")
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="restore failed"):
+        runtime.release_decode_cohort(leases)
+
+    destroyed = []
+    fake_torch.distributed = SimpleNamespace(
+        destroy_process_group=lambda group: destroyed.append(group),
+    )
+    receipt = runtime.close()
+
+    assert runtime.candidate_state_owner.releases == [leases]
+    assert receipt["candidate_state_released"] is True
+    assert destroyed == ["pair-a", "pair-b"]
 
 
 def test_engine_collects_rank_complete_qwen38_runtime_snapshots():
@@ -1118,6 +1267,55 @@ def test_engine_rejects_invalid_qwen38_snapshot_rank_inventory(
 
     with pytest.raises(ValueError, match="rank"):
         snapshots(engine, timeout_s=1.0)
+
+
+def test_engine_collects_rank_complete_qwen38_state_checkpoints():
+    checkpoints = _load_llm_engine_method(
+        "qwen38_correctness_state_checkpoints"
+    )
+    calls = []
+    rows = tuple({
+        "rank": rank,
+        "state_layout": "tp4_source_quarter",
+    } for rank in range(4))
+
+    def acknowledged(method_name, *, timeout_s):
+        calls.append((method_name, timeout_s))
+        return rows[0], tuple(
+            SimpleNamespace(rank=rank, result=rows[rank])
+            for rank in range(1, 4)
+        )
+
+    engine = SimpleNamespace(
+        model_runner=SimpleNamespace(world_size=4),
+        call_model_runner_acknowledged=acknowledged,
+    )
+
+    assert checkpoints(engine, timeout_s=12.5) == rows
+    assert calls == [(
+        "qwen38_correctness_state_checkpoint",
+        12.5,
+    )]
+
+
+def test_engine_rejects_swapped_qwen38_state_checkpoint_ranks():
+    checkpoints = _load_llm_engine_method(
+        "qwen38_correctness_state_checkpoints"
+    )
+    engine = SimpleNamespace(
+        model_runner=SimpleNamespace(world_size=4),
+        call_model_runner_acknowledged=lambda *_args, **_kwargs: (
+            {"rank": 0},
+            (
+                SimpleNamespace(rank=1, result={"rank": 2}),
+                SimpleNamespace(rank=2, result={"rank": 1}),
+                SimpleNamespace(rank=3, result={"rank": 3}),
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="rank"):
+        checkpoints(engine, timeout_s=1.0)
 
 
 def test_logical_tp2_view_selects_exact_checkpoint_halves():
@@ -1304,6 +1502,65 @@ def test_pair_local_wrapper_dispatches_prefill_then_decode_and_counts():
     assert snapshot["short_chunk_calls"] == 0
     assert snapshot["global_tp4_decode_all_reduce_calls"] == 0
     assert snapshot["pair_local_all_reduce_calls"] == 1
+
+
+def test_correctness_trace_retains_digest_without_retaining_gpu_output():
+    runtime = _load_linear_attention_module()
+    runtime.output_digest = lambda tensor: f"digest:{tensor.label}"
+
+    class TraceTensor(FakeTensor):
+        def detach(self):
+            return self
+
+        def to(self, *, dtype=None, device=None):
+            return TraceTensor(
+                self.shape,
+                label=f"{self.label}.to",
+                dtype=self.dtype if dtype is None else dtype,
+                device=self.device if device is None else device,
+                floating=self._floating,
+                contiguous=self._contiguous,
+            )
+
+    wrapper = runtime.Qwen38TopologyLocalTP2LinearAttention(
+        baseline=_BaselineMixer(object()),
+        candidate_view=_wrapper_view(),
+        pair_reduce=lambda output, group: None,
+    )
+    projected = SimpleNamespace(
+        gate=object(),
+        next_convolution=object(),
+    )
+    wrapper._project_logical_tp2 = (
+        lambda hidden_states, convolution_state: projected
+    )
+    wrapper._run_delta = (
+        lambda projection, recurrent_state, *, token_count: (
+            object(),
+            object(),
+        )
+    )
+    wrapper._output_projection = lambda value, gate: TraceTensor(
+        (1, 5120),
+        label="trace-output",
+        dtype="torch.float32",
+    )
+    wrapper.activate_tp2_decode()
+    wrapper.enable_correctness_trace(True)
+
+    result = wrapper(
+        FakeTensor((1, 5120), label="decode"),
+        object(),
+        object(),
+    )
+    output_reference = weakref.ref(result[0])
+
+    assert wrapper.correctness_output_digest() == (
+        "digest:trace-output.to"
+    )
+    del result
+    gc.collect()
+    assert output_reference() is None
 
 
 @pytest.mark.parametrize(

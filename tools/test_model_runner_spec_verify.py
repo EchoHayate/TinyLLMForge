@@ -1131,6 +1131,101 @@ def test_qwen38_runtime_snapshot_is_management_command_and_ranked():
     )
 
 
+def test_qwen38_correctness_enable_is_safe_for_lightweight_runner():
+    runner = make_runner()
+
+    assert runner.enable_qwen38_correctness_proof(False) == {
+        "rank": 0,
+        "enabled": False,
+    }
+
+
+def test_qwen38_correctness_step_proof_reports_unavailable_for_lightweight_runner():
+    runner = make_runner()
+
+    with pytest.raises(
+        RuntimeError,
+        match="correctness step proof is unavailable",
+    ):
+        runner.qwen38_correctness_step_proof()
+
+
+def test_qwen38_correctness_checkpoint_reports_unavailable_for_lightweight_runner():
+    runner = make_runner()
+
+    with pytest.raises(
+        RuntimeError,
+        match="correctness runtime is unavailable",
+    ):
+        runner.qwen38_correctness_state_checkpoint()
+
+
+def test_qwen38_correctness_checkpoint_reads_baseline_tp4_state():
+    runner = make_runner()
+    runner.rank = 2
+    leases = (
+        model_runner.HybridStateLease(
+            slot_id=0,
+            generation=1,
+            request_id=10,
+        ),
+    )
+    runner._last_hybrid_state_leases = leases
+    transaction = object()
+    runner.qwen35_hybrid_model_owner = SimpleNamespace(
+        state_transaction=transaction,
+    )
+    calls = []
+    module_name = (
+        "tinyvllm.engine.qwen38_topology_local_tp2_state"
+    )
+    original = sys.modules.get(module_name)
+    fake_state = types.ModuleType(module_name)
+    fake_state.build_qwen38_tp4_state_component_digests = (
+        lambda **kwargs: (
+            calls.append(kwargs)
+            or ({
+                "layer_index": 0,
+                "logical_rank": 1,
+                "source_rank": 2,
+            },)
+        )
+    )
+    sys.modules[module_name] = fake_state
+    try:
+        checkpoint = runner.qwen38_correctness_state_checkpoint()
+    finally:
+        if original is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = original
+
+    assert calls == [{
+        "source_transaction": transaction,
+        "leases": leases,
+        "global_rank": 2,
+    }]
+    assert checkpoint == {
+        "rank": 2,
+        "pair_id": 1,
+        "logical_rank": 0,
+        "state_layout": "tp4_source_quarter",
+        "cohort": [{
+            "slot_id": 0,
+            "generation": 1,
+            "request_id": 10,
+        }],
+        "output_digests": [],
+        "state_digests": [],
+        "canonical_state_components": ({
+            "layer_index": 0,
+            "logical_rank": 1,
+            "source_rank": 2,
+        },),
+        "runtime_snapshot": None,
+    }
+
+
 def _collective_census_policy_payload():
     return {
         "enabled": True,

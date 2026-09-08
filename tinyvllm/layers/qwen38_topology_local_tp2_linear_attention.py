@@ -506,6 +506,8 @@ class Qwen38TopologyLocalTP2LinearAttention(torch.nn.Module):
             "global_tp4_decode_all_reduce_calls": 0,
             "phase_transition_count": 0,
         }
+        self._correctness_trace_enabled = False
+        self._last_output_digest = None
 
     @property
     def phase(self) -> str:
@@ -696,6 +698,8 @@ class Qwen38TopologyLocalTP2LinearAttention(torch.nn.Module):
         local = self._output_projection(core, projected.gate)
         self._pair_reduce(local, self.candidate_view.pair_group)
         output = local.to(dtype=hidden_states.dtype)
+        if self._correctness_trace_enabled:
+            self._last_output_digest = output_digest(output)
 
         self._telemetry["tp2_decode_calls"] += 1
         self._telemetry["pair_local_all_reduce_calls"] += 1
@@ -706,6 +710,20 @@ class Qwen38TopologyLocalTP2LinearAttention(torch.nn.Module):
         else:
             self._telemetry["chunk_64_calls"] += 1
         return output, projected.next_convolution, next_recurrent
+
+    def enable_correctness_trace(self, enabled: bool) -> None:
+        self._correctness_trace_enabled = bool(enabled)
+        self._last_output_digest = None
+
+    def correctness_output_digest(self) -> str:
+        if (
+            not self._correctness_trace_enabled
+            or self._last_output_digest is None
+        ):
+            raise RuntimeError(
+                "candidate correctness output is unavailable"
+            )
+        return self._last_output_digest
 
     def telemetry_snapshot(self) -> dict:
         return {

@@ -3516,17 +3516,77 @@ class ModelRunner:
     def enable_qwen38_correctness_proof(self, enabled: bool) -> dict:
         self._qwen38_correctness_proof_enabled = bool(enabled)
         self._qwen38_last_step_proof = None
+        runtime = getattr(
+            self,
+            "qwen38_topology_local_tp2_runtime",
+            None,
+        )
+        if runtime is not None:
+            runtime.enable_correctness_trace(enabled)
         return {
             "rank": self.rank,
             "enabled": self._qwen38_correctness_proof_enabled,
         }
 
     def qwen38_correctness_step_proof(self) -> dict:
-        if self._qwen38_last_step_proof is None:
+        proof = getattr(self, "_qwen38_last_step_proof", None)
+        if proof is None:
             raise RuntimeError(
                 "Qwen3.8 correctness step proof is unavailable"
             )
-        return dict(self._qwen38_last_step_proof)
+        return dict(proof)
+
+    def qwen38_correctness_state_checkpoint(self) -> dict:
+        runtime = getattr(
+            self,
+            "qwen38_topology_local_tp2_runtime",
+            None,
+        )
+        owner = getattr(
+            self,
+            "qwen35_hybrid_model_owner",
+            None,
+        )
+        if runtime is None and owner is None:
+            raise RuntimeError(
+                "Qwen3.8 topology-local correctness runtime is unavailable"
+            )
+        leases = tuple(getattr(
+            self,
+            "_last_hybrid_state_leases",
+            (),
+        ))
+        if not leases:
+            raise RuntimeError(
+                "Qwen3.8 correctness state leases are unavailable"
+            )
+        if runtime is not None:
+            return runtime.correctness_checkpoint(leases)
+        from tinyvllm.engine.qwen38_topology_local_tp2_state import (
+            build_qwen38_tp4_state_component_digests,
+        )
+
+        return {
+            "rank": int(self.rank),
+            "pair_id": int(self.rank) // 2,
+            "logical_rank": int(self.rank) % 2,
+            "state_layout": "tp4_source_quarter",
+            "cohort": [{
+                "slot_id": int(lease.slot_id),
+                "generation": int(lease.generation),
+                "request_id": int(lease.request_id),
+            } for lease in leases],
+            "output_digests": [],
+            "state_digests": [],
+            "canonical_state_components": (
+                build_qwen38_tp4_state_component_digests(
+                    source_transaction=owner.state_transaction,
+                    leases=leases,
+                    global_rank=int(self.rank),
+                )
+            ),
+            "runtime_snapshot": None,
+        }
 
     def qwen38_correctness_rank_identity(self) -> dict:
         attestation = getattr(
@@ -12460,12 +12520,20 @@ class ModelRunner:
             batch_kind=batch_kind,
         )
         self._kv_offload_after_forward()
-        if self._qwen38_correctness_proof_enabled and do_sample:
+        if (
+            getattr(
+                self,
+                "_qwen38_correctness_proof_enabled",
+                False,
+            )
+            and do_sample
+        ):
             proof_logits, proof_seqs = self._select_sample_rows(
                 logits,
                 seqs,
                 batch_kind,
             )
+            top_logit_values, top_logit_ids = proof_logits.max(dim=-1)
             self._qwen38_last_step_proof = {
                 "rank": self.rank,
                 "sequence_ids": [
@@ -12476,7 +12544,11 @@ class ModelRunner:
                 ),
                 "token_ids": [
                     int(value)
-                    for value in proof_logits.argmax(dim=-1).tolist()
+                    for value in top_logit_ids.tolist()
+                ],
+                "top_logit_values": [
+                    float(value)
+                    for value in top_logit_values.tolist()
                 ],
             }
         else:

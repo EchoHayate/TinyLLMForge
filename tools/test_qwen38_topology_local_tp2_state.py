@@ -232,6 +232,69 @@ def test_logical_rank_one_selects_world_ranks_two_and_three():
     ]
 
 
+def test_candidate_canonical_state_components_match_tp4_source_quarters():
+    from tinyvllm.engine.qwen38_topology_local_tp2_state import (
+        build_qwen38_tp4_state_component_digests,
+    )
+
+    config = frozen_qwen38_config()
+    lease = HybridStateLease(0, 1, 112)
+    source_rank_zero = build_source_transaction(config=config)
+    activate_source(source_rank_zero, lease)
+    owner = build_owner(
+        logical_rank=0,
+        source_transaction=source_rank_zero,
+        config=config,
+    )
+    owner.migrate((lease,))
+
+    source_rank_one = build_source_transaction(config=config)
+    activate_source(source_rank_one, lease)
+    for adapter in source_rank_one.adapters:
+        adapter.convolution[lease.slot_id].add_(10)
+        adapter.recurrent[lease.slot_id].add_(10)
+
+    baseline_rows = (
+        build_qwen38_tp4_state_component_digests(
+            source_transaction=source_rank_zero,
+            leases=(lease,),
+            global_rank=0,
+        )
+        + build_qwen38_tp4_state_component_digests(
+            source_transaction=source_rank_one,
+            leases=(lease,),
+            global_rank=1,
+        )
+    )
+    candidate_rows = owner.correctness_state_component_digests(
+        (lease,)
+    )
+
+    def indexed(rows):
+        return {
+            (row["layer_index"], row["source_rank"]): {
+                key: row[key]
+                for key in (
+                    "convolution_query_sha256",
+                    "convolution_key_sha256",
+                    "convolution_value_sha256",
+                    "recurrent_sha256",
+                )
+            }
+            for row in rows
+        }
+
+    assert len(baseline_rows) == 96
+    assert len(candidate_rows) == 96
+    assert indexed(candidate_rows) == indexed(baseline_rows)
+    assert {
+        row["logical_rank"] for row in candidate_rows
+    } == {0}
+    assert {
+        row["source_rank"] for row in candidate_rows
+    } == {0, 1}
+
+
 @pytest.mark.parametrize(
     "source",
     (
