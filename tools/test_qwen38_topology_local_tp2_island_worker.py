@@ -1027,6 +1027,40 @@ def test_candidate_timed_path_preserves_fused_qkv_numerics():
     assert "synchronize" not in source
 
 
+def test_candidate_short_chunk_size_matches_active_tokens_through_eight():
+    worker = _load()
+
+    assert worker.candidate_gated_delta_chunk_size(2) == 2
+    assert worker.candidate_gated_delta_chunk_size(4) == 4
+    assert worker.candidate_gated_delta_chunk_size(8) == 8
+    assert worker.candidate_gated_delta_chunk_size(9) == 64
+    assert worker.candidate_gated_delta_chunk_size(64) == 64
+    assert worker.candidate_gated_delta_chunk_size(65) == 64
+
+
+@pytest.mark.parametrize("token_count", [True, 1, 0, -1, 4.0, "4"])
+def test_candidate_short_chunk_size_rejects_invalid_token_count(token_count):
+    worker = _load()
+
+    with pytest.raises(
+        ValueError,
+        match="multi-token chunk size requires token_count >= 2",
+    ):
+        worker.candidate_gated_delta_chunk_size(token_count)
+
+
+def test_candidate_multi_token_core_uses_explicit_short_chunk_size():
+    worker = _load()
+    source = inspect.getsource(worker._run_gated_delta_and_norm)
+
+    assert "qwen35_gated_delta_recurrent(" in source
+    assert "qwen35_gated_delta_chunk(" in source
+    assert (
+        "chunk_size=candidate_gated_delta_chunk_size(token_count)"
+        in source
+    )
+
+
 def test_campaign_binds_rank_device_before_cuda_use():
     worker = _load()
     source = inspect.getsource(worker.run_worker_campaign)

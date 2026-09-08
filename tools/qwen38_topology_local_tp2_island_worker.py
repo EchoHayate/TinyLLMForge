@@ -909,6 +909,18 @@ def _apply_candidate_gated_rmsnorm(
     return gated_rmsnorm(core, gate, norm_weight, eps=eps)
 
 
+def candidate_gated_delta_chunk_size(token_count: int) -> int:
+    if (
+        isinstance(token_count, bool)
+        or not isinstance(token_count, int)
+        or token_count < 2
+    ):
+        raise ValueError(
+            "multi-token chunk size requires token_count >= 2"
+        )
+    return token_count if token_count <= 8 else 64
+
+
 def _run_gated_delta_and_norm(
     convolved,
     projected_z,
@@ -941,21 +953,29 @@ def _run_gated_delta_and_norm(
         HEAD_DIM,
     ).repeat_interleave(3, dim=1)
     value = value.reshape(token_count, 24, HEAD_DIM)
-    delta_rule = (
-        qwen35_gated_delta_recurrent
-        if token_count == 1
-        else qwen35_gated_delta_chunk
-    )
-    core, next_recurrent = delta_rule(
-        query,
-        key,
-        value,
-        projected_a,
-        projected_b,
-        view.A_log,
-        view.dt_bias,
-        recurrent_state,
-    )
+    if token_count == 1:
+        core, next_recurrent = qwen35_gated_delta_recurrent(
+            query,
+            key,
+            value,
+            projected_a,
+            projected_b,
+            view.A_log,
+            view.dt_bias,
+            recurrent_state,
+        )
+    else:
+        core, next_recurrent = qwen35_gated_delta_chunk(
+            query,
+            key,
+            value,
+            projected_a,
+            projected_b,
+            view.A_log,
+            view.dt_bias,
+            recurrent_state,
+            chunk_size=candidate_gated_delta_chunk_size(token_count),
+        )
     norm_core = core.reshape(-1, HEAD_DIM)
     norm_gate = projected_z.reshape(-1, HEAD_DIM)
     gated = _apply_candidate_gated_rmsnorm(

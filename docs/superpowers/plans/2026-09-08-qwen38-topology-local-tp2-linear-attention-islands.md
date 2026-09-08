@@ -1341,7 +1341,7 @@ Expected: local HEAD, tracking branch, and GitHub branch SHA agree.
   token-1 recurrent execution, the current TP4 baseline, exact-greedy
   validation, all frozen gates, and the default production runtime.
 
-- [ ] **Step 1: Add failing short-chunk policy tests**
+- [x] **Step 1: Add failing short-chunk policy tests**
 
 Add tests that require:
 
@@ -1359,7 +1359,7 @@ Reject booleans, non-integers, and values below two. Inspect
 `qwen35_gated_delta_recurrent` and that the multi-token branch passes
 `chunk_size=candidate_gated_delta_chunk_size(token_count)` explicitly.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -1372,7 +1372,7 @@ pytest -q \
 Expected: FAIL because `candidate_gated_delta_chunk_size` is absent and the
 candidate still relies on the default chunk size 64.
 
-- [ ] **Step 3: Implement the minimal candidate-only policy**
+- [x] **Step 3: Implement the minimal candidate-only policy**
 
 Add:
 
@@ -1408,7 +1408,7 @@ Do not modify `tinyvllm/layers/gated_delta.py`,
 `tinyvllm/layers/qwen35_linear_attention.py`, or
 `tinyvllm/layers/linear.py`.
 
-- [ ] **Step 4: Run GREEN and adjacent CPU verification**
+- [x] **Step 4: Run GREEN and adjacent CPU verification**
 
 Run:
 
