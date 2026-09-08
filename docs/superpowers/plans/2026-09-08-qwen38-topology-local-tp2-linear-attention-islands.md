@@ -486,6 +486,7 @@ class LogicalTP2LinearAttentionView:
     b_weight_half: torch.Tensor
     a_weight: torch.Tensor
     a_weight_half: torch.Tensor
+    ab_weight_half: torch.Tensor
     conv_weight: torch.Tensor
     A_log: torch.Tensor
     dt_bias: torch.Tensor
@@ -501,8 +502,9 @@ Construct the candidate view before warmup:
 - preserve the complete fused QKV and Z projections and select the logical
   TP2 output segments afterward so the candidate retains the baseline BF16
   GEMM numerical paths and exact greedy-token result;
-- retain zero-copy row views for the selected A and B projection weights so
-  those projections compute only their logical TP2 half;
+- concatenate the selected A and B row views once before warmup into one
+  contiguous 48-row BF16 weight, then split its single GEMM output into
+  24-row A and B halves;
 - materialize the matching contiguous FP32 output-projection input-column
   half;
 - keep all parameters immutable; and
@@ -511,9 +513,10 @@ Construct the candidate view before warmup:
 The test must reject three separate Q/K/V `F.linear` calls in the candidate
 timed path, require exactly one `F.linear(hidden, view.qkv_weight)` call, and
 require the complete `view.z_weight` projection rather than
-`view.z_weight_half`. The remote diagnostic must retain exact greedy argmax
-equality for token groups 1, 4, and 8 before any performance classification is
-accepted.
+`view.z_weight_half`, and require one
+`F.linear(hidden, view.ab_weight_half)` call rather than separate A/B calls.
+The remote diagnostic must retain exact greedy argmax equality for token
+groups 1, 4, and 8 before any performance classification is accepted.
 
 The worker loads the complete pinned model through the existing Qwen3.8
 checkpoint path, verifies that layer 0 is linear attention, and retains only
@@ -542,8 +545,7 @@ def run_candidate_mixer(
         for weight in view.qkv_weight_segments
     ), dim=-1)
     z = F.linear(hidden, view.z_weight_half)
-    b = F.linear(hidden, view.b_weight_half)
-    a = F.linear(hidden, view.a_weight_half)
+    a, b = F.linear(hidden, view.ab_weight_half).split((24, 24), dim=-1)
     convolved, next_convolution = qwen35_causal_depthwise_conv(
         qkv, convolution_state, view.conv_weight
     )

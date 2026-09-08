@@ -79,6 +79,7 @@ def project_persistent_reservation() -> dict[str, int]:
         5120 * CONV_KERNEL_WIDTH * 2
         + 12 * 4
         + 12 * 2
+        + 48 * HIDDEN_SIZE * 2
     )
     capacity_eight_state_increment = int(295.5 * 1024 * 1024)
     reservation = (
@@ -455,6 +456,7 @@ class LogicalTP2LinearAttentionView:
     b_weight_half: object
     a_weight: object
     a_weight_half: object
+    ab_weight_half: object
     conv_weight: object
     A_log: object
     dt_bias: object
@@ -570,6 +572,8 @@ def build_logical_tp2_layer_view(
     value_start = logical_rank * 24
     key_width_start = logical_rank * 1024
     value_width_start = logical_rank * 3072
+    a_weight_half = a_full.narrow(0, value_start, 24)
+    b_weight_half = b_full.narrow(0, value_start, 24)
     qkv_weight_segments = (
         qkv_full.narrow(0, key_width_start, 1024),
         qkv_full.narrow(0, 2048 + key_width_start, 1024),
@@ -585,9 +589,13 @@ def build_logical_tp2_layer_view(
             3072,
         ),
         "b_weight": b_full,
-        "b_weight_half": b_full.narrow(0, value_start, 24),
+        "b_weight_half": b_weight_half,
         "a_weight": a_full,
-        "a_weight_half": a_full.narrow(0, value_start, 24),
+        "a_weight_half": a_weight_half,
+        "ab_weight_half": torch.cat((
+            a_weight_half,
+            b_weight_half,
+        ), dim=0).contiguous(),
         "conv_weight": _select_state_parameter(
             conv_source,
             name="logical_tp2_conv_weight",
@@ -995,8 +1003,10 @@ def run_candidate_mixer(
         value_width_start,
         3072,
     )
-    b = F.linear(hidden, view.b_weight_half)
-    a = F.linear(hidden, view.a_weight_half)
+    a, b = F.linear(hidden, view.ab_weight_half).split(
+        (24, 24),
+        dim=-1,
+    )
     if _event_trace is not None:
         _event_trace["projection_end"].record()
     convolved, next_convolution = qwen35_causal_depthwise_conv(
@@ -1928,6 +1938,7 @@ def run_worker_campaign(
             view.conv_weight,
             view.A_log,
             view.dt_bias,
+            view.ab_weight_half,
             view.output_accumulation_weight,
         ):
             resources.register_tensor(tensor)

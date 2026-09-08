@@ -363,6 +363,10 @@ def test_logical_view_selects_contiguous_half_and_pair_group():
     assert view.a_weight.shape == (48, 5120)
     assert view.a_weight_half.shape == (24, 5120)
     assert view.a_weight_half.label == "a.narrow(0,24,24)"
+    assert view.ab_weight_half.shape == (48, 5120)
+    assert view.ab_weight_half.label == (
+        "cat(a.narrow(0,24,24),b.narrow(0,24,24)).contiguous"
+    )
     assert view.conv_weight.shape == (5120, 4)
     assert view.A_log.shape == (24,)
     assert view.dt_bias.shape == (24,)
@@ -372,6 +376,7 @@ def test_logical_view_selects_contiguous_half_and_pair_group():
         "A_log",
         "a_weight",
         "a_weight_half",
+        "ab_weight_half",
         "b_weight",
         "b_weight_half",
         "conv_weight",
@@ -530,6 +535,7 @@ def test_persistent_reservation_matches_frozen_integrated_cost():
         (5120 * 4 * 2)
         + (12 * 4)
         + (12 * 2)
+        + (48 * 5120 * 2)
     )
     assert row["reservation_bytes"] == sum((
         row["unmeasured_output_projection_bytes"],
@@ -1012,8 +1018,9 @@ def test_candidate_timed_path_preserves_fused_qkv_numerics():
     assert "F.linear(hidden, view.qkv_weight_segments[" not in source
     assert source.count("F.linear(hidden, view.z_weight)") == 1
     assert "F.linear(hidden, view.z_weight_half)" not in source
-    assert "F.linear(hidden, view.b_weight_half)" in source
-    assert "F.linear(hidden, view.a_weight_half)" in source
+    assert source.count("F.linear(hidden, view.ab_weight_half)") == 1
+    assert "F.linear(hidden, view.b_weight_half)" not in source
+    assert "F.linear(hidden, view.a_weight_half)" not in source
     assert "_pair_reduce(local, view.pair_group)" in source
     assert "dist.all_reduce" not in source
     assert "barrier" not in source

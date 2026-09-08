@@ -284,17 +284,19 @@ correctness requirement for this Stage-0 comparison, not an optional fallback.
 Z must likewise use the complete baseline-shaped projection before selecting
 the logical TP2 half. Its half-row GEMM differed in only 19--21 of 12,288
 projection elements with maximum absolute error at most `2.44140625e-4`, but a
-later token-8 diagnostic still changed the downstream greedy argmax. A and B
-continue to use zero-copy row views and compute only their logical TP2 half;
-both were bitwise equal to their full-projection slices. These views are
-created before warmup and add no persistent parameter storage. The current
-global TP4 quarter remains the baseline.
+later token-8 diagnostic still changed the downstream greedy argmax. The
+logical A and B halves are concatenated once before warmup into one contiguous
+48-row BF16 weight and computed by one fused GEMM. Across token groups 1, 4,
+and 8, this fused result was bitwise equal to the corresponding slices from
+the two baseline-shaped A and B GEMMs.
 
 Computing complete A and B projections and discarding the unused half is
-rejected because it spends avoidable input-projection FLOPs. Materializing
-fused TP2 copies is also rejected because its per-layer persistent memory cost
-would invalidate the integrated memory budget. Splitting fused QKV or Z is
-rejected because each failed the frozen exact-greedy correctness gate.
+rejected because it spends avoidable input-projection FLOPs and one extra
+kernel launch. The fused A/B half costs 0.46875 MiB per linear-attention layer,
+or 22.5 MiB per rank across 48 layers. Materializing fused TP2 copies for QKV
+or Z remains rejected because their persistent memory cost would invalidate
+the integrated memory budget, and their smaller GEMM shapes failed the frozen
+exact-greedy correctness gate.
 
 The logical view must not mutate the module's global TP identity or change the
 full-attention path.
@@ -383,8 +385,9 @@ The integrated candidate's calculated persistent increment is therefore:
 |---|---:|
 | FP32 linear-attention output-projection accumulation weights | 1,440 MiB |
 | Linear-attention state at capacity eight | 295.5 MiB |
+| Fused BF16 logical-half A/B projection weights | 22.5 MiB |
 | Convolution and scalar state parameters | less than 2 MiB |
-| **Calculated subtotal** | **about 1,737.5 MiB** |
+| **Calculated subtotal** | **about 1,760 MiB** |
 
 These are calculated logical sizes, not physical-memory evidence. The worker
 must report allocator-observed peak allocated and reserved bytes, including
