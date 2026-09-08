@@ -407,6 +407,7 @@ def test_compact_download_excludes_raw_traces(tmp_path, monkeypatch):
     command = " ".join(captured["sender"])
     assert "final_bundle" in command
     assert plan()["raw_root"] not in command
+    assert "controller/" not in command
 
 
 def test_timeout_cleanup_signals_only_owned_process_groups():
