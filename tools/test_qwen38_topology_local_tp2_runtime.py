@@ -102,6 +102,16 @@ class FakeModule:
 
 
 fake_torch.nn = SimpleNamespace(Module=FakeModule)
+fake_torch.cuda = SimpleNamespace(
+    synchronize_calls=0,
+)
+
+
+def _fake_cuda_synchronize():
+    fake_torch.cuda.synchronize_calls += 1
+
+
+fake_torch.cuda.synchronize = _fake_cuda_synchronize
 
 
 def _cat(tensors, dim=0):
@@ -398,6 +408,520 @@ def _load_linear_attention_module():
         "qwen38_topology_local_tp2_linear_attention_under_test",
         module_path,
     )
+
+
+def _load_runtime_owner_module():
+    module_path = (
+        ROOT
+        / "tinyvllm/engine/"
+        "qwen38_topology_local_tp2_runtime.py"
+    )
+    assert module_path.is_file(), (
+        "Qwen3.8 topology-local TP2 runtime owner is missing"
+    )
+
+    linear_module_name = (
+        "tinyvllm.layers."
+        "qwen38_topology_local_tp2_linear_attention"
+    )
+    state_module_name = (
+        "tinyvllm.engine.qwen38_topology_local_tp2_state"
+    )
+    original_linear = sys.modules.get(linear_module_name)
+    original_state = sys.modules.get(state_module_name)
+
+    linear_module = types.ModuleType(linear_module_name)
+
+    class FakeCandidateMixer(FakeModule):
+        def __init__(
+            self,
+            *,
+            baseline,
+            candidate_view,
+            pair_reduce,
+        ):
+            super().__init__()
+            self.baseline = baseline
+            self.candidate_view = candidate_view
+            self.pair_reduce = pair_reduce
+            self.phase = "tp4_prefill"
+            self.activations = 0
+
+        def activate_tp2_decode(self):
+            if self.phase != "tp4_prefill":
+                raise RuntimeError("TP2 decode phase is already active")
+            self.phase = "tp2_decode"
+            self.activations += 1
+
+        def telemetry_snapshot(self):
+            return {
+                "phase": self.phase,
+                "activations": self.activations,
+            }
+
+    def build_view(layer, logical_rank, pair_group):
+        if getattr(layer.out_proj, "prefill_weight", None) is None:
+            raise ValueError("out_proj.prefill_weight is missing")
+        if getattr(layer.out_proj, "tp_size", None) != 4:
+            raise ValueError("out_proj must retain the TP4 baseline")
+        return SimpleNamespace(
+            layer=layer,
+            logical_rank=logical_rank,
+            pair_group=pair_group,
+        )
+
+    def release_weight(layer):
+        weight = layer.out_proj.accumulation_weight
+        if weight is None:
+            raise RuntimeError(
+                "global TP4 decode accumulation weight is missing"
+            )
+        layer.out_proj.accumulation_weight = None
+        return {
+            "released": True,
+            "released_bytes": weight.numel() * weight.element_size(),
+        }
+
+    linear_module.Qwen38TopologyLocalTP2LinearAttention = (
+        FakeCandidateMixer
+    )
+    linear_module.build_logical_tp2_linear_attention_view = build_view
+    linear_module.release_global_tp4_decode_accumulation = release_weight
+
+    state_module = types.ModuleType(state_module_name)
+
+    class FakeStateOwner:
+        def __init__(self):
+            self.destination_transaction = object()
+            self.migrations = []
+            self.releases = []
+
+        def migrate(self, leases):
+            self.migrations.append(leases)
+            return tuple({
+                "request_id": lease.request_id,
+                "published": True,
+            } for lease in leases)
+
+        def release(self, leases):
+            self.releases.append(leases)
+            return tuple({
+                "request_id": lease.request_id,
+                "released": True,
+            } for lease in leases)
+
+        def snapshot(self):
+            return {
+                "publication_count": sum(
+                    len(leases) for leases in self.migrations
+                ),
+                "temporary_live_tensors": 0,
+            }
+
+    state_module.build_qwen38_topology_local_tp2_state_owner = (
+        lambda **_kwargs: FakeStateOwner()
+    )
+
+    try:
+        fake_torch.cuda.synchronize_calls = 0
+        sys.modules[linear_module_name] = linear_module
+        sys.modules[state_module_name] = state_module
+        module = _load_source_module(
+            "qwen38_topology_local_tp2_runtime_under_test",
+            module_path,
+        )
+        module._test_mixer_type = FakeCandidateMixer
+        return module
+    finally:
+        if original_linear is None:
+            sys.modules.pop(linear_module_name, None)
+        else:
+            sys.modules[linear_module_name] = original_linear
+        if original_state is None:
+            sys.modules.pop(state_module_name, None)
+        else:
+            sys.modules[state_module_name] = original_state
+
+
+class _RuntimeWeight:
+    def __init__(self, elements=8):
+        self.elements = elements
+
+    def numel(self):
+        return self.elements
+
+    def element_size(self):
+        return 4
+
+
+def _runtime_profile(**overrides):
+    values = {
+        "repository": "Qwen/Qwen3.8-27B",
+        "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+        "dtype": "bfloat16",
+        "num_hidden_layers": 64,
+        "layer_types": tuple(
+            "full_attention" if index % 4 == 3
+            else "linear_attention"
+            for index in range(64)
+        ),
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _runtime_fixture(**profile_overrides):
+    layers = []
+    for index in range(64):
+        block_type = (
+            "full_attention" if index % 4 == 3
+            else "linear_attention"
+        )
+        mixer = SimpleNamespace(
+            out_proj=SimpleNamespace(
+                prefill_weight=object(),
+                accumulation_weight=_RuntimeWeight(),
+                tp_size=4,
+            ),
+        )
+        layers.append(SimpleNamespace(
+            block_type=block_type,
+            linear_attention=mixer,
+        ))
+    transaction = object()
+    layer_stack = SimpleNamespace(
+        layers=layers,
+        linear_indices=tuple(
+            index for index in range(64) if index % 4 != 3
+        ),
+        state_transaction=transaction,
+    )
+    model = SimpleNamespace(
+        layer_stack=layer_stack,
+        qwen38_text_profile=_runtime_profile(**profile_overrides),
+        qwen38_hf_config=SimpleNamespace(text_config=object()),
+    )
+    owner = SimpleNamespace(
+        model=model,
+        layer_stack=layer_stack,
+        state_transaction=transaction,
+        pool=SimpleNamespace(capacity=8, device="cuda:0"),
+    )
+    from tinyvllm.engine.topology_local_tp2_island import (
+        TopologyLocalTP2PairContext,
+        TopologyLocalTP2PairMap,
+    )
+
+    pair_map = TopologyLocalTP2PairMap(((0, 1), (2, 3)))
+    pair_context = TopologyLocalTP2PairContext(
+        identity=pair_map.identity(0),
+        pair_map=pair_map,
+        pair_group="pair-a",
+        all_pair_groups=("pair-a", "pair-b"),
+    )
+    return model, owner, pair_context
+
+
+def test_runtime_installs_exactly_the_48_qwen38_linear_layers():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    original = tuple(
+        layer.linear_attention for layer in model.layer_stack.layers
+    )
+
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+
+    assert runtime.linear_layer_indices == tuple(
+        index for index in range(64) if index % 4 != 3
+    )
+    assert len(runtime.mixers) == 48
+    assert all(
+        type(layer.linear_attention)
+        is runtime_module._test_mixer_type
+        for layer in model.layer_stack.layers
+        if layer.block_type == "linear_attention"
+    )
+    assert all(
+        layer.linear_attention is original[index]
+        for index, layer in enumerate(model.layer_stack.layers)
+        if layer.block_type == "full_attention"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        (
+            lambda model, owner, context: setattr(
+                model,
+                "qwen38_text_profile",
+                _runtime_profile(num_hidden_layers=63),
+            ),
+            "topology",
+        ),
+        (
+            lambda model, owner, context: setattr(
+                model,
+                "qwen38_text_profile",
+                _runtime_profile(repository="other/model"),
+            ),
+            "repository",
+        ),
+        (
+            lambda model, owner, context: setattr(
+                model,
+                "qwen38_text_profile",
+                _runtime_profile(revision="a" * 40),
+            ),
+            "revision",
+        ),
+        (
+            lambda model, owner, context: setattr(
+                model,
+                "qwen38_text_profile",
+                _runtime_profile(dtype="float16"),
+            ),
+            "BF16",
+        ),
+        (
+            lambda model, owner, context: setattr(
+                model.layer_stack.layers[0].linear_attention.out_proj,
+                "tp_size",
+                2,
+            ),
+            "TP4",
+        ),
+        (
+            lambda model, owner, context: setattr(
+                model.layer_stack.layers[0].linear_attention.out_proj,
+                "prefill_weight",
+                None,
+            ),
+            "prefill",
+        ),
+        (
+            lambda model, owner, context: setattr(
+                model.layer_stack.layers[1],
+                "block_type",
+                "full_attention",
+            ),
+            "48 linear",
+        ),
+        (
+            lambda model, owner, context: object.__setattr__(
+                context.pair_map,
+                "pair_groups",
+                ((0, 2), (1, 3)),
+            ),
+            "pair map",
+        ),
+    ),
+)
+def test_runtime_installation_fails_closed(
+    mutation,
+    message,
+):
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    mutation(model, owner, pair_context)
+
+    with pytest.raises((ValueError, RuntimeError), match=message):
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+
+
+def test_runtime_rejects_second_installation():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime_module.install_qwen38_topology_local_tp2_runtime(
+        model=model,
+        owner=owner,
+        pair_context=pair_context,
+        capacity=8,
+    )
+
+    with pytest.raises(RuntimeError, match="already installed"):
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+
+
+def test_runtime_prepare_decode_publishes_then_activates_and_releases():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    leases = (
+        SimpleNamespace(slot_id=0, generation=1, request_id=10),
+        SimpleNamespace(slot_id=1, generation=1, request_id=11),
+    )
+
+    receipt = runtime.prepare_decode(leases)
+
+    assert runtime.phase == "tp2_decode"
+    assert model.layer_stack.state_transaction is (
+        runtime.candidate_state_owner.destination_transaction
+    )
+    assert all(mixer.phase == "tp2_decode" for mixer in runtime.mixers)
+    assert receipt["migration_rows"] == (
+        {"request_id": 10, "published": True},
+        {"request_id": 11, "published": True},
+    )
+    assert receipt["released_layer_count"] == 48
+    assert receipt["released_bytes"] == 48 * 8 * 4
+    assert fake_torch.cuda.synchronize_calls == 1
+
+    with pytest.raises(RuntimeError, match="already active"):
+        runtime.prepare_decode(leases)
+
+
+def test_runtime_rejects_changed_fixed_cohort_before_migration():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    first = (
+        SimpleNamespace(slot_id=0, generation=1, request_id=10),
+    )
+    runtime._fixed_cohort = tuple(
+        (lease.slot_id, lease.generation, lease.request_id)
+        for lease in first
+    )
+
+    with pytest.raises(RuntimeError, match="fixed candidate cohort changed"):
+        runtime.prepare_decode((
+            SimpleNamespace(slot_id=1, generation=1, request_id=11),
+        ))
+
+
+def test_runtime_rejects_empty_cohort_without_changing_authority():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    baseline_transaction = model.layer_stack.state_transaction
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+
+    with pytest.raises(ValueError, match="non-empty"):
+        runtime.prepare_decode(())
+
+    assert runtime.phase == "tp4_prefill"
+    assert model.layer_stack.state_transaction is baseline_transaction
+    assert all(mixer.phase == "tp4_prefill" for mixer in runtime.mixers)
+
+
+def test_runtime_migration_failure_keeps_baseline_authoritative():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    baseline_transaction = model.layer_stack.state_transaction
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    runtime.candidate_state_owner.migrate = (
+        lambda _leases: (_ for _ in ()).throw(
+            RuntimeError("migration failed")
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="migration failed"):
+        runtime.prepare_decode((
+            SimpleNamespace(slot_id=0, generation=1, request_id=10),
+        ))
+
+    assert runtime.phase == "tp4_prefill"
+    assert model.layer_stack.state_transaction is baseline_transaction
+    assert all(mixer.phase == "tp4_prefill" for mixer in runtime.mixers)
+
+
+def test_runtime_post_publication_failure_quarantines_without_replay():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    baseline_transaction = model.layer_stack.state_transaction
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    runtime.mixers[0].activate_tp2_decode = (
+        lambda: (_ for _ in ()).throw(
+            RuntimeError("activation failed")
+        )
+    )
+    leases = (
+        SimpleNamespace(slot_id=0, generation=1, request_id=10),
+    )
+
+    with pytest.raises(RuntimeError, match="activation failed"):
+        runtime.prepare_decode(leases)
+
+    assert runtime.phase == "quarantined"
+    assert model.layer_stack.state_transaction is not baseline_transaction
+    with pytest.raises(RuntimeError, match="already active"):
+        runtime.prepare_decode(leases)
+
+
+def test_runtime_snapshot_reports_installation_and_transition_state():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+
+    before = runtime.snapshot()
+
+    assert before["schema_version"] == (
+        "qwen38.topology-local-tp2-runtime-snapshot.v1"
+    )
+    assert before["enabled"] is True
+    assert before["rank"] == 0
+    assert before["phase"] == "tp4_prefill"
+    assert before["transition_count"] == 0
+    assert len(before["linear_layer_indices"]) == 48
+    assert len(before["mixers"]) == 48
 
 
 def test_logical_tp2_view_selects_exact_checkpoint_halves():

@@ -125,6 +125,13 @@ from tinyvllm.engine.qwen35_hybrid_model_owner import (
     Qwen35HybridModelOwner,
     build_qwen35_hybrid_model_owner,
 )
+from tinyvllm.engine.qwen38_topology_local_tp2_runtime import (
+    install_qwen38_topology_local_tp2_runtime,
+)
+from tinyvllm.engine.topology_local_tp2_island import (
+    TopologyLocalTP2PairMap,
+    create_topology_local_tp2_pair_context,
+)
 from tinyvllm.engine.qwen35_hybrid_model_publication import (
     Qwen35HybridModelOwnerPublicationSlot,
 )
@@ -2573,6 +2580,34 @@ class ModelRunner:
         if initial_qwen35_owner is not None:
             self.bind_qwen35_hybrid_model_owner(
                 initial_qwen35_owner
+            )
+        self.qwen38_topology_local_tp2_runtime = None
+        if config.qwen38_topology_local_tp2_islands:
+            if self.qwen38_text_profile is None:
+                raise ValueError(
+                    "topology-local TP2 islands requires Qwen3.8"
+                )
+            if self.qwen35_hybrid_model_owner is None:
+                raise RuntimeError(
+                    "topology-local TP2 islands requires a bound "
+                    "Qwen3.8 hybrid model owner"
+                )
+            self.model.qwen38_text_profile = self.qwen38_text_profile
+            self.model.qwen38_hf_config = hf_config
+            pair_map = TopologyLocalTP2PairMap(((0, 1), (2, 3)))
+            pair_context = create_topology_local_tp2_pair_context(
+                dist,
+                global_rank=self.rank,
+                world_size=self.world_size,
+                pair_map=pair_map,
+            )
+            self.qwen38_topology_local_tp2_runtime = (
+                install_qwen38_topology_local_tp2_runtime(
+                    model=self.model,
+                    owner=self.qwen35_hybrid_model_owner,
+                    pair_context=pair_context,
+                    capacity=config.max_num_seqs,
+                )
             )
 
         # prepare_prefill / prepare_decode 用的 pinned host buffer 池：按 (name, dtype) 复用，

@@ -154,6 +154,40 @@ def test_model_runner_validates_before_distributed_and_checks_each_batch():
     )
 
 
+def test_model_runner_installs_topology_local_tp2_after_owner_binding():
+    source = MODEL_RUNNER_PATH.read_text(encoding="utf-8")
+    init_body = source[
+        source.index("class ModelRunner:"):
+        source.index("    def bind_kv_block_identity_rows")
+    ]
+    compact = "".join(init_body.split())
+
+    assert (
+        "self.qwen38_topology_local_tp2_runtime=None"
+        in compact
+    )
+    assert (
+        "ifconfig.qwen38_topology_local_tp2_islands:"
+        in compact
+    )
+    assert (
+        "self.model.qwen38_text_profile=self.qwen38_text_profile"
+        in compact
+    )
+    assert "self.model.qwen38_hf_config=hf_config" in compact
+    assert "TopologyLocalTP2PairMap(((0,1),(2,3)))" in compact
+    assert "create_topology_local_tp2_pair_context(" in compact
+    assert (
+        "install_qwen38_topology_local_tp2_runtime("
+        in compact
+    )
+    assert init_body.index(
+        "self.bind_qwen35_hybrid_model_owner("
+    ) < init_body.index(
+        "install_qwen38_topology_local_tp2_runtime("
+    )
+
+
 def test_qwen38_manifest_is_accepted_by_shared_checkpoint_loader(tmp_path):
     identity = _load_function("_qwen35_checkpoint_manifest_identity")
     model_root = tmp_path / "model"
