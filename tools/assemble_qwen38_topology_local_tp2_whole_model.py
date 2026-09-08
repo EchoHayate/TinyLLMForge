@@ -715,6 +715,9 @@ def assemble_attempt(attempt_root: Path, output_root: Path) -> dict:
             "qwen38.topology-local-tp2-whole-model-classification.v1"
         ),
         "source_revision": source_revision,
+        "source_tree_sha256": payloads[
+            "source_manifest.json"
+        ]["source_tree_sha256"],
         "model_revision": model_revision,
         "correctness_pass": correctness_pass,
         "resource_identity_pass": resource_identity_pass,
