@@ -204,6 +204,11 @@ def build_workload_schedule():
 
 def build_argument_parser():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--protocol",
+        required=True,
+        choices=("completion-owned-stage01",),
+    )
     parser.add_argument("--attempt", required=True)
     parser.add_argument("--source-revision", required=True)
     parser.add_argument("--source-tree-sha256", required=True)
@@ -673,6 +678,8 @@ def run_worker(args):
     import torch
     import torch.distributed as dist
 
+    if args.protocol != "completion-owned-stage01":
+        raise ValueError("protocol is invalid")
     if args.world_size != WORLD_SIZE:
         raise ValueError("world_size must be 4")
     if args.rank not in range(WORLD_SIZE):

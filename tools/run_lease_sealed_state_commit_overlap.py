@@ -46,7 +46,8 @@ DEFAULT_COMMAND_TIMEOUT_S = 60
 DEFAULT_RETRY_COUNT = 3
 DEFAULT_DIST_PORT = 29_741
 MINIMUM_KERBEROS_LIFETIME_SECONDS = 22_560
-PLAN_SCHEMA = "lease-sealed-state-commit-overlap-plan.v1"
+PLAN_SCHEMA = "tp4-completion-owned-overlap-plan.v2"
+PROTOCOL = "completion-owned-stage01"
 ATTEMPT_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 REVISION_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -123,6 +124,7 @@ def build_attempt_plan(
     runtime_root = f"{attempt_root}/runtime"
     plan = {
         "schema_version": PLAN_SCHEMA,
+        "protocol": PROTOCOL,
         "attempt_tag": attempt_tag,
         "source_revision": source_revision,
         "source_tree_sha256": source_tree_sha256,
@@ -166,6 +168,7 @@ def _validate_plan(plan):
     if (
         not isinstance(plan, dict)
         or plan.get("schema_version") != PLAN_SCHEMA
+        or plan.get("protocol") != PROTOCOL
         or plan.get("remote_root") != APPROVED_REMOTE_ROOT
         or not REVISION_PATTERN.fullmatch(
             str(plan.get("source_revision", ""))
@@ -237,6 +240,8 @@ def build_remote_worker_commands(
             plan["source_revision"],
             "--source-tree-sha256",
             plan["source_tree_sha256"],
+            "--protocol",
+            PROTOCOL,
             "--output-dir",
             plan["raw_root"],
             "--rank",
@@ -407,7 +412,8 @@ def capture_source_identity(*, attempt, source_revision, repo_root):
         "tools",
     ).encode("utf-8")
     return {
-        "schema_version": "lease-sealed-state-commit-overlap-source.v1",
+        "schema_version": "tp4-completion-owned-overlap-source.v2",
+        "protocol": PROTOCOL,
         "attempt": attempt,
         "source_revision": source_revision,
         "source_tree_sha256": hashlib.sha256(tree).hexdigest(),
@@ -916,6 +922,7 @@ def supervise_remote_workers(
         cleanup["classification"] = "DIRTY"
     write_json_atomic(cleanup_path, cleanup)
     required = (
+        "diagnostic_rows.jsonl",
         "measurement_rows.jsonl",
         "memory.json",
         "lifecycle.json",
@@ -926,6 +933,7 @@ def supervise_remote_workers(
         name for name in required if not (raw_root / name).is_file()
     ]
     receipt = {
+        "protocol": PROTOCOL,
         "classification": (
             "PASS"
             if (
@@ -1079,6 +1087,7 @@ def _run_with_terminal_receipt(receipt_path, operation):
         write_json_atomic(
             receipt_path,
             {
+                "protocol": PROTOCOL,
                 "classification": "CONTROLLER_ERROR",
                 "worker_started": None,
                 "error_type": type(error).__name__,
@@ -1086,6 +1095,8 @@ def _run_with_terminal_receipt(receipt_path, operation):
             },
         )
         raise
+    if isinstance(result, dict):
+        result = {**result, "protocol": PROTOCOL}
     write_json_atomic(receipt_path, result)
     return result
 
@@ -1108,6 +1119,7 @@ def run_attempt(
     selected = _validate_plan(plan)
     if plan_only:
         return {
+            "protocol": PROTOCOL,
             "classification": "PLAN_ONLY",
             "worker_started": False,
             "plan": plan,
@@ -1117,6 +1129,7 @@ def run_attempt(
     kerberos = kerberos_probe()
     if kerberos.get("classification") not in ("PASS", "READY"):
         return {
+            "protocol": PROTOCOL,
             "classification": "BLOCKED_KERBEROS",
             "worker_started": False,
             "kerberos": kerberos,
@@ -1127,6 +1140,7 @@ def run_attempt(
     _validate_frozen_gpu_admission(selected, observed)
     if dry_run:
         return {
+            "protocol": PROTOCOL,
             "classification": "DRY_RUN_READY",
             "worker_started": False,
             "plan": plan,
@@ -1198,6 +1212,7 @@ def run_attempt(
     if None in classifications or len(classifications) != 1:
         raise RuntimeError("producer/verifier classification disagreement")
     return {
+        "protocol": PROTOCOL,
         "classification": classifications.pop(),
         "worker_started": True,
         "producer": producer,
@@ -1306,6 +1321,7 @@ def _main_unwrapped(argv=None):
     )
     if kerberos.get("classification") != "READY":
         result = {
+            "protocol": PROTOCOL,
             "classification": "BLOCKED_KERBEROS",
             "worker_started": False,
             "kerberos": kerberos,
@@ -1341,6 +1357,7 @@ def _main_unwrapped(argv=None):
     )
     if admission_wait.get("classification") != "READY":
         result = {
+            "protocol": PROTOCOL,
             "classification": "BLOCKED_RESOURCES",
             "worker_started": False,
             "admission": admission_wait,
@@ -1365,6 +1382,7 @@ def _main_unwrapped(argv=None):
         for rank, row in enumerate(selected)
     ]
     admission = {
+        "protocol": PROTOCOL,
         "classification": "STRICT_CLEAN",
         "rank_rows": [
             {
@@ -1447,6 +1465,7 @@ def _main_unwrapped(argv=None):
         by_uuid = {row["gpu_uuid"]: row for row in observed}
         rows = [by_uuid[row["gpu_uuid"]] for row in current["selected_gpus"]]
         immediate = {
+            "protocol": PROTOCOL,
             "classification": "STRICT_CLEAN",
             "rank_rows": [
                 {
@@ -1593,6 +1612,7 @@ def main(argv=None):
                 write_json_atomic(
                     receipt_path,
                     {
+                        "protocol": PROTOCOL,
                         "classification": "CONTROLLER_ERROR",
                         "worker_started": None,
                         "error_type": type(error).__name__,

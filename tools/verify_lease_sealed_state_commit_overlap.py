@@ -670,6 +670,10 @@ def verify_bundle(
     )
     if (
         source.get("schema_version") != expected_source_schema
+        or (
+            expected_source_schema == STAGE01_SOURCE_SCHEMA
+            and source.get("protocol") != "completion-owned-stage01"
+        )
         or not isinstance(source.get("attempt"), str)
         or not source["attempt"]
         or not _is_hex(source.get("source_revision"), 40)

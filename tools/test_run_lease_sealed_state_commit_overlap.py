@@ -11,12 +11,16 @@ import pytest
 import tools.run_lease_sealed_state_commit_overlap as controller_module
 from tools.run_lease_sealed_state_commit_overlap import (
     APPROVED_REMOTE_ROOT,
+    PLAN_SCHEMA,
+    PROTOCOL,
+    _download_compact_bundle,
     _prepare_local_attempt_root,
     _run_with_terminal_receipt,
     _stage_committed_source,
     _terminate_owned_process_groups,
     build_attempt_plan,
     build_remote_worker_commands,
+    capture_source_identity,
     run_attempt,
     run_ssh_with_retry,
     supervise_remote_workers,
@@ -40,7 +44,7 @@ def gpu(index, memory=0, utilization=0, processes=()):
 def plan(**overrides):
     values = {
         "attempt_tag": (
-            "20260907-lease-sealed-state-commit-overlap-stage0-r1"
+            "20260908-tp4-completion-owned-overlap-stage01-r1"
         ),
         "source_revision": "a" * 40,
         "source_tree_sha256": "b" * 64,
@@ -55,7 +59,7 @@ def plan(**overrides):
             "resolved_remote_root": APPROVED_REMOTE_ROOT,
             "resolved_attempt_root": (
                 f"{APPROVED_REMOTE_ROOT}/attempts/"
-                "20260907-lease-sealed-state-commit-overlap-stage0-r1"
+                "20260908-tp4-completion-owned-overlap-stage01-r1"
             ),
         },
     }
@@ -79,6 +83,9 @@ def test_every_remote_path_is_below_approved_mount():
         assert PurePosixPath(path).is_relative_to(
             PurePosixPath(candidate["attempt_root"])
         )
+    assert PLAN_SCHEMA == "tp4-completion-owned-overlap-plan.v2"
+    assert PROTOCOL == "completion-owned-stage01"
+    assert candidate["protocol"] == PROTOCOL
 
 
 def test_plan_requires_fresh_path_and_four_strict_clean_gpus():
@@ -93,7 +100,7 @@ def test_plan_requires_fresh_path_and_four_strict_clean_gpus():
             "resolved_remote_root": APPROVED_REMOTE_ROOT,
             "resolved_attempt_root": (
                 f"{APPROVED_REMOTE_ROOT}/attempts/"
-                "20260907-lease-sealed-state-commit-overlap-stage0-r1"
+                "20260908-tp4-completion-owned-overlap-stage01-r1"
             ),
         })
     with pytest.raises(ValueError, match="four strict-clean"):
@@ -132,6 +139,7 @@ def test_worker_commands_freeze_rank_world_size_port_and_gpu_mapping():
         assert f"--rank {rank}" in command
         assert "--world-size 4" in command
         assert "--dist-port 29741" in command
+        assert "--protocol completion-owned-stage01" in command
         assert "CUDA_VISIBLE_DEVICES=0,1,2,3" in command
 
 
@@ -152,12 +160,12 @@ def test_run_attempt_checks_auth_then_gpu_twice_and_both_verifiers():
         worker_runner=lambda _plan: events.append("worker")
         or {"classification": "PASS"},
         assembler=lambda _plan: events.append("assemble")
-        or {"classification": "GO_LEASE_SEALED_OVERLAP_MICROGATE"},
+        or {"classification": "GO_COMPLETION_OWNED_OVERLAP_MICROGATE"},
         remote_verifier=lambda _plan: events.append("remote_verify")
         or {
             "status": "PASS",
             "reconstructed_classification": (
-                "GO_LEASE_SEALED_OVERLAP_MICROGATE"
+                "GO_COMPLETION_OWNED_OVERLAP_MICROGATE"
             ),
         },
         downloader=lambda _plan: events.append("download")
@@ -166,14 +174,15 @@ def test_run_attempt_checks_auth_then_gpu_twice_and_both_verifiers():
         or {
             "status": "PASS",
             "reconstructed_classification": (
-                "GO_LEASE_SEALED_OVERLAP_MICROGATE"
+                "GO_COMPLETION_OWNED_OVERLAP_MICROGATE"
             ),
         },
     )
 
     assert result["classification"] == (
-        "GO_LEASE_SEALED_OVERLAP_MICROGATE"
+        "GO_COMPLETION_OWNED_OVERLAP_MICROGATE"
     )
+    assert result["protocol"] == PROTOCOL
     assert events == [
         "kerberos",
         "gpu",
@@ -186,6 +195,36 @@ def test_run_attempt_checks_auth_then_gpu_twice_and_both_verifiers():
         "download",
         "local_verify",
     ]
+
+
+def test_run_attempt_rejects_three_way_classification_disagreement():
+    clean = [gpu(index) for index in range(4)]
+
+    with pytest.raises(RuntimeError, match="classification disagreement"):
+        run_attempt(
+            plan(),
+            kerberos_probe=lambda: {"classification": "PASS"},
+            gpu_probe=lambda: clean,
+            remote_writer=lambda _plan: {"classification": "PASS"},
+            launch_admission_writer=lambda _plan, _observed: {
+                "classification": "PASS"
+            },
+            worker_runner=lambda _plan: {"classification": "PASS"},
+            assembler=lambda _plan: {
+                "classification": "GO_COMPLETION_OWNED_OVERLAP_MICROGATE"
+            },
+            remote_verifier=lambda _plan: {
+                "status": "PASS",
+                "reconstructed_classification": (
+                    "GO_COMPLETION_OWNED_OVERLAP_MICROGATE"
+                ),
+            },
+            downloader=lambda _plan: {"classification": "PASS"},
+            local_verifier=lambda _plan: {
+                "status": "PASS",
+                "reconstructed_classification": "NO_GO_PERFORMANCE",
+            },
+        )
 
 
 def test_expired_auth_stops_before_remote_or_gpu_access():
@@ -296,10 +335,78 @@ def test_local_attempt_root_is_fresh_and_failures_get_terminal_receipt(
 
     receipt = __import__("json").loads(receipt_path.read_text())
     assert receipt["classification"] == "CONTROLLER_ERROR"
+    assert receipt["protocol"] == PROTOCOL
     assert receipt["error_type"] == "RuntimeError"
     assert receipt["worker_started"] is None
     with pytest.raises(ValueError, match="fresh"):
         _prepare_local_attempt_root(attempt_root)
+
+
+def test_source_identity_is_bound_to_stage01_protocol(tmp_path, monkeypatch):
+    responses = iter((
+        SimpleNamespace(returncode=0, stdout="a" * 40 + "\n", stderr=""),
+        SimpleNamespace(returncode=0, stdout="", stderr=""),
+        SimpleNamespace(returncode=0, stdout="tree-entry\n", stderr=""),
+    ))
+    monkeypatch.setattr(
+        controller_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    source = capture_source_identity(
+        attempt="stage01-attempt",
+        source_revision="a" * 40,
+        repo_root=tmp_path,
+    )
+
+    assert source["schema_version"] == (
+        "tp4-completion-owned-overlap-source.v2"
+    )
+    assert source["protocol"] == PROTOCOL
+
+
+def test_compact_download_excludes_raw_traces(tmp_path, monkeypatch):
+    captured = {}
+
+    class FakeSender:
+        def __init__(self):
+            self.stdout = io.BytesIO(b"bundle")
+            self.stderr = io.BytesIO()
+
+        def wait(self):
+            return 0
+
+    def launch_sender(argv, **_kwargs):
+        captured["sender"] = argv
+        return FakeSender()
+
+    monkeypatch.setattr(
+        controller_module.subprocess,
+        "Popen",
+        launch_sender,
+    )
+    monkeypatch.setattr(
+        controller_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=b"",
+            stderr=b"",
+        ),
+    )
+
+    _download_compact_bundle(
+        plan(),
+        local_attempt_root=tmp_path / "local-attempt",
+        ssh_target="host",
+        proxy_host="proxy",
+        timeout_s=60,
+    )
+
+    command = " ".join(captured["sender"])
+    assert "final_bundle" in command
+    assert plan()["raw_root"] not in command
 
 
 def test_timeout_cleanup_signals_only_owned_process_groups():

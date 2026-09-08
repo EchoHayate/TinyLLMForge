@@ -259,6 +259,10 @@ def _validate_source_identity(
         not isinstance(source, dict)
         or source.get("schema_version")
         != expected_schema
+        or (
+            expected_schema == "tp4-completion-owned-overlap-source.v2"
+            and source.get("protocol") != "completion-owned-stage01"
+        )
         or not isinstance(source.get("attempt"), str)
         or not source["attempt"]
         or not _is_hex(source.get("source_revision"), 40)
@@ -477,6 +481,8 @@ def _assemble_validated_bundle(
         "schema_version": source["schema_version"],
         **identity,
     }
+    if stage01:
+        source_manifest["protocol"] = "completion-owned-stage01"
     environment_manifest = {
         "schema_version": (
             "lease-sealed-state-commit-overlap-environment.v1"

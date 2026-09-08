@@ -144,6 +144,7 @@ def passing_stage01_inputs():
     inputs["source_identity"]["schema_version"] = (
         "tp4-completion-owned-overlap-source.v2"
     )
+    inputs["source_identity"]["protocol"] = "completion-owned-stage01"
     inputs["lifecycle"].update(identity)
     inputs["cleanup"].update(identity)
     inputs["rows"] = passing_stage01_rows()
@@ -199,6 +200,8 @@ def test_stage01_assembler_writes_diagnostic_and_formal_bundle(tmp_path):
     workload = json.loads(
         (tmp_path / "workload_manifest.json").read_text()
     )
+    source = json.loads((tmp_path / "source_manifest.json").read_text())
+    assert source["protocol"] == "completion-owned-stage01"
     assert workload["protocol"] == "completion-owned-stage01"
     assert workload["formal_arms"] == ["baseline", "completion_owned"]
     assert workload["diagnostic_arms"] == [

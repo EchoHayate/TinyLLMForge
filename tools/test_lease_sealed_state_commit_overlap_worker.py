@@ -107,6 +107,35 @@ def test_schedule_freezes_shapes_warmups_pairs_and_abba_order():
     )
 
 
+def test_worker_parser_requires_stage01_protocol():
+    parser = build_argument_parser()
+    common = [
+        "--attempt",
+        "attempt",
+        "--source-revision",
+        "a" * 40,
+        "--source-tree-sha256",
+        "b" * 64,
+        "--output-dir",
+        "/data00/home/sitian/output",
+        "--rank",
+        "0",
+        "--world-size",
+        "4",
+        "--dist-port",
+        "29741",
+    ]
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(common)
+    parsed = parser.parse_args([
+        "--protocol",
+        "completion-owned-stage01",
+        *common,
+    ])
+    assert parsed.protocol == "completion-owned-stage01"
+
+
 def test_buffers_preallocate_streams_events_and_real_shapes():
     torch = FakeTorch()
     buffers = OverlapBuffers.create(torch, "cuda:0", active_tokens=8)
