@@ -1316,3 +1316,176 @@ test "$(git rev-parse HEAD)" = \
 ```
 
 Expected: local HEAD, tracking branch, and GitHub branch SHA agree.
+
+---
+
+### Task 10: Post-r5 short-chunk gated-delta specialization
+
+**Files:**
+
+- Modify: `tools/qwen38_topology_local_tp2_island_worker.py`
+- Modify: `tools/test_qwen38_topology_local_tp2_island_worker.py`
+- Modify:
+  `docs/superpowers/specs/2026-09-08-qwen38-topology-local-tp2-linear-attention-islands-design.md`
+- Modify:
+  `docs/superpowers/audits/2026-08-16-phase1-completion-audit.md`
+- Modify: `AGENT_HANDOFF_STATE.md`
+
+**Interfaces:**
+
+- Produces:
+  `candidate_gated_delta_chunk_size(token_count: int) -> int`
+- Consumes:
+  `qwen35_gated_delta_chunk(..., chunk_size: int)`
+- Preserves:
+  token-1 recurrent execution, the current TP4 baseline, exact-greedy
+  validation, all frozen gates, and the default production runtime.
+
+- [ ] **Step 1: Add failing short-chunk policy tests**
+
+Add tests that require:
+
+```python
+assert worker.candidate_gated_delta_chunk_size(2) == 2
+assert worker.candidate_gated_delta_chunk_size(4) == 4
+assert worker.candidate_gated_delta_chunk_size(8) == 8
+assert worker.candidate_gated_delta_chunk_size(9) == 64
+assert worker.candidate_gated_delta_chunk_size(64) == 64
+assert worker.candidate_gated_delta_chunk_size(65) == 64
+```
+
+Reject booleans, non-integers, and values below two. Inspect
+`_run_gated_delta_and_norm` to require that token-1 still calls
+`qwen35_gated_delta_recurrent` and that the multi-token branch passes
+`chunk_size=candidate_gated_delta_chunk_size(token_count)` explicitly.
+
+- [ ] **Step 2: Run RED**
+
+Run:
+
+```bash
+pytest -q \
+  tools/test_qwen38_topology_local_tp2_island_worker.py \
+  -k 'short_chunk or gated_delta_chunk_size'
+```
+
+Expected: FAIL because `candidate_gated_delta_chunk_size` is absent and the
+candidate still relies on the default chunk size 64.
+
+- [ ] **Step 3: Implement the minimal candidate-only policy**
+
+Add:
+
+```python
+def candidate_gated_delta_chunk_size(token_count: int) -> int:
+    if (
+        isinstance(token_count, bool)
+        or not isinstance(token_count, int)
+        or token_count < 2
+    ):
+        raise ValueError("multi-token chunk size requires token_count >= 2")
+    return token_count if token_count <= 8 else 64
+```
+
+Keep token-1 on `qwen35_gated_delta_recurrent`. In the multi-token branch,
+call:
+
+```python
+core, next_recurrent = qwen35_gated_delta_chunk(
+    query,
+    key,
+    value,
+    projected_a,
+    projected_b,
+    view.A_log,
+    view.dt_bias,
+    recurrent_state,
+    chunk_size=candidate_gated_delta_chunk_size(token_count),
+)
+```
+
+Do not modify `tinyvllm/layers/gated_delta.py`,
+`tinyvllm/layers/qwen35_linear_attention.py`, or
+`tinyvllm/layers/linear.py`.
+
+- [ ] **Step 4: Run GREEN and adjacent CPU verification**
+
+Run:
+
+```bash
+pytest -q \
+  tools/test_qwen38_topology_local_tp2_island_worker.py
+pytest -q \
+  tools/test_topology_local_tp2_island.py \
+  tools/test_qwen38_topology_local_tp2_island_worker.py \
+  tools/test_assemble_qwen38_topology_local_tp2_island.py \
+  tools/test_verify_qwen38_topology_local_tp2_island.py \
+  tools/test_run_qwen38_topology_local_tp2_island.py
+PYTHONPYCACHEPREFIX=/tmp/tinyllmforge-tp2-short-chunk-pycache \
+  python3 -m py_compile \
+  tools/qwen38_topology_local_tp2_island_worker.py
+git diff --check
+```
+
+Expected: worker tests, the complete focused suite, compilation, and
+whitespace checks pass.
+
+- [ ] **Step 5: Commit and push the source revision**
+
+Stage only the worker, worker test, and this plan:
+
+```bash
+git add -- \
+  tools/qwen38_topology_local_tp2_island_worker.py \
+  tools/test_qwen38_topology_local_tp2_island_worker.py \
+  docs/superpowers/plans/2026-09-08-qwen38-topology-local-tp2-linear-attention-islands.md
+git -c core.hooksPath=/dev/null commit \
+  -m "perf(tp4): specialize short gated-delta chunks" \
+  -m "Co-authored-by: TRAE CLI <noreply@bytedance.com>"
+git push origin feat/kv-sparse-attention
+```
+
+- [ ] **Step 6: Run a fresh diagnostic**
+
+After verifying at least 10,800 seconds of Kerberos lifetime and four
+admissible GPUs, run the controller with:
+
+```bash
+KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian \
+python3 tools/run_qwen38_topology_local_tp2_island.py \
+  --attempt \
+  20260908-qwen38-topology-local-tp2-island-stage0-diagnostic-r16 \
+  --dist-port 29719 \
+  --retry-count 20
+```
+
+Require all correctness and lifecycle gates, 180 measurement rows, 60
+migration rows, four clean ranks, producer/remote/local agreement, and the
+unchanged performance and cost thresholds.
+
+- [ ] **Step 7: Run one fresh formal attempt**
+
+Only if diagnostic-r16 returns
+`GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE`, use a new immutable tag and port:
+
+```bash
+KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian \
+python3 tools/run_qwen38_topology_local_tp2_island.py \
+  --attempt 20260908-qwen38-topology-local-tp2-island-stage0-r6 \
+  --dist-port 29729 \
+  --retry-count 20
+```
+
+Do not rerun r6 if it fails. Preserve its classification and evidence.
+
+- [ ] **Step 8: Close the evidence loop**
+
+Update the audit and append the handoff at true EOF with:
+
+- r5 as the immutable `NO_GO_PERFORMANCE` predecessor;
+- diagnostic-r16 and formal-r6 identities and classifications;
+- both ingredients in the candidate claim;
+- benefit and cost for every gate;
+- producer, remote verifier, and local verifier agreement;
+- exact source and remote SHA equality; and
+- the one-layer microgate versus whole-model claim boundary.
