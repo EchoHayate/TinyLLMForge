@@ -106,7 +106,7 @@ def test_kerberos_launch_floor_is_three_hours():
 def test_topology_parser_accepts_ansi_styled_nvidia_smi_header():
     matrix = "\n".join([
         "\t\x1b[4mGPU0\tGPU1\tGPU2\tGPU3\tGPU4\tGPU5\tGPU6\tGPU7"
-        "\tCPU Affinity\x1b[0m",
+        "\tCPU Affinity\tNUMA Affinity\tGPU NUMA ID\x1b[0m",
         "GPU0\t X \tPIX\tPXB\tPXB\tSYS\tSYS\tSYS\tSYS\t0-15",
         "GPU1\tPIX\t X \tPXB\tPXB\tSYS\tSYS\tSYS\tSYS\t0-15",
         "GPU2\tPXB\tPXB\t X \tPIX\tSYS\tSYS\tSYS\tSYS\t0-15",

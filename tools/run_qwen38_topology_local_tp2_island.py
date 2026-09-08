@@ -683,7 +683,7 @@ def _parse_topology_rows(matrix, selected):
     columns = {
         int(name.removeprefix("GPU")): index
         for index, name in enumerate(header)
-        if name.startswith("GPU")
+        if name.startswith("GPU") and name[3:].isdigit()
     }
     table = {
         int(row[0].removeprefix("GPU")): row[1:]
