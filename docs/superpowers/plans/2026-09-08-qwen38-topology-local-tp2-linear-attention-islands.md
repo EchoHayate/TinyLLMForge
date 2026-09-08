@@ -1130,7 +1130,7 @@ python3 tools/run_qwen38_topology_local_tp2_island.py \
   --remote-root \
     /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818 \
   --model-root \
-    /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/models/Qwen3.8-27B/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0 \
+    /data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/models/Qwen3.8-27B/snapshots/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0 \
   --dry-run
 ```
 

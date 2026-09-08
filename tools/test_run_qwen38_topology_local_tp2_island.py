@@ -8,6 +8,7 @@ import pytest
 
 from tools.run_qwen38_topology_local_tp2_island import (
     APPROVED_REMOTE_ROOT,
+    DEFAULT_MODEL_ROOT,
     EXPECTED_KERBEROS_PRINCIPAL,
     EXPECTED_KERBEROS_TGT,
     LOCAL_RECEIPT_NAME,
@@ -101,6 +102,13 @@ def _kerberos():
 
 def test_kerberos_launch_floor_is_three_hours():
     assert MINIMUM_KERBEROS_LIFETIME_SECONDS == 10_800
+
+
+def test_default_model_root_uses_huggingface_snapshot_layout():
+    assert DEFAULT_MODEL_ROOT == (
+        f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/snapshots/"
+        "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+    )
 
 
 def test_topology_parser_accepts_ansi_styled_nvidia_smi_header():

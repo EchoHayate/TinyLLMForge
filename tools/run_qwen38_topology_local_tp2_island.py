@@ -52,7 +52,7 @@ APPROVED_REMOTE_ROOT = (
 )
 DEFAULT_REMOTE_PYTHON = "/data00/home/sitian/tllm/env/bin/python"
 DEFAULT_MODEL_ROOT = (
-    f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/"
+    f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/snapshots/"
     "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
 )
 DEFAULT_SSH_TARGET = "sitian@10.232.195.203"
