@@ -467,7 +467,8 @@ The frozen matrix is:
 - two warmup pairs per shape;
 - 15 measured pairs per shape;
 - four ranks per pair;
-- one separately measured state migration per repetition; and
+- a separate state-migration matrix with two warmups and 15 measured
+  repetitions across all four ranks; and
 - no profiler enabled during formal timing.
 
 The worker may run a small untimed smoke before the immutable attempt. It may
@@ -490,7 +491,8 @@ Report:
 - collective time;
 - linear-attention core time;
 - host submission median and P99;
-- migration latency and break-even token count; and
+- migration latency from the separate 60-row measured matrix and break-even
+  token count for each active-token shape; and
 - peak allocated and reserved bytes by rank.
 
 Profiler-derived component times are diagnostic only. The classifier uses the
@@ -649,7 +651,8 @@ Large source snapshots, raw rows, caches, traces, and temporary tensors remain
 remote. Only the compact sealed final bundle is downloaded under:
 
 ```text
-artifacts/qwen38_topology_local_tp2_islands/<attempt>/final_bundle/
+artifacts/qwen38_topology_local_tp2_islands/
+  20260908-qwen38-topology-local-tp2-island-stage0-r1/final_bundle/
 ```
 
 The bundle must contain:
