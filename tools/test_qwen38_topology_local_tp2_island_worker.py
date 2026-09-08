@@ -530,6 +530,36 @@ def test_case_seeds_share_hidden_but_distinguish_state_quarters():
     ]
 
 
+def test_segmented_convolution_state_merges_matching_qkv_segments(
+    monkeypatch,
+):
+    worker = _load()
+    cat_inputs = []
+
+    def recording_cat(tensors, dim=0):
+        tensors = tuple(tensors)
+        cat_inputs.append(tuple(tensor.label for tensor in tensors))
+        return _cat(tensors, dim=dim)
+
+    monkeypatch.setattr(fake_torch, "cat", recording_cat)
+    quarters = tuple(
+        FakeTensor((10, 4), label=f"rank-{rank}")
+        for rank in range(4)
+    )
+
+    result = worker.assemble_segmented_state_partitions(
+        quarters,
+        segment_widths=(2, 2, 6),
+    )
+
+    assert result.shape == (40, 4)
+    assert cat_inputs[:3] == [
+        tuple(f"rank-{rank}.narrow(0,0,2)" for rank in range(4)),
+        tuple(f"rank-{rank}.narrow(0,2,2)" for rank in range(4)),
+        tuple(f"rank-{rank}.narrow(0,4,6)" for rank in range(4)),
+    ]
+
+
 def test_locate_layer_zero_requires_linear_attention():
     worker = _load()
     mixer = fake_linear_layer()

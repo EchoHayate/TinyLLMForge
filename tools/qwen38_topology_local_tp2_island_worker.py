@@ -1358,18 +1358,21 @@ def run_mixer_pair(
             gathered_candidate_recurrent[left_rank],
             gathered_candidate_recurrent[right_rank],
         ))
-    baseline_full_convolution = torch.cat(
-        gathered_baseline_convolution,
-        dim=0,
+    baseline_full_convolution = assemble_segmented_state_partitions(
+        tuple(gathered_baseline_convolution),
+        segment_widths=(512, 512, 1536),
     )
     baseline_full_recurrent = torch.cat(
         gathered_baseline_recurrent,
         dim=0,
     )
-    candidate_full_convolution = torch.cat((
-        gathered_candidate_convolution[first_pair[0]],
-        gathered_candidate_convolution[first_pair[1]],
-    ), dim=0)
+    candidate_full_convolution = assemble_segmented_state_partitions(
+        (
+            gathered_candidate_convolution[first_pair[0]],
+            gathered_candidate_convolution[first_pair[1]],
+        ),
+        segment_widths=(1024, 1024, 3072),
+    )
     candidate_full_recurrent = torch.cat((
         gathered_candidate_recurrent[first_pair[0]],
         gathered_candidate_recurrent[first_pair[1]],
@@ -1602,6 +1605,50 @@ def case_seeds(seed: int, rank: int) -> dict[str, int]:
     }
 
 
+def assemble_segmented_state_partitions(
+    partitions: tuple,
+    *,
+    segment_widths: tuple[int, ...],
+):
+    """Merge sharded states while preserving the fused segment layout."""
+    import torch
+
+    if not isinstance(partitions, tuple) or not partitions:
+        raise ValueError("state partitions must be a non-empty tuple")
+    if (
+        not isinstance(segment_widths, tuple)
+        or not segment_widths
+        or any(
+            isinstance(width, bool)
+            or not isinstance(width, int)
+            or width <= 0
+            for width in segment_widths
+        )
+    ):
+        raise ValueError("segment widths must be positive integers")
+    reference = partitions[0]
+    if any(
+        not isinstance(tensor, torch.Tensor)
+        or tensor.shape != reference.shape
+        or tensor.dtype != reference.dtype
+        or tensor.device != reference.device
+        for tensor in partitions
+    ):
+        raise ValueError("state partitions must have compatible layouts")
+    if not reference.shape or sum(segment_widths) != reference.shape[0]:
+        raise ValueError("segment widths must cover each state partition")
+
+    offset = 0
+    merged_segments = []
+    for width in segment_widths:
+        merged_segments.append(torch.cat(tuple(
+            tensor.narrow(0, offset, width)
+            for tensor in partitions
+        ), dim=0))
+        offset += width
+    return torch.cat(tuple(merged_segments), dim=0)
+
+
 def _make_case_inputs(
     *,
     active_tokens: int,
@@ -1676,9 +1723,10 @@ def _migrate_state_once(
         recurrent_quarters,
         local_recurrent,
     )
-    candidate_convolution = assemble_logical_state_half(
-        tuple(convolution_quarters),
-        logical_rank,
+    first = 2 * logical_rank
+    candidate_convolution = assemble_segmented_state_partitions(
+        tuple(convolution_quarters[first:first + 2]),
+        segment_widths=(512, 512, 1536),
     )
     candidate_recurrent = assemble_logical_state_half(
         tuple(recurrent_quarters),
