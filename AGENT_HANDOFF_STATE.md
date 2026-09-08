@@ -53066,3 +53066,94 @@ and prompt-to-artifact checklist are recorded in:
 docs/superpowers/audits/
   2026-09-08-tp4-completion-owned-overlap-stage01-audit.md
 ```
+
+## 2026-09-08 Qwen3.8 topology-local TP2 islands terminal handoff
+
+The candidate combines topology-local TP2 ownership inside TP4 with a
+candidate-only short-chunk gated-delta path. Tokens 2 through 8 use their
+actual token count instead of padding the recurrence to chunk size 64;
+token-1 retains the recurrent path. Do not attribute the result to topology
+alone.
+
+```text
+authoritative checkout:
+  /Users/bytedance/Desktop/TinyLLMForge
+branch:
+  feat/kv-sparse-attention
+source revision used by the runs:
+  83466514cac358061382dcd47b2ceabab71a6f8f
+model:
+  Qwen/Qwen3.8-27B
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+diagnostic GO:
+  20260908-qwen38-topology-local-tp2-island-stage0-diagnostic-r18
+formal GO:
+  20260908-qwen38-topology-local-tp2-island-stage0-r8
+classification:
+  GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE
+claim boundary:
+  one-layer same-request Stage-0 microgate only
+```
+
+The launch-time Kerberos threshold is 1,800 seconds. The controller never
+runs `kinit` or `krenew`; the lower floor explicitly accepts a higher
+mid-run expiry risk. All GPU, correctness, performance, memory, migration,
+and cleanup gates remain unchanged.
+
+Immutable non-result attempts:
+
+- diagnostic-r16: GPU identity changed before worker launch;
+- diagnostic-r17: an unrelated process appeared after four owned ranks
+  started; the supervisor terminated only those owned ranks, producing zero
+  timing and migration rows;
+- formal-r6 and formal-r7: GPU identity changed before worker launch.
+
+Do not repair or reuse these tags.
+
+### Formal-r8 result
+
+The formal attempt used physical GPUs 2, 3, 4, and 6. Every GPU was admitted
+at 0 MiB, 0% utilization, with no foreign compute process. The selected
+logical pairs `[0,1]` and `[2,3]` were PXB-local.
+
+| Gate | Formal result | Verdict |
+| --- | ---: | --- |
+| Correctness | 180/180 rows pass; exact greedy argmax; all tensor tolerance checks pass | `PASS` |
+| Lifecycle | 4/4 ranks pass; zero fallback; stale/different-request state rejected | `PASS` |
+| Token-1 median speedup | `24.985968%` | `PASS >= 5%` |
+| Token-4 median speedup | `245.292308%` | `PASS` |
+| Token-8 median speedup | `192.486848%` | `PASS` |
+| Token-4/8 geometric aggregate | `217.794680%` | `PASS >= 5%` |
+| Improving pairs | token 1/4/8 each `15/15` | `PASS >= 11/15` |
+| P99 regression | `-17.296137%`, `-80.365001%`, `-58.040201%` | `PASS <= +3%` |
+| Host median regression | `-17.458940%`, `-70.553617%`, `-65.873156%` | `PASS <= +10%` |
+| Migration break-even | token 1/4/8 = `2/1/1` | `PASS <= 32` |
+| Migration temporary lifetime | 60/60 released before timing; zero live tensors/bytes afterward | `PASS` |
+| Projected steady increment | `1,759.878296 MiB/rank` | `PASS <= 1,920 MiB` |
+| Peak allocated ratio | `65.094443%` | `PASS < 98%` |
+| Cleanup | rank exits 0; no owned children; no task files outside attempt root | `CLEAN` |
+| Verifiers | producer, remote, sealed local, and fresh check-only agree | `PASS` |
+| Terminal artifact hashes | 18/18 match; verifier receipts byte-identical | `PASS` |
+| Local regression verification | 172 focused and adjacent tests; compilation and diff checks | `PASS` |
+| Post-run exact-tag process scan | no remote process remains after excluding the inspector | `PASS` |
+
+Formal compact evidence:
+
+```text
+artifacts/qwen38_topology_local_tp2_islands/
+  20260908-qwen38-topology-local-tp2-island-stage0-r8/final_bundle
+```
+
+Fresh local verifier command:
+
+```bash
+python3 tools/verify_qwen38_topology_local_tp2_island.py \
+  artifacts/qwen38_topology_local_tp2_islands/20260908-qwen38-topology-local-tp2-island-stage0-r8/final_bundle \
+  --check-only
+```
+
+The mechanism has a formal Stage-0 microgate GO. It does not establish
+whole-model TPOT, TTFT, QPS, end-to-end latency, or production benefit.
+The next promotion step must be a separately designed whole-model integration
+gate using the combined topology-local plus short-chunk candidate.

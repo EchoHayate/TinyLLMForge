@@ -1431,7 +1431,7 @@ git diff --check
 Expected: worker tests, the complete focused suite, compilation, and
 whitespace checks pass.
 
-- [ ] **Step 5: Commit and push the source revision**
+- [x] **Step 5: Commit and push the source revision**
 
 Stage only the worker, worker test, and this plan:
 
@@ -1446,7 +1446,11 @@ git -c core.hooksPath=/dev/null commit \
 git push origin feat/kv-sparse-attention
 ```
 
-- [ ] **Step 6: Run a fresh diagnostic**
+The short-chunk source was committed as `52ce85c`, and the subsequently
+approved 1,800-second Kerberos launch floor was committed as `8346651`.
+Both commits were pushed to `origin/feat/kv-sparse-attention`.
+
+- [x] **Step 6: Run a fresh diagnostic**
 
 After verifying at least 1,800 seconds of Kerberos lifetime and four
 admissible GPUs, run the controller with:
@@ -1455,8 +1459,8 @@ admissible GPUs, run the controller with:
 KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian \
 python3 tools/run_qwen38_topology_local_tp2_island.py \
   --attempt \
-  20260908-qwen38-topology-local-tp2-island-stage0-diagnostic-r16 \
-  --dist-port 29719 \
+  20260908-qwen38-topology-local-tp2-island-stage0-diagnostic-r18 \
+  --dist-port 29749 \
   --retry-count 20
 ```
 
@@ -1464,22 +1468,34 @@ Require all correctness and lifecycle gates, 180 measurement rows, 60
 migration rows, four clean ranks, producer/remote/local agreement, and the
 unchanged performance and cost thresholds.
 
-- [ ] **Step 7: Run one fresh formal attempt**
+The immutable r16 and r17 attempts terminated without usable measurements
+after GPU ownership changed during launch. The next fresh diagnostic,
+`20260908-qwen38-topology-local-tp2-island-stage0-diagnostic-r18`, completed
+with `GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE`, 180 timing rows, 60 migration
+rows, clean rank shutdown, and producer/remote/local verifier agreement.
 
-Only if diagnostic-r16 returns
+- [x] **Step 7: Run one fresh formal attempt**
+
+Only after diagnostic-r18 returns
 `GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE`, use a new immutable tag and port:
 
 ```bash
 KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian \
 python3 tools/run_qwen38_topology_local_tp2_island.py \
-  --attempt 20260908-qwen38-topology-local-tp2-island-stage0-r6 \
-  --dist-port 29729 \
+  --attempt 20260908-qwen38-topology-local-tp2-island-stage0-r8 \
+  --dist-port 29769 \
   --retry-count 20
 ```
 
-Do not rerun r6 if it fails. Preserve its classification and evidence.
+Do not rerun failed tags. Preserve every classification and its evidence.
 
-- [ ] **Step 8: Close the evidence loop**
+Formal r6 and r7 both terminated before measurement when an unrelated GPU
+process appeared during the post-staging identity check. They remain immutable
+failed attempts. The next fresh formal attempt,
+`20260908-qwen38-topology-local-tp2-island-stage0-r8`, completed with
+`GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE`.
+
+- [x] **Step 8: Close the evidence loop**
 
 Update the audit and append the handoff at true EOF with:
 
@@ -1490,3 +1506,7 @@ Update the audit and append the handoff at true EOF with:
 - producer, remote verifier, and local verifier agreement;
 - exact source and remote SHA equality; and
 - the one-layer microgate versus whole-model claim boundary.
+
+The terminal reconciliation is recorded in
+`docs/superpowers/audits/2026-08-16-phase1-completion-audit.md` and
+`AGENT_HANDOFF_STATE.md`.

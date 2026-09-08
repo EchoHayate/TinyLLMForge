@@ -4666,3 +4666,131 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE2_AUTHORIZED_PRODUCTION_DEFAULT_NOT_AUTHORIZED
 ```
+
+## 2026-09-08 latest reconciliation: topology-local TP2 islands with short chunks
+
+The topology-local TP2 island candidate now combines two ingredients:
+
+1. topology-local TP2 parameter/state ownership inside the frozen TP4
+   process topology; and
+2. a candidate-only gated-delta short-chunk specialization that uses the
+   actual token count for token groups 2 through 8 instead of padding the
+   recurrence to chunk size 64.
+
+The second ingredient is required to explain the final gain. The result must
+not be attributed solely to communication topology.
+
+The source-bound diagnostic and formal attempts completed:
+
+```text
+source revision:
+  83466514cac358061382dcd47b2ceabab71a6f8f
+model:
+  Qwen/Qwen3.8-27B
+model revision:
+  1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0
+diagnostic:
+  20260908-qwen38-topology-local-tp2-island-stage0-diagnostic-r18
+diagnostic classification:
+  GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE
+formal:
+  20260908-qwen38-topology-local-tp2-island-stage0-r8
+formal classification:
+  GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE
+```
+
+The launch-time Kerberos floor was explicitly changed from 10,800 seconds to
+1,800 seconds. This improves the chance of using a short GPU availability
+window but accepts a higher risk of credential expiry during a long run. The
+controller still does not invoke `kinit` or `krenew`. GPU cleanliness,
+correctness, performance, memory, migration, and cleanup gates were not
+relaxed.
+
+### Attempt reconciliation
+
+| Attempt | Terminal evidence | Classification |
+| --- | --- | --- |
+| diagnostic-r16 | GPU identity changed before worker launch | `FAILED_CONTROLLER` |
+| diagnostic-r17 | four owned ranks were terminated after an unrelated GPU process appeared; zero timing and migration rows | `FAILED_CONTROLLER` |
+| diagnostic-r18 | complete bundle, 180 timing rows, 60 migration rows, dual-verifier agreement | `GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE` |
+| formal-r6 | GPU identity changed before worker launch | `FAILED_CONTROLLER` |
+| formal-r7 | GPU identity changed after attempt staging and before worker launch | `FAILED_CONTROLLER` |
+| formal-r8 | complete bundle, 180 timing rows, 60 migration rows, dual-verifier agreement | `GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE` |
+
+All failed tags remain immutable and are not repaired or reused.
+
+### Formal-r8 prompt-to-artifact checklist
+
+| Requirement | Concrete evidence | Verdict |
+| --- | --- | --- |
+| Pushed source identity | formal bundle and all receipts bind to `83466514cac358061382dcd47b2ceabab71a6f8f`; local and remote branch SHA matched before launch | `PASS` |
+| Exact model identity | `Qwen/Qwen3.8-27B` revision `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` | `PASS` |
+| Mounted-only remote storage | attempt root is below `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/attempts/`; cleanup reports no task files outside it | `PASS` |
+| Four clean GPUs and topology pairing | physical GPUs 2, 3, 4, and 6 admitted at 0 MiB, 0%, no foreign process; logical pairs are `[0,1]` and `[2,3]`, each PXB-local | `PASS` |
+| Frozen workload completeness | 180 timing rows and 180 correctness rows: 60 rows each for active-token groups 1, 4, and 8; 60 migration rows | `PASS` |
+| Parameter provenance | checkpoint reconstruction and replica digests match; only linear-attention parameters participate; full-attention and MLP parameters are unchanged | `PASS` |
+| Exactness and lifecycle | all 180 correctness rows are finite, within tolerance, greedy-argmax equal, and pair-replica consistent; all four lifecycle rows pass with zero fallback | `PASS` |
+| Token-1 median speedup | `24.985968%`, threshold at least `5%`; 15/15 improving pairs | `PASS` |
+| Token-4 median speedup | `245.292308%`; 15/15 improving pairs | `PASS` |
+| Token-8 median speedup | `192.486848%`; 15/15 improving pairs | `PASS` |
+| Token-4/8 geometric aggregate | `217.794680%`, threshold at least `5%` | `PASS` |
+| P99 protection | token 1/4/8 changes are `-17.296137%`, `-80.365001%`, and `-58.040201%`; limit is at most `+3%` regression | `PASS` |
+| Host protection | token 1/4/8 median changes are `-17.458940%`, `-70.553617%`, and `-65.873156%`; limit is at most `+10%` regression | `PASS` |
+| Migration cost | median `680,959 ns`, P99 `839,680 ns`; break-even tokens are 2, 1, and 1, all at most 32 | `PASS` |
+| Migration temporary lifetime | all 60 rows released temporary storage before timing; live tensor count and allocated bytes after release are both zero | `PASS` |
+| Integrated memory cost | projected steady increment `1,845,366,144` bytes = `1,759.878296 MiB` per rank, below `1,920 MiB`; maximum peak allocated ratio `65.094443%`, below `98%` | `PASS` |
+| Cleanup | all four ranks exit 0; process groups destroyed; no owned children remain; seven tensor reservations released per rank | `PASS` |
+| Independent verification | producer, remote verifier, sealed local verifier, and fresh local `--check-only` reconstruction all agree on GO | `PASS` |
+| Terminal integrity | remote/local verifier receipts are byte-identical with SHA-256 `acab99f024f9ebeb81741bc5c44a4471aa90016414a7019c13b2636b500085b1`; all 18 terminal artifact hashes independently match | `PASS` |
+| Local regression verification | 172 focused and adjacent tests pass; controller/worker/assembler/verifier compile; `git diff --check` passes | `PASS` |
+| Post-run process hygiene | remote `/proc` scan excluding the inspector finds no process containing the exact formal-r8 tag | `PASS` |
+| Claim boundary | report and verifiers say `one-layer same-request Stage-0 microgate only` | `PASS_LIMITED` |
+
+### Benefit and cost
+
+The formal candidate reduces median CUDA latency from 2.269184 ms to
+1.815551 ms for token 1, from 11.491328 ms to 3.328000 ms for token 4, and
+from 11.321344 ms to 3.870719 ms for token 8. The corresponding paired median
+speedups are 25.719134%, 241.313203%, and 191.944054%.
+
+The measured cost is state migration: median 0.680959 ms and P99 0.839680 ms,
+plus a projected integrated steady-state increment of 1,759.878296 MiB per
+rank at capacity eight. The candidate therefore passes this Stage-0
+microgate, but it is not evidence of whole-model TPOT, TTFT, QPS, end-to-end
+latency, or production benefit.
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Topology-local TP2 islands plus short-chunk specialization | complete source-bound diagnostic and formal runs | `GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE` |
+| Correctness and state lifecycle | 180/180 correctness rows and 4/4 lifecycle rows pass | `PASS` |
+| Frozen performance gates | every median, P99, host, and improving-pair gate passes | `PASS` |
+| Migration and memory costs | all frozen cost gates pass; 1,759.878296 MiB projected increment per rank remains material | `PASS_WITH_RECORDED_COST` |
+| Evidence closure | producer plus remote/local/check-only verifier agreement and 18/18 artifact hashes | `PASS` |
+| Whole-model performance | not measured by this one-layer same-request microgate | `NOT_ESTABLISHED` |
+| Production-default promotion | not authorized by Stage-0 evidence | `NOT_AUTHORIZED` |
+
+```text
+QWEN38_TOPOLOGY_LOCAL_TP2_DIAGNOSTIC=20260908-qwen38-topology-local-tp2-island-stage0-diagnostic-r18
+QWEN38_TOPOLOGY_LOCAL_TP2_FORMAL=20260908-qwen38-topology-local-tp2-island-stage0-r8
+QWEN38_TOPOLOGY_LOCAL_TP2_SOURCE=83466514cac358061382dcd47b2ceabab71a6f8f
+QWEN38_TOPOLOGY_LOCAL_TP2_CLASSIFICATION=GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE
+QWEN38_TOPOLOGY_LOCAL_TP2_REMOTE_VERIFIER=PASS
+QWEN38_TOPOLOGY_LOCAL_TP2_LOCAL_VERIFIER=PASS
+QWEN38_TOPOLOGY_LOCAL_TP2_CHECK_ONLY=PASS
+QWEN38_TOPOLOGY_LOCAL_TP2_MEASUREMENT_ROWS=180
+QWEN38_TOPOLOGY_LOCAL_TP2_MIGRATION_ROWS=60
+QWEN38_TOPOLOGY_LOCAL_TP2_TOKEN1_SPEEDUP=24_985968_PERCENT
+QWEN38_TOPOLOGY_LOCAL_TP2_TOKEN4_SPEEDUP=245_292308_PERCENT
+QWEN38_TOPOLOGY_LOCAL_TP2_TOKEN8_SPEEDUP=192_486848_PERCENT
+QWEN38_TOPOLOGY_LOCAL_TP2_TOKEN4_8_AGGREGATE=217_794680_PERCENT
+QWEN38_TOPOLOGY_LOCAL_TP2_PROJECTED_STEADY_INCREMENT_MIB=1759_878296
+QWEN38_TOPOLOGY_LOCAL_TP2_PEAK_ALLOCATED_RATIO=65_094443_PERCENT
+QWEN38_TOPOLOGY_LOCAL_TP2_CLAIM_BOUNDARY=ONE_LAYER_SAME_REQUEST_STAGE0_ONLY
+NEXT_COMMAND=design and run a separate whole-model integration gate before any TPOT, TTFT, QPS, or production claim
+
+PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
+PHASE_1=ACHIEVED
+PROMOTION=STAGE0_MICROGATE_GO_WHOLE_MODEL_NOT_AUTHORIZED
+```
