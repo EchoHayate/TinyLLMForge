@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -750,3 +751,22 @@ def assemble_attempt(attempt_root: Path, output_root: Path) -> dict:
     )
     _write_manifest(output_root)
     return summary
+
+
+def main(
+    argv=None,
+    *,
+    assemble=assemble_attempt,
+    printer=print,
+) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--attempt-root", type=Path, required=True)
+    parser.add_argument("--output-root", type=Path, required=True)
+    args = parser.parse_args(argv)
+    result = assemble(args.attempt_root, args.output_root)
+    printer(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

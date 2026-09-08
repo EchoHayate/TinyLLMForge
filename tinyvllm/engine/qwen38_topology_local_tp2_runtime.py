@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import torch
 
 from tinyvllm.engine.qwen38_topology_local_tp2_state import (
@@ -209,6 +211,7 @@ class Qwen38TopologyLocalTP2Runtime:
         self._release_rows: tuple[dict, ...] = ()
         self._decode_accumulation_released = False
         self._transition_count = 0
+        self._last_transition_latency_ns = None
         self._candidate_state_released = False
 
     def prepare_decode(self, leases: tuple[object, ...]) -> dict:
@@ -223,6 +226,7 @@ class Qwen38TopologyLocalTP2Runtime:
             )
 
         published = False
+        started_ns = time.monotonic_ns()
         try:
             migration_rows = self.candidate_state_owner.migrate(
                 leases
@@ -254,6 +258,9 @@ class Qwen38TopologyLocalTP2Runtime:
             raise
 
         self.phase = "tp2_decode"
+        self._last_transition_latency_ns = (
+            time.monotonic_ns() - started_ns
+        )
         self._active_leases = leases
         if release_rows:
             self._release_rows = release_rows
@@ -267,6 +274,7 @@ class Qwen38TopologyLocalTP2Runtime:
                 int(row["released_bytes"])
                 for row in release_rows
             ),
+            "transition_latency_ns": self._last_transition_latency_ns,
             "synchronized_before_measured_decode": True,
         }
 
@@ -317,6 +325,8 @@ class Qwen38TopologyLocalTP2Runtime:
             "phase": self.phase,
             "fixed_cohort": self._fixed_cohort,
             "transition_count": self._transition_count,
+            "last_transition_latency_ns":
+                self._last_transition_latency_ns,
             "released_layer_count": len(self._release_rows),
             "released_bytes": sum(
                 int(row["released_bytes"])

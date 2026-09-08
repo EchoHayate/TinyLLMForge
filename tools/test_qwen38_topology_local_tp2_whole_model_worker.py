@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -357,25 +358,32 @@ def test_candidate_evidence_rejects_incomplete_or_invalid_proof(
 
 class _FakeEngine:
 
-    def __init__(self, request_specs, *, candidate):
+    def __init__(self, request_specs, *, candidate, seq_offset=0):
         self.request_specs = request_specs
         self.candidate = candidate
+        self.seq_offset = seq_offset
         self.model_runner = SimpleNamespace(rank=0, world_size=4)
         self.last_step_observation = None
         self._step = 0
         self._finished = False
         self._admitted = []
         self.exit_calls = 0
+        self.flush_calls = 0
 
     def add_request(self, prompt, sampling):
         self._admitted.append((list(prompt), sampling))
+        return self.seq_offset + len(self._admitted) - 1
+
+    def flush_pending_hybrid_state_releases(self, *, timeout_s):
+        self.flush_calls += 1
+        return ()
 
     def is_finished(self):
         return self._finished
 
     def step(self):
         tokens = {
-            index: [1000 + self._step + index]
+            self.seq_offset + index: [1000 + self._step + index]
             for index in range(len(self.request_specs))
         }
         self.last_step_observation = {
@@ -385,7 +393,7 @@ class _FakeEngine:
                 "prefill" if self._step == 0 else "decode"
             ),
             "scheduled": [
-                {"seq_id": index}
+                {"seq_id": self.seq_offset + index}
                 for index in range(len(self.request_specs))
             ],
             "new_completion_tokens_by_seq": tokens,
@@ -396,7 +404,7 @@ class _FakeEngine:
             self._finished = True
             return [
                 (
-                    index,
+                    self.seq_offset + index,
                     [
                         1000 + step + index
                         for step in range(128)
@@ -422,6 +430,7 @@ class _FakeEngine:
             "rank": rank,
             "cuda_peak_allocated_bytes": 100 + rank,
             "cuda_peak_reserved_bytes": 200 + rank,
+            "physical_memory_bytes": 80 * 1024**3,
         } for rank in range(4))
 
     def exit(self):
@@ -482,8 +491,79 @@ def test_run_engine_case_uses_frozen_engine_shape_and_exact_timing():
         len(row["token_gaps_ns"]) == 127
         for row in result["requests"]
     )
+    assert len(result["request_set_digest"]) == 64
+    assert result["cohort_makespan_ns"] >= 0
+    assert all(
+        row["rank_token_agreement"] is True
+        and row["finite_logits"] is True
+        and row["stop_position"] == 128
+        and row["stop_reason"] == "length"
+        for row in result["requests"]
+    )
     assert result["cleanup"]["process_group_destroyed"] is True
     assert fake.exit_calls == 1
+
+
+def test_shared_engine_case_flushes_and_uses_returned_sequence_ids():
+    worker = _load()
+    specs = worker.build_request_specs(
+        256,
+        128,
+        2,
+        "timing/P0/r1",
+    )
+    fake = _FakeEngine(specs, candidate=False, seq_offset=40)
+
+    result = worker.run_engine_case(
+        model_root=Path("/model"),
+        arm="baseline",
+        workload_id="P0",
+        request_specs=specs,
+        warmup=True,
+        epoch=0,
+        repetition=1,
+        engine=fake,
+        close_engine=False,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        clock_ns=iter(range(10, 1000)).__next__,
+        timeout_s=30.0,
+    )
+
+    assert fake.flush_calls == 1
+    assert fake.exit_calls == 0
+    assert result["cleanup"] is None
+    assert [row["request_id"] for row in result["requests"]] == [
+        row["request_id"] for row in specs
+    ]
+
+
+def test_service_replica_case_uses_a_real_tp2_engine_shape():
+    worker = _load()
+    specs = worker.build_request_specs(
+        256,
+        128,
+        2,
+        "service/Q0/r0",
+    )
+    fake = _FakeEngine(specs, candidate=False)
+    fake.model_runner.world_size = 2
+    factory_calls = []
+
+    result = worker.run_service_replica_case(
+        model_root=Path("/model"),
+        workload_id="Q0",
+        request_specs=specs,
+        engine_factory=lambda model_root, **kwargs: (
+            factory_calls.append((model_root, kwargs)) or fake
+        ),
+        sampling_params_factory=lambda **kwargs: kwargs,
+        clock_ns=iter(range(10, 1000)).__next__,
+    )
+
+    assert factory_calls[0][1]["tensor_parallel_size"] == 2
+    assert factory_calls[0][1]["qwen38_topology_local_tp2_islands"] is False
+    assert result["replica_tensor_parallel_size"] == 2
+    assert len(result["requests"]) == 2
 
 
 def test_performance_epoch_uses_two_warmups_and_five_measurements():
@@ -513,6 +593,219 @@ def test_performance_epoch_uses_two_warmups_and_five_measurements():
     assert sum(not row["warmup"] for row in calls) == 10
     assert result["epoch"] == 1
     assert result["arm"] == "candidate"
+
+
+def test_performance_epoch_reuses_one_engine_when_factory_is_supplied():
+    worker = _load()
+    engine = SimpleNamespace(exit=lambda: {"clean": True})
+    factory_calls = []
+    case_engines = []
+
+    def factory(model_root, **kwargs):
+        factory_calls.append((model_root, kwargs))
+        return engine
+
+    def case_runner(**kwargs):
+        case_engines.append(kwargs["engine"])
+        assert kwargs["close_engine"] is False
+        return {
+            "workload_id": kwargs["workload_id"],
+            "warmup": kwargs["warmup"],
+            "repetition": kwargs["repetition"],
+        }
+
+    result = worker.run_performance_epoch(
+        model_root=Path("/model"),
+        output_root=Path("/output"),
+        epoch=2,
+        arm="candidate",
+        workload_order=("P0",),
+        case_runner=case_runner,
+        engine_factory=factory,
+        row_sink=lambda _row: None,
+    )
+
+    assert len(factory_calls) == 1
+    assert factory_calls[0][1] == {
+        "tensor_parallel_size": 4,
+        "enforce_eager": True,
+        "max_num_seqs": 8,
+        "max_model_len": 2176,
+        "max_num_batched_tokens": 8192,
+        "qwen38_topology_local_tp2_islands": True,
+    }
+    assert case_engines == [engine] * 7
+    assert result["cleanup"] == {"clean": True}
+
+
+def test_worker_cli_dispatches_one_frozen_performance_epoch(tmp_path):
+    worker = _load()
+    calls = []
+
+    def performance_runner(**kwargs):
+        calls.append(kwargs)
+        return {
+            "schema_version": worker.WORKER_SCHEMA,
+            "phase": "performance_epoch",
+            "epoch": kwargs["epoch"],
+            "arm": kwargs["arm"],
+        }
+
+    exit_code = worker.main(
+        [
+            "performance-epoch",
+            "--model-root",
+            "/model",
+            "--output-root",
+            str(tmp_path),
+            "--epoch",
+            "2",
+            "--arm",
+            "candidate",
+            "--workload-order",
+            "P0,P1,Q0,Q1,Q2",
+            "--source-revision",
+            "a" * 40,
+            "--model-revision",
+            "b" * 40,
+        ],
+        performance_runner=performance_runner,
+    )
+
+    assert exit_code == 0
+    assert calls == [{
+        "model_root": Path("/model"),
+        "output_root": tmp_path,
+        "epoch": 2,
+        "arm": "candidate",
+        "workload_order": ("P0", "P1", "Q0", "Q1", "Q2"),
+        "engine_factory": worker._default_engine_factory,
+    }]
+    payload = json.loads(
+        (tmp_path / "worker-receipt.json").read_text(encoding="utf-8")
+    )
+    assert payload["phase"] == "performance_epoch"
+    assert payload["epoch"] == 2
+    artifacts = json.loads(
+        (tmp_path / "epoch-2-artifact-rows.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert set(artifacts) == {
+        "request_rows.jsonl",
+        "scheduler_step_rows.jsonl",
+        "candidate_hit_rows.jsonl",
+        "collective_rows.jsonl",
+        "migration_rows.jsonl",
+        "memory_rows.jsonl",
+    }
+
+
+def test_worker_cli_dispatches_correctness_and_service_control(tmp_path):
+    worker = _load()
+    calls = []
+
+    def correctness_runner(**kwargs):
+        calls.append(("correctness", kwargs))
+        return {
+            "schema_version": worker.WORKER_SCHEMA,
+            "phase": "correctness",
+        }
+
+    correctness_root = tmp_path / "correctness"
+    assert worker.main(
+        [
+            "correctness",
+            "--model-root",
+            "/model",
+            "--output-root",
+            str(correctness_root),
+        ],
+        correctness_runner=correctness_runner,
+    ) == 0
+
+    def service_runner(**kwargs):
+        calls.append(("service", kwargs))
+        return {
+            "schema_version": worker.WORKER_SCHEMA,
+            "arm": "TP2_X2_SERVICE_CONTROL",
+        }
+
+    service_root = tmp_path / "service"
+    assert worker.main(
+        [
+            "service-control",
+            "--model-root",
+            "/model",
+            "--output-root",
+            str(service_root),
+            "--pair-devices",
+            "0,1;2,3",
+            "--workloads",
+            "Q0,Q1,Q2",
+        ],
+        service_runner=service_runner,
+        replica_runner=lambda **_kwargs: {},
+    ) == 0
+
+    assert calls[0] == (
+        "correctness",
+        {
+            "model_root": Path("/model"),
+            "output_root": correctness_root,
+            "engine_factory": worker._default_engine_factory,
+        },
+    )
+    assert calls[1][0] == "service"
+    assert calls[1][1]["model_root"] == Path("/model")
+    assert calls[1][1]["output_root"] == service_root
+    assert calls[1][1]["pair_devices"] == ((0, 1), (2, 3))
+    assert calls[1][1]["workloads"] == ("Q0", "Q1", "Q2")
+    assert callable(calls[1][1]["replica_runner"])
+
+
+def test_correctness_campaign_loads_one_engine_per_arm():
+    worker = _load()
+    engines = {
+        "baseline": SimpleNamespace(exit=lambda: {"arm": "baseline"}),
+        "candidate": SimpleNamespace(exit=lambda: {"arm": "candidate"}),
+    }
+    factory_calls = []
+    case_calls = []
+
+    def factory(_model_root, **kwargs):
+        arm = (
+            "candidate"
+            if kwargs["qwen38_topology_local_tp2_islands"]
+            else "baseline"
+        )
+        factory_calls.append(arm)
+        return engines[arm]
+
+    def case_runner(**kwargs):
+        case_calls.append(kwargs)
+        return {
+            "requests": [{
+                "output_token_ids": list(range(128)),
+            } for _ in kwargs["request_specs"]],
+            "timing_authority": False,
+        }
+
+    result = worker.run_correctness_campaign(
+        model_root=Path("/model"),
+        output_root=Path("/output"),
+        engine_factory=factory,
+        case_runner=case_runner,
+        row_sink=lambda _row: None,
+    )
+
+    assert factory_calls == ["baseline", "candidate"]
+    assert len(case_calls) == 50
+    assert all(call["close_engine"] is False for call in case_calls)
+    assert result["cleanup"] == {
+        "baseline": {"arm": "baseline"},
+        "candidate": {"arm": "candidate"},
+    }
 
 
 def test_service_control_splits_requests_and_is_non_authoritative():
@@ -551,3 +844,149 @@ def test_service_control_splits_requests_and_is_non_authoritative():
     } == {1}
     assert result["arm"] == "TP2_X2_SERVICE_CONTROL"
     assert result["classification_authority"] is False
+
+
+def test_service_control_can_launch_both_replicas_as_one_parallel_batch():
+    worker = _load()
+    calls = []
+
+    def parallel_runner(
+        *,
+        pair_devices,
+        request_specs_by_replica,
+        **kwargs,
+    ):
+        calls.append((pair_devices, request_specs_by_replica, kwargs))
+        replicas = []
+        for replica_specs in request_specs_by_replica:
+            replicas.append({
+                "requests": [{
+                    "request_id": row["request_id"],
+                    "output_token_ids": list(range(128)),
+                    "admitted_ns": 10,
+                    "completion_ns": 110,
+                } for row in replica_specs],
+            })
+        return tuple(replicas)
+
+    result = worker.run_service_control(
+        model_root=Path("/model"),
+        output_root=Path("/output"),
+        pair_devices=((0, 1), (2, 3)),
+        workloads=("Q0",),
+        parallel_runner=parallel_runner,
+        row_sink=lambda _row: None,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][0] == ((0, 1), (2, 3))
+    assert [len(rows) for rows in calls[0][1]] == [2, 2]
+    assert result["rows"][0]["request_qps"] == 40_000_000.0
+
+
+def test_parallel_service_runner_starts_both_children_before_waiting(
+    tmp_path,
+):
+    worker = _load()
+    events = []
+    processes = []
+    specs = (
+        worker.build_request_specs(256, 128, 2, "service/Q0/a"),
+        worker.build_request_specs(256, 128, 2, "service/Q0/b"),
+    )
+
+    class Process:
+        returncode = 0
+
+        def __init__(self, argv, env):
+            self.argv = argv
+            self.env = env
+            processes.append(self)
+            events.append(("start", env["CUDA_VISIBLE_DEVICES"]))
+            output_path = Path(
+                argv[argv.index("--output-path") + 1]
+            )
+            input_path = Path(
+                argv[argv.index("--request-specs-path") + 1]
+            )
+            requests = json.loads(input_path.read_text(encoding="utf-8"))
+            output_path.write_text(json.dumps({
+                "requests": [{
+                    "request_id": row["request_id"],
+                    "output_token_ids": list(range(128)),
+                    "admitted_ns": 1,
+                    "completion_ns": 2,
+                } for row in requests],
+            }))
+
+        def communicate(self, timeout):
+            events.append(("wait", self.env["CUDA_VISIBLE_DEVICES"], timeout))
+            return "", ""
+
+    result = worker._run_service_replicas_in_subprocesses(
+        model_root=Path("/model"),
+        output_root=tmp_path,
+        pair_devices=((3, 4), (6, 7)),
+        workload_id="Q0",
+        request_specs_by_replica=specs,
+        shared_start_ns=0,
+        popen_factory=lambda argv, **kwargs: Process(argv, kwargs["env"]),
+    )
+
+    assert [event[0] for event in events] == [
+        "start",
+        "start",
+        "wait",
+        "wait",
+    ]
+    assert [process.env["CUDA_VISIBLE_DEVICES"] for process in processes] == [
+        "3,4",
+        "6,7",
+    ]
+    assert len(result) == 2
+
+
+def test_performance_artifacts_are_rebuilt_from_measured_raw_case():
+    worker = _load()
+    specs = worker.build_request_specs(256, 128, 2, "timing/P0/r0")
+    fake = _FakeEngine(specs, candidate=True)
+    case = worker.run_engine_case(
+        model_root=Path("/model"),
+        arm="candidate",
+        workload_id="P0",
+        request_specs=specs,
+        warmup=False,
+        epoch=1,
+        repetition=0,
+        engine_factory=lambda *_args, **_kwargs: fake,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        clock_ns=iter(range(10, 1000)).__next__,
+    )
+    for snapshot in case["after_snapshots"]:
+        snapshot["last_transition_latency_ns"] = 1234
+    artifacts = worker.build_performance_artifact_rows(
+        {
+            "epoch": 1,
+            "arm": "candidate",
+            "rows": [case],
+            "cleanup": case["cleanup"],
+        },
+        source_revision="a" * 40,
+        model_revision="b" * 40,
+    )
+
+    assert len(artifacts["request_rows.jsonl"]) == 1
+    request = artifacts["request_rows.jsonl"][0]
+    assert request["request_set_digest"] == case["request_set_digest"]
+    assert request["cohort_makespan_ns"] == case["cohort_makespan_ns"]
+    scheduler = artifacts["scheduler_step_rows.jsonl"][0]
+    assert scheduler["decode_steps"] == 127
+    assert scheduler["token_one_segments"] == 2 * 127
+    hit = artifacts["candidate_hit_rows.jsonl"][0]
+    assert hit["tp2_decode_calls"] == 2 * 127 * 48
+    assert hit["short_chunk_calls"] == 0
+    collective = artifacts["collective_rows.jsonl"][0]
+    assert collective["pair_local_calls"] == 2 * 127 * 48
+    assert collective["pair_local_bytes"] == 2 * 127 * 48 * 5120 * 4
+    assert artifacts["migration_rows.jsonl"][0]["latency_ns"] == 1234
+    assert len(artifacts["memory_rows.jsonl"]) == 4

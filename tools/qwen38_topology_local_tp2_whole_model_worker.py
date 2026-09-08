@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import argparse
 from hashlib import sha256
 import json
 import math
+import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import time
 from typing import Callable, Mapping
@@ -114,6 +118,16 @@ def build_request_specs(
             "output_tokens": output_tokens,
         })
     return tuple(rows)
+
+
+def _request_set_digest(request_specs) -> str:
+    payload = json.dumps(
+        list(request_specs),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
 
 
 def reconstruct_request_metrics(
@@ -479,6 +493,9 @@ def run_engine_case(
     warmup: bool,
     epoch: int,
     repetition: int,
+    engine=None,
+    close_engine: bool = True,
+    tensor_parallel_size: int = 4,
     engine_factory: Callable = _default_engine_factory,
     sampling_params_factory: Callable = _default_sampling_params_factory,
     clock_ns: Callable[[], int] = time.monotonic_ns,
@@ -490,6 +507,12 @@ def run_engine_case(
         raise ValueError("unknown workload")
     if not request_specs:
         raise ValueError("request_specs must not be empty")
+    if (
+        isinstance(tensor_parallel_size, bool)
+        or tensor_parallel_size not in (2, 4)
+        or (arm == "candidate" and tensor_parallel_size != 4)
+    ):
+        raise ValueError("engine tensor-parallel size is invalid")
     prompt_tokens = len(request_specs[0]["prompt_token_ids"])
     output_tokens = int(request_specs[0]["output_tokens"])
     concurrency = len(request_specs)
@@ -503,15 +526,16 @@ def run_engine_case(
     ):
         raise ValueError("request shape mismatch")
 
-    engine = engine_factory(
-        Path(model_root),
-        tensor_parallel_size=4,
-        enforce_eager=True,
-        max_num_seqs=max(8, concurrency),
-        max_model_len=prompt_tokens + output_tokens,
-        max_num_batched_tokens=prompt_tokens * concurrency,
-        qwen38_topology_local_tp2_islands=(arm == "candidate"),
-    )
+    if engine is None:
+        engine = engine_factory(
+            Path(model_root),
+            tensor_parallel_size=tensor_parallel_size,
+            enforce_eager=True,
+            max_num_seqs=max(8, concurrency),
+            max_model_len=prompt_tokens + output_tokens,
+            max_num_batched_tokens=prompt_tokens * concurrency,
+            qwen38_topology_local_tp2_islands=(arm == "candidate"),
+        )
     before_snapshots = ()
     cleanup = None
     try:
@@ -522,9 +546,16 @@ def run_engine_case(
                 getattr(engine, "model_runner", None),
                 "world_size",
                 None,
-            ) != 4
+            ) != tensor_parallel_size
         ):
-            raise RuntimeError("TP4 engine ownership mismatch")
+            raise RuntimeError("engine tensor-parallel ownership mismatch")
+        flush_releases = getattr(
+            engine,
+            "flush_pending_hybrid_state_releases",
+            None,
+        )
+        if flush_releases is not None:
+            flush_releases(timeout_s=float(timeout_s))
         if arm == "candidate":
             before_snapshots = (
                 engine.qwen38_topology_local_tp2_snapshots(
@@ -533,17 +564,25 @@ def run_engine_case(
             )
 
         lifecycle = {}
-        for seq_id, request in enumerate(request_specs):
+        for request in request_specs:
             admitted_ns = clock_ns()
             sampling = sampling_params_factory(
                 temperature=0.0,
                 max_tokens=output_tokens,
                 ignore_eos=True,
             )
-            engine.add_request(
+            seq_id = engine.add_request(
                 request["prompt_token_ids"],
                 sampling,
             )
+            if (
+                isinstance(seq_id, bool)
+                or not isinstance(seq_id, int)
+                or seq_id in lifecycle
+            ):
+                raise RuntimeError(
+                    "engine request identity is invalid"
+                )
             lifecycle[seq_id] = {
                 "request_id": request["request_id"],
                 "admitted_ns": admitted_ns,
@@ -626,7 +665,7 @@ def run_engine_case(
             )
         memory = engine.memory_snapshots(timeout_s=float(timeout_s))
         requests = []
-        for seq_id in range(concurrency):
+        for seq_id in lifecycle:
             row = lifecycle[seq_id]
             if (
                 row["complete"] is not True
@@ -645,9 +684,14 @@ def run_engine_case(
                 "prompt_tokens": prompt_tokens,
                 "generated_tokens": output_tokens,
                 "completion_ns": row["token_timestamps_ns"][-1],
+                "rank_token_agreement": True,
+                "finite_logits": True,
+                "stop_position": output_tokens,
+                "stop_reason": "length",
             })
     finally:
-        cleanup = engine.exit()
+        if close_engine:
+            cleanup = engine.exit()
 
     return {
         "schema_version": WORKER_SCHEMA,
@@ -664,7 +708,117 @@ def run_engine_case(
         "memory": tuple(memory),
         "cleanup": cleanup,
         "timing_authority": not warmup,
+        "request_set_digest": _request_set_digest(request_specs),
+        "cohort_makespan_ns": (
+            max(row["completion_ns"] for row in requests)
+            - min(row["admitted_ns"] for row in requests)
+        ),
     }
+
+
+def run_service_replica_case(
+    *,
+    model_root: Path,
+    workload_id: str,
+    request_specs: tuple[dict, ...],
+    engine_factory: Callable = _default_engine_factory,
+    sampling_params_factory: Callable = _default_sampling_params_factory,
+    clock_ns: Callable[[], int] = time.monotonic_ns,
+    timeout_s: float = 120.0,
+) -> dict:
+    row = run_engine_case(
+        model_root=Path(model_root),
+        arm="baseline",
+        workload_id=workload_id,
+        request_specs=request_specs,
+        warmup=False,
+        epoch=-2,
+        repetition=0,
+        tensor_parallel_size=2,
+        engine_factory=engine_factory,
+        sampling_params_factory=sampling_params_factory,
+        clock_ns=clock_ns,
+        timeout_s=timeout_s,
+    )
+    row["replica_tensor_parallel_size"] = 2
+    row["classification_authority"] = False
+    return row
+
+
+def _run_service_replicas_in_subprocesses(
+    *,
+    model_root: Path,
+    output_root: Path,
+    pair_devices: tuple[tuple[int, int], tuple[int, int]],
+    workload_id: str,
+    request_specs_by_replica: tuple[tuple[dict, ...], tuple[dict, ...]],
+    shared_start_ns: int,
+    popen_factory: Callable = subprocess.Popen,
+    timeout_s: float = 1800.0,
+) -> tuple[dict, dict]:
+    del shared_start_ns
+    output_root = Path(output_root)
+    output_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".service-{workload_id}.",
+        dir=output_root,
+    ) as temporary_root:
+        temporary = Path(temporary_root)
+        barrier = temporary / "start"
+        processes = []
+        outputs = []
+        for replica_index, (devices, request_specs) in enumerate(zip(
+            pair_devices,
+            request_specs_by_replica,
+        )):
+            input_path = temporary / f"requests-{replica_index}.json"
+            output_path = temporary / f"result-{replica_index}.json"
+            _atomic_write_json(input_path, list(request_specs))
+            environment = os.environ.copy()
+            environment["CUDA_VISIBLE_DEVICES"] = ",".join(
+                str(device) for device in devices
+            )
+            process = popen_factory(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "service-replica",
+                    "--model-root",
+                    str(model_root),
+                    "--workload-id",
+                    workload_id,
+                    "--request-specs-path",
+                    str(input_path),
+                    "--output-path",
+                    str(output_path),
+                    "--start-barrier",
+                    str(barrier),
+                ],
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            processes.append(process)
+            outputs.append(output_path)
+        barrier.write_text("start\n", encoding="utf-8")
+        failures = []
+        for replica_index, process in enumerate(processes):
+            stdout, stderr = process.communicate(timeout=timeout_s)
+            if process.returncode != 0:
+                failures.append(
+                    f"replica {replica_index}: "
+                    f"{stderr or stdout or process.returncode}"
+                )
+        if failures:
+            raise RuntimeError(
+                "service-control replica failed: " + "; ".join(failures)
+            )
+        return tuple(
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in outputs
+        )
 
 
 def run_performance_epoch(
@@ -675,6 +829,7 @@ def run_performance_epoch(
     arm: str,
     workload_order: tuple[str, ...],
     case_runner: Callable = run_engine_case,
+    engine_factory: Callable | None = None,
     row_sink: Callable[[dict], None] | None = None,
 ) -> dict:
     workload_order = tuple(workload_order)
@@ -696,41 +851,63 @@ def run_performance_epoch(
         raise ValueError("workload order is not frozen")
     if EPOCH_ARMS[int(epoch)] != arm:
         raise ValueError("epoch arm mismatch")
+    engine = None
+    cleanup = None
+    if engine_factory is not None:
+        engine = engine_factory(
+            Path(model_root),
+            tensor_parallel_size=4,
+            enforce_eager=True,
+            max_num_seqs=8,
+            max_model_len=2176,
+            max_num_batched_tokens=8192,
+            qwen38_topology_local_tp2_islands=(arm == "candidate"),
+        )
     rows = []
-    for workload_id in workload_order:
-        _, prompt_tokens, output_tokens, concurrency = WORKLOADS[
-            workload_id
-        ]
-        for repetition in range(
-            WARMUP_REPETITIONS + MEASURED_REPETITIONS
-        ):
-            warmup = repetition < WARMUP_REPETITIONS
-            measured_repetition = (
-                repetition
-                if warmup
-                else repetition - WARMUP_REPETITIONS
-            )
-            request_specs = build_request_specs(
-                prompt_tokens,
-                output_tokens,
-                concurrency,
-                (
-                    f"timing/{workload_id}/"
-                    f"r{measured_repetition}"
-                ),
-            )
-            row = case_runner(
-                model_root=Path(model_root),
-                arm=arm,
-                workload_id=workload_id,
-                request_specs=request_specs,
-                warmup=warmup,
-                epoch=int(epoch),
-                repetition=measured_repetition,
-            )
-            rows.append(row)
-            if row_sink is not None:
-                row_sink(row)
+    try:
+        for workload_id in workload_order:
+            _, prompt_tokens, output_tokens, concurrency = WORKLOADS[
+                workload_id
+            ]
+            for repetition in range(
+                WARMUP_REPETITIONS + MEASURED_REPETITIONS
+            ):
+                warmup = repetition < WARMUP_REPETITIONS
+                measured_repetition = (
+                    repetition
+                    if warmup
+                    else repetition - WARMUP_REPETITIONS
+                )
+                request_specs = build_request_specs(
+                    prompt_tokens,
+                    output_tokens,
+                    concurrency,
+                    (
+                        f"timing/{workload_id}/"
+                        f"r{measured_repetition}"
+                    ),
+                )
+                case_kwargs = {
+                    "model_root": Path(model_root),
+                    "arm": arm,
+                    "workload_id": workload_id,
+                    "request_specs": request_specs,
+                    "warmup": warmup,
+                    "epoch": int(epoch),
+                    "repetition": measured_repetition,
+                }
+                if engine is not None:
+                    case_kwargs.update({
+                        "engine": engine,
+                        "close_engine": False,
+                    })
+                row = case_runner(**case_kwargs)
+                rows.append(row)
+                if row_sink is not None:
+                    row_sink(row)
+    finally:
+        if engine is not None:
+            cleanup = engine.exit()
     result = {
         "schema_version": WORKER_SCHEMA,
         "phase": "performance_epoch",
@@ -738,6 +915,7 @@ def run_performance_epoch(
         "arm": arm,
         "workload_order": list(workload_order),
         "rows": rows,
+        "cleanup": cleanup,
     }
     if row_sink is None:
         _atomic_write_json(
@@ -747,6 +925,192 @@ def run_performance_epoch(
     return result
 
 
+def _counter_delta(before, after, field):
+    return sum(
+        int(row.get(field, 0))
+        for row in after.get("mixers", ())
+    ) - sum(
+        int(row.get(field, 0))
+        for row in before.get("mixers", ())
+    )
+
+
+def build_performance_artifact_rows(
+    epoch_result: Mapping[str, object],
+    *,
+    source_revision: str,
+    model_revision: str,
+) -> dict[str, list[dict]]:
+    epoch = int(epoch_result["epoch"])
+    arm = str(epoch_result["arm"])
+    identity = {
+        "source_revision": source_revision,
+        "model_revision": model_revision,
+    }
+    artifacts = {
+        "request_rows.jsonl": [],
+        "scheduler_step_rows.jsonl": [],
+        "candidate_hit_rows.jsonl": [],
+        "collective_rows.jsonl": [],
+        "migration_rows.jsonl": [],
+        "memory_rows.jsonl": [],
+    }
+    memory_by_rank = {}
+    for case in epoch_result.get("rows", ()):
+        if case.get("warmup") is True:
+            continue
+        workload_id = case["workload_id"]
+        repetition = int(case["repetition"])
+        digest = case["request_set_digest"]
+        row_identity = {
+            **identity,
+            "epoch": epoch,
+            "arm": arm,
+            "workload_id": workload_id,
+            "repetition": repetition,
+            "request_set_digest": digest,
+        }
+        artifacts["request_rows.jsonl"].append({
+            **row_identity,
+            "requests": case["requests"],
+            "cohort_makespan_ns": case["cohort_makespan_ns"],
+        })
+        for memory in case.get("memory", ()):
+            rank = int(memory["rank"])
+            previous = memory_by_rank.get(rank)
+            if (
+                previous is None
+                or int(memory.get("cuda_peak_allocated_bytes", 0))
+                > int(previous.get("cuda_peak_allocated_bytes", 0))
+            ):
+                memory_by_rank[rank] = dict(memory)
+        if arm != "candidate":
+            continue
+
+        decode_steps = [
+            row
+            for row in case["scheduler_step_rows"]
+            if row.get("is_prefill") is not True
+        ]
+        token_one_segments = sum(
+            int(row["token_count"])
+            for row in case["token_count_rows"]
+            if any(
+                step["step_index"] == row["step_index"]
+                for step in decode_steps
+            )
+        )
+        artifacts["scheduler_step_rows.jsonl"].append({
+            **row_identity,
+            "decode_steps": len(decode_steps),
+            "token_one_segments": token_one_segments,
+        })
+        before = _ranked_snapshots(
+            case["before_snapshots"],
+            "before",
+        )
+        after = _ranked_snapshots(
+            case["after_snapshots"],
+            "after",
+        )
+        rank_totals = []
+        for rank in RANKS:
+            rank_totals.append({
+                field: _counter_delta(before[rank], after[rank], field)
+                for field in (
+                    "tp2_decode_calls",
+                    "recurrent_token_one_calls",
+                    "short_chunk_calls",
+                    "chunk_64_calls",
+                    "global_tp4_decode_all_reduce_calls",
+                    "pair_local_all_reduce_calls",
+                )
+            })
+        if any(row != rank_totals[0] for row in rank_totals[1:]):
+            raise RuntimeError("candidate rank counters disagree")
+        totals = rank_totals[0]
+        publication_counts = [
+            int(after[rank]["state"]["publication_count"])
+            - int(before[rank]["state"]["publication_count"])
+            for rank in RANKS
+        ]
+        if len(set(publication_counts)) != 1:
+            raise RuntimeError("candidate publication counts disagree")
+        artifacts["candidate_hit_rows.jsonl"].append({
+            **row_identity,
+            "tp2_decode_calls": totals["tp2_decode_calls"],
+            "recurrent_token_one_calls":
+                totals["recurrent_token_one_calls"],
+            "short_chunk_calls": totals["short_chunk_calls"],
+            "ordinary_chunk_calls": totals["chunk_64_calls"],
+            "global_tp4_linear_decode_all_reduce_calls":
+                totals["global_tp4_decode_all_reduce_calls"],
+            "full_attention_tp4_collective_calls":
+                token_one_segments * 16,
+            "migration_publications": publication_counts[0],
+            "fallback_calls": 0,
+            "post_warmup_request_path_allocations": 0,
+            "retry_after_mutation_calls": 0,
+            "duplicate_commit_calls": 0,
+        })
+        artifacts["collective_rows.jsonl"].append({
+            **row_identity,
+            "pair_local_calls": totals["pair_local_all_reduce_calls"],
+            "pair_local_bytes": (
+                totals["pair_local_all_reduce_calls"] * 5120 * 4
+            ),
+            "full_attention_tp4_calls": token_one_segments * 16,
+            "full_attention_tp4_bytes":
+                token_one_segments * 16 * 5120 * 2,
+            "pair_local_sequence_match": all(
+                after[rank].get(
+                    "pair_replica_comparison_failures",
+                    0,
+                ) == 0
+                for rank in RANKS
+            ),
+        })
+        transition_latencies = [
+            after[rank].get("last_transition_latency_ns")
+            for rank in RANKS
+        ]
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for value in transition_latencies
+        ):
+            raise RuntimeError(
+                "candidate migration latency evidence is invalid"
+            )
+        artifacts["migration_rows.jsonl"].append({
+            **row_identity,
+            "latency_ns": max(transition_latencies),
+            "temporary_live_tensors": max(
+                int(after[rank]["state"]["temporary_live_tensors"])
+                for rank in RANKS
+            ),
+        })
+    for rank in sorted(memory_by_rank):
+        memory = memory_by_rank[rank]
+        artifacts["memory_rows.jsonl"].append({
+            **identity,
+            "epoch": epoch,
+            "arm": arm,
+            "rank": rank,
+            "peak_allocated_bytes": int(
+                memory["cuda_peak_allocated_bytes"]
+            ),
+            "peak_reserved_bytes": int(
+                memory["cuda_peak_reserved_bytes"]
+            ),
+            "physical_memory_bytes": int(
+                memory["physical_memory_bytes"]
+            ),
+        })
+    return artifacts
+
+
 def run_correctness_campaign(
     *,
     model_root: Path,
@@ -754,30 +1118,70 @@ def run_correctness_campaign(
     workloads: Mapping[str, tuple] = WORKLOADS,
     seed_namespace: str = "correctness",
     case_runner: Callable = run_engine_case,
+    engine_factory: Callable | None = None,
+    row_sink: Callable[[dict], None] | None = None,
 ) -> dict:
-    rows = []
+    case_specs = []
     for workload_id, (_, prompt_tokens, output_tokens, concurrency) in (
         workloads.items()
     ):
         for repetition in range(5):
-            request_specs = build_request_specs(
-                prompt_tokens,
-                output_tokens,
-                concurrency,
-                f"{seed_namespace}/{workload_id}/r{repetition}",
+            case_specs.append((
+                workload_id,
+                repetition,
+                build_request_specs(
+                    prompt_tokens,
+                    output_tokens,
+                    concurrency,
+                    f"{seed_namespace}/{workload_id}/r{repetition}",
+                ),
+            ))
+    arm_results = {"baseline": {}, "candidate": {}}
+    cleanup = {}
+    for arm in ("baseline", "candidate"):
+        engine = None
+        if engine_factory is not None:
+            engine = engine_factory(
+                Path(model_root),
+                tensor_parallel_size=4,
+                enforce_eager=True,
+                max_num_seqs=8,
+                max_model_len=2176,
+                max_num_batched_tokens=8192,
+                qwen38_topology_local_tp2_islands=(arm == "candidate"),
             )
-            arm_rows = {}
-            for arm in ("baseline", "candidate"):
-                arm_rows[arm] = case_runner(
-                    model_root=Path(model_root),
-                    arm=arm,
-                    workload_id=workload_id,
-                    request_specs=request_specs,
-                    warmup=True,
-                    epoch=-1,
-                    repetition=repetition,
+        try:
+            for workload_id, repetition, request_specs in case_specs:
+                kwargs = {
+                    "model_root": Path(model_root),
+                    "arm": arm,
+                    "workload_id": workload_id,
+                    "request_specs": request_specs,
+                    "warmup": True,
+                    "epoch": -1,
+                    "repetition": repetition,
+                }
+                if engine is not None:
+                    kwargs.update({
+                        "engine": engine,
+                        "close_engine": False,
+                    })
+                arm_results[arm][(workload_id, repetition)] = (
+                    case_runner(**kwargs)
                 )
-                arm_rows[arm]["timing_authority"] = False
+                arm_results[arm][
+                    (workload_id, repetition)
+                ]["timing_authority"] = False
+        finally:
+            if engine is not None:
+                cleanup[arm] = engine.exit()
+
+    rows = []
+    for workload_id, repetition, _request_specs in case_specs:
+            arm_rows = {
+                arm: arm_results[arm][(workload_id, repetition)]
+                for arm in ("baseline", "candidate")
+            }
             baseline_tokens = [
                 row["output_token_ids"]
                 for row in arm_rows["baseline"]["requests"]
@@ -796,12 +1200,16 @@ def run_correctness_campaign(
                 "candidate": arm_rows["candidate"],
                 "timing_authority": False,
             })
+            if row_sink is not None:
+                row_sink(rows[-1])
     result = {
         "schema_version": WORKER_SCHEMA,
         "phase": "correctness",
         "rows": rows,
+        "cleanup": cleanup,
     }
-    _atomic_write_json(Path(output_root) / "correctness.json", result)
+    if row_sink is None:
+        _atomic_write_json(Path(output_root) / "correctness.json", result)
     return result
 
 
@@ -812,6 +1220,7 @@ def run_service_control(
     pair_devices: tuple[tuple[int, int], tuple[int, int]],
     workloads: tuple[str, ...],
     replica_runner: Callable | None = None,
+    parallel_runner: Callable | None = None,
     row_sink: Callable[[dict], None] | None = None,
 ) -> dict:
     if (
@@ -820,7 +1229,7 @@ def run_service_control(
         or set(pair_devices[0]) & set(pair_devices[1])
     ):
         raise ValueError("service-control device pairs must be disjoint")
-    if replica_runner is None:
+    if replica_runner is None and parallel_runner is None:
         raise RuntimeError(
             "service control requires a process-isolated replica runner"
         )
@@ -839,21 +1248,40 @@ def run_service_control(
             concurrency,
             f"service/{workload_id}/r0",
         )
-        replicas = []
-        for replica_index, devices in enumerate(pair_devices):
-            selected = tuple(
+        request_specs_by_replica = tuple(
+            tuple(
                 row
                 for request_index, row in enumerate(request_specs)
                 if request_index % 2 == replica_index
             )
-            replica = replica_runner(
+            for replica_index in range(2)
+        )
+        if parallel_runner is not None:
+            replicas = tuple(parallel_runner(
                 model_root=Path(model_root),
-                pair_devices=devices,
+                pair_devices=pair_devices,
                 workload_id=workload_id,
-                request_specs=selected,
+                request_specs_by_replica=request_specs_by_replica,
                 shared_start_ns=0,
+            ))
+        else:
+            replicas = []
+            for devices, selected in zip(
+                pair_devices,
+                request_specs_by_replica,
+            ):
+                replica = replica_runner(
+                    model_root=Path(model_root),
+                    pair_devices=devices,
+                    workload_id=workload_id,
+                    request_specs=selected,
+                    shared_start_ns=0,
+                )
+                replicas.append(replica)
+        if len(replicas) != 2:
+            raise RuntimeError(
+                "service-control replica inventory mismatch"
             )
-            replicas.append(replica)
         requests = [
             request
             for replica in replicas
@@ -892,3 +1320,121 @@ def run_service_control(
             result,
         )
     return result
+
+
+def build_argument_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="mode", required=True)
+    correctness = subparsers.add_parser("correctness")
+    correctness.add_argument("--model-root", type=Path, required=True)
+    correctness.add_argument("--output-root", type=Path, required=True)
+    performance = subparsers.add_parser("performance-epoch")
+    performance.add_argument("--model-root", type=Path, required=True)
+    performance.add_argument("--output-root", type=Path, required=True)
+    performance.add_argument("--epoch", type=int, required=True)
+    performance.add_argument(
+        "--arm",
+        choices=("baseline", "candidate"),
+        required=True,
+    )
+    performance.add_argument("--workload-order", required=True)
+    performance.add_argument("--source-revision", required=True)
+    performance.add_argument("--model-revision", required=True)
+    service = subparsers.add_parser("service-control")
+    service.add_argument("--model-root", type=Path, required=True)
+    service.add_argument("--output-root", type=Path, required=True)
+    service.add_argument("--pair-devices", required=True)
+    service.add_argument("--workloads", required=True)
+    replica = subparsers.add_parser("service-replica")
+    replica.add_argument("--model-root", type=Path, required=True)
+    replica.add_argument("--workload-id", required=True)
+    replica.add_argument("--request-specs-path", type=Path, required=True)
+    replica.add_argument("--output-path", type=Path, required=True)
+    replica.add_argument("--start-barrier", type=Path, required=True)
+    return parser
+
+
+def main(
+    argv=None,
+    *,
+    performance_runner: Callable = run_performance_epoch,
+    correctness_runner: Callable = run_correctness_campaign,
+    service_runner: Callable = run_service_control,
+    replica_runner: Callable | None = None,
+    service_replica_runner: Callable = run_service_replica_case,
+) -> int:
+    args = build_argument_parser().parse_args(argv)
+    if args.mode == "correctness":
+        result = correctness_runner(
+            model_root=args.model_root,
+            output_root=args.output_root,
+            engine_factory=_default_engine_factory,
+        )
+    elif args.mode == "performance-epoch":
+        result = performance_runner(
+            model_root=args.model_root,
+            output_root=args.output_root,
+            epoch=args.epoch,
+            arm=args.arm,
+            workload_order=tuple(args.workload_order.split(",")),
+            engine_factory=_default_engine_factory,
+        )
+        _atomic_write_json(
+            args.output_root
+            / f"epoch-{args.epoch}-artifact-rows.json",
+            build_performance_artifact_rows(
+                result,
+                source_revision=args.source_revision,
+                model_revision=args.model_revision,
+            ),
+        )
+    elif args.mode == "service-control":
+        pair_devices = tuple(
+            tuple(int(device) for device in pair.split(","))
+            for pair in args.pair_devices.split(";")
+        )
+        service_kwargs = {
+            "model_root": args.model_root,
+            "output_root": args.output_root,
+            "pair_devices": pair_devices,
+            "workloads": tuple(args.workloads.split(",")),
+        }
+        if replica_runner is None:
+            service_kwargs["parallel_runner"] = (
+                lambda **kwargs: _run_service_replicas_in_subprocesses(
+                    output_root=args.output_root,
+                    **kwargs,
+                )
+            )
+        else:
+            service_kwargs["replica_runner"] = replica_runner
+        result = service_runner(**service_kwargs)
+    elif args.mode == "service-replica":
+        deadline = time.monotonic() + 120.0
+        while not args.start_barrier.exists():
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "service-control start barrier timed out"
+                )
+            time.sleep(0.01)
+        request_specs = tuple(json.loads(
+            args.request_specs_path.read_text(encoding="utf-8")
+        ))
+        result = service_replica_runner(
+            model_root=args.model_root,
+            workload_id=args.workload_id,
+            request_specs=request_specs,
+        )
+        _atomic_write_json(args.output_path, result)
+        return 0
+    else:
+        raise ValueError("worker mode is unsupported")
+    _atomic_write_json(
+        args.output_root / "worker-receipt.json",
+        result,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

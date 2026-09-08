@@ -6,7 +6,19 @@ from types import SimpleNamespace
 import types
 
 import pytest
-import torch
+
+try:
+    import torch
+except ModuleNotFoundError:
+    pytest.skip(
+        "Qwen3.8 TP2 state tests require PyTorch",
+        allow_module_level=True,
+    )
+if not hasattr(torch, "device"):
+    pytest.skip(
+        "Qwen3.8 TP2 state tests require a real PyTorch module",
+        allow_module_level=True,
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -956,6 +956,16 @@ def test_model_runner_memory_snapshot_is_read_only_and_counts_all_kv_storage():
             return 404
 
         @staticmethod
+        def current_device():
+            cuda_calls.append("current_device")
+            return 3
+
+        @staticmethod
+        def get_device_properties(device):
+            cuda_calls.append(("get_device_properties", device))
+            return SimpleNamespace(total_memory=505)
+
+        @staticmethod
         def synchronize():
             raise AssertionError("memory snapshot must not synchronize")
 
@@ -993,6 +1003,7 @@ def test_model_runner_memory_snapshot_is_read_only_and_counts_all_kv_storage():
         "cuda_reserved_bytes": 202,
         "cuda_peak_allocated_bytes": 303,
         "cuda_peak_reserved_bytes": 404,
+        "physical_memory_bytes": 505,
         "kv_capacity_bytes": 40,
     }
     assert cuda_calls == [
@@ -1000,6 +1011,8 @@ def test_model_runner_memory_snapshot_is_read_only_and_counts_all_kv_storage():
         "memory_reserved",
         "max_memory_allocated",
         "max_memory_reserved",
+        "current_device",
+        ("get_device_properties", 3),
     ]
     if torch is not None:
         assert torch.cuda is original_cuda

@@ -3778,6 +3778,7 @@ class LLMEngine:
             if registered:
                 lifecycle.release_sequence(seq.seq_id)
             raise
+        return seq.seq_id
 
     def flush_pending_hybrid_state_releases(self, *, timeout_s):
         drain_releases = getattr(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import inspect
+import json
 from pathlib import PurePosixPath
 from types import SimpleNamespace
 
@@ -9,8 +10,13 @@ import pytest
 
 from tools.run_qwen38_topology_local_tp2_whole_model import (
     APPROVED_REMOTE_ROOT,
+    DEFAULT_MODEL_ROOT,
+    DEFAULT_REMOTE_PYTHON,
     MINIMUM_KERBEROS_LIFETIME_SECONDS,
     MODEL_REVISION,
+    build_remote_correctness_command,
+    build_remote_epoch_command,
+    build_remote_service_command,
     build_plan,
     run_attempt,
     run_ssh_with_retry,
@@ -88,6 +94,57 @@ def test_plan_freezes_campaign_and_safe_remote_paths():
         for key, path in plan.items()
         if key.endswith("_root")
     )
+
+
+def test_remote_epoch_command_binds_real_worker_cli_and_selected_gpus():
+    plan = _plan()
+
+    command = build_remote_epoch_command(
+        plan,
+        plan["campaign_epochs"][2],
+    )
+
+    assert command["argv"][:2] == [
+        DEFAULT_REMOTE_PYTHON,
+        (
+            f"{plan['source_root']}/tools/"
+            "qwen38_topology_local_tp2_whole_model_worker.py"
+        ),
+    ]
+    assert command["argv"][2] == "performance-epoch"
+    assert command["environment"]["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+    assert command["environment"]["PYTHONPATH"] == plan["source_root"]
+    assert command["argv"][
+        command["argv"].index("--model-root") + 1
+    ] == DEFAULT_MODEL_ROOT
+    assert command["argv"][
+        command["argv"].index("--output-root") + 1
+    ].startswith(plan["controller_root"] + "/")
+    assert command["argv"][
+        command["argv"].index("--workload-order") + 1
+    ] == "P0,P1,Q0,Q1,Q2"
+
+
+def test_remote_correctness_and_service_commands_are_attempt_local():
+    plan = _plan()
+
+    correctness = build_remote_correctness_command(plan)
+    service = build_remote_service_command(plan)
+
+    assert correctness["argv"][2] == "correctness"
+    assert service["argv"][2] == "service-control"
+    assert correctness["environment"]["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+    assert service["environment"]["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
+    assert correctness["output_root"].startswith(
+        plan["controller_root"] + "/"
+    )
+    assert service["output_root"].startswith(plan["controller_root"] + "/")
+    assert service["argv"][
+        service["argv"].index("--pair-devices") + 1
+    ] == "0,1;2,3"
+    assert service["argv"][
+        service["argv"].index("--workloads") + 1
+    ] == "Q0,Q1,Q2"
 
 
 def test_plan_rejects_path_escape_reused_tag_and_insufficient_gpus():
@@ -204,6 +261,18 @@ def test_attempt_runs_all_epochs_control_and_dual_verification():
             "model_revision": MODEL_REVISION,
         },
         remote_writer=lambda _plan: events.append("write"),
+        correctness_runner=lambda: (
+            events.append("correctness")
+            or {
+                "registered_pgids": [90],
+                "process_rows": [{
+                    "pid": 90,
+                    "pgid": 90,
+                    "attempt_tag": plan["attempt_tag"],
+                }],
+                "exit_code": 0,
+            }
+        ),
         epoch_runner=lambda epoch: (
             events.append(("epoch", epoch["epoch"]))
             or {
@@ -240,6 +309,7 @@ def test_attempt_runs_all_epochs_control_and_dual_verification():
     assert result["worker_started"] is True
     assert events == [
         "write",
+        "correctness",
         ("epoch", 0),
         ("epoch", 1),
         ("epoch", 2),
@@ -252,6 +322,8 @@ def test_attempt_runs_all_epochs_control_and_dual_verification():
     ]
     assert [row["stage"] for row in result["resource_samples"]] == [
         "entry",
+        "pre_correctness",
+        "post_correctness",
         "pre_epoch_0",
         "post_launch_0",
         "pre_epoch_1",
@@ -305,3 +377,62 @@ def test_controller_contains_no_auth_renewal():
 
     assert "ki" + "nit" not in source
     assert "kre" + "new" not in source
+
+
+def test_main_full_run_installs_default_remote_adapters(
+    tmp_path,
+    monkeypatch,
+):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(_plan()), encoding="utf-8")
+    observed = {}
+
+    def adapter_factory(args, plan):
+        observed["args"] = args
+        observed["plan"] = plan
+        return {
+            name: (lambda *_args, **_kwargs: None)
+            for name in (
+                "gpu_probe",
+                "identity_probe",
+                "remote_writer",
+                "correctness_runner",
+                "epoch_runner",
+                "service_runner",
+                "remote_assembler",
+                "remote_verifier",
+                "downloader",
+                "local_verifier",
+            )
+        }
+
+    def fake_run_attempt(plan, **kwargs):
+        observed["callbacks"] = kwargs
+        return {
+            "classification": "NO_GO_PERFORMANCE",
+            "worker_started": True,
+        }
+
+    monkeypatch.setattr(controller, "run_attempt", fake_run_attempt)
+
+    assert controller.main(
+        ["--plan", str(plan_path)],
+        adapter_factory=adapter_factory,
+        printer=lambda _value: None,
+    ) == 0
+    assert observed["plan"]["attempt_tag"] == _plan()["attempt_tag"]
+    assert all(
+        callable(observed["callbacks"][name])
+        for name in (
+            "gpu_probe",
+            "identity_probe",
+            "remote_writer",
+            "correctness_runner",
+            "epoch_runner",
+            "service_runner",
+            "remote_assembler",
+            "remote_verifier",
+            "downloader",
+            "local_verifier",
+        )
+    )

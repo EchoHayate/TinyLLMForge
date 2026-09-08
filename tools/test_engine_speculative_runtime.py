@@ -1251,8 +1251,9 @@ def test_add_request_registers_lifecycle_before_scheduler_admission():
         scheduler=SimpleNamespace(add=scheduler_add),
     )
 
-    add_request(engine, [1, 2, 3], object())
+    sequence_id = add_request(engine, [1, 2, 3], object())
 
+    assert sequence_id == 40
     assert events == [
         ("register", 40, (1, 2, 3)),
         ("add", 40),

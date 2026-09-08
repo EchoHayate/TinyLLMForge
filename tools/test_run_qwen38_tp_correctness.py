@@ -8,7 +8,14 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-import torch
+
+try:
+    import torch
+except ModuleNotFoundError:
+    pytest.skip(
+        "Qwen3.8 TP correctness tests require PyTorch",
+        allow_module_level=True,
+    )
 
 
 ROOT = Path(__file__).resolve().parents[1]

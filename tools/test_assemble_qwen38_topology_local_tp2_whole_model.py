@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,6 +15,7 @@ from tools.assemble_qwen38_topology_local_tp2_whole_model import (
     classify,
     nearest_rank_percentile,
 )
+import tools.assemble_qwen38_topology_local_tp2_whole_model as assembler
 
 
 WORKLOADS = ("P0", "P1", "Q0", "Q1", "Q2")
@@ -108,6 +110,29 @@ def test_nearest_rank_percentile_uses_raw_values():
 
     assert nearest_rank_percentile(values, 95) == 95.0
     assert nearest_rank_percentile(values, 99) == 99.0
+
+
+def test_assembler_cli_writes_to_explicit_fresh_output(tmp_path):
+    calls = []
+    attempt = tmp_path / "attempt"
+    output = tmp_path / "bundle"
+
+    assert assembler.main(
+        [
+            "--attempt-root",
+            str(attempt),
+            "--output-root",
+            str(output),
+        ],
+        assemble=lambda attempt_root, output_root: (
+            calls.append((attempt_root, output_root))
+            or {"classification": "NO_GO_PERFORMANCE"}
+        ),
+        printer=lambda value: calls.append(value),
+    ) == 0
+
+    assert calls[0] == (attempt, output)
+    assert json.loads(calls[1])["classification"] == "NO_GO_PERFORMANCE"
 
 
 def passing_attempt(root: Path) -> Path:

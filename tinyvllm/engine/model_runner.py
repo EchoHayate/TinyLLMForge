@@ -4225,6 +4225,11 @@ class ModelRunner:
             "cuda_peak_reserved_bytes": int(
                 torch.cuda.max_memory_reserved()
             ),
+            "physical_memory_bytes": int(
+                torch.cuda.get_device_properties(
+                    torch.cuda.current_device()
+                ).total_memory
+            ),
             "kv_capacity_bytes": kv_bytes,
         }
 

@@ -9,16 +9,35 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
+import sys
 import time
 
 if __package__:
     from tools.run_qwen38_topology_local_tp2_island import (
+        DEFAULT_COMMAND_TIMEOUT_S,
+        DEFAULT_PROXY_HOST,
+        DEFAULT_RETRY_COUNT,
+        DEFAULT_SSH_TARGET,
+        _create_remote_attempt,
+        _query_remote_inventory,
+        _remote_json,
+        _remote_run,
+        _ssh_argv,
         _select_best_pair_groups,
         query_local_kerberos,
         select_strict_clean_gpus,
     )
 else:
     from run_qwen38_topology_local_tp2_island import (
+        DEFAULT_COMMAND_TIMEOUT_S,
+        DEFAULT_PROXY_HOST,
+        DEFAULT_RETRY_COUNT,
+        DEFAULT_SSH_TARGET,
+        _create_remote_attempt,
+        _query_remote_inventory,
+        _remote_json,
+        _remote_run,
+        _ssh_argv,
         _select_best_pair_groups,
         query_local_kerberos,
         select_strict_clean_gpus,
@@ -31,6 +50,11 @@ APPROVED_REMOTE_ROOT = (
 )
 MODEL_REPOSITORY = "Qwen/Qwen3.8-27B"
 MODEL_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+DEFAULT_REMOTE_PYTHON = "/data00/home/sitian/tllm/env/bin/python"
+DEFAULT_MODEL_ROOT = (
+    f"{APPROVED_REMOTE_ROOT}/models/Qwen3.8-27B/snapshots/"
+    f"{MODEL_REVISION}"
+)
 MINIMUM_KERBEROS_LIFETIME_SECONDS = 1_800
 EXPECTED_KERBEROS_PRINCIPAL = "sitian@BYTEDANCE.COM"
 EXPECTED_KERBEROS_TGT = "krbtgt/BYTEDANCE.COM@BYTEDANCE.COM"
@@ -75,6 +99,7 @@ def build_plan(
     topology,
     source_tree_sha256: str | None = None,
     remote_root: str = APPROVED_REMOTE_ROOT,
+    model_root: str = DEFAULT_MODEL_ROOT,
     attempt_exists: bool = False,
 ) -> dict:
     if remote_root != APPROVED_REMOTE_ROOT:
@@ -98,6 +123,8 @@ def build_plan(
         ).hexdigest()
     if not HEX64_PATTERN.fullmatch(str(source_tree_sha256)):
         raise ValueError("source tree SHA-256 is invalid")
+    if not _below(model_root, "/data00/home/sitian"):
+        raise ValueError("model root is invalid")
     selected = _strict_inventory(gpu_inventory)
     topology_rows = topology.get("rows") if isinstance(topology, dict) else None
     if not isinstance(topology_rows, list):
@@ -134,6 +161,7 @@ def build_plan(
         "source_tree_sha256": source_tree_sha256,
         "model_repository": MODEL_REPOSITORY,
         "model_revision": MODEL_REVISION,
+        "model_root": model_root,
         "remote_root": remote_root,
         **paths,
         "environment": environment,
@@ -182,6 +210,7 @@ def _validate_plan(plan):
         )
         or plan.get("model_repository") != MODEL_REPOSITORY
         or plan.get("model_revision") != MODEL_REVISION
+        or not _below(plan.get("model_root", ""), "/data00/home/sitian")
     ):
         raise ValueError("whole-model controller plan is invalid")
     for key in (
@@ -210,6 +239,132 @@ def _validate_plan(plan):
     ]:
         raise ValueError("campaign epoch plan is invalid")
     return selected
+
+
+def build_remote_epoch_command(
+    plan,
+    epoch,
+    *,
+    python_path: str = DEFAULT_REMOTE_PYTHON,
+) -> dict:
+    selected = _validate_plan(plan)
+    if not _below(python_path, "/data00/home/sitian"):
+        raise ValueError("remote Python path is invalid")
+    if epoch not in plan["campaign_epochs"]:
+        raise ValueError("epoch is not part of the immutable plan")
+    output_root = (
+        f"{plan['controller_root']}/worker_outputs/"
+        f"epoch-{epoch['epoch']}"
+    )
+    if not _below(output_root, plan["attempt_root"]):
+        raise ValueError("worker output path escapes attempt root")
+    visible = ",".join(
+        str(row["gpu_index"]) for row in selected
+    )
+    return {
+        "argv": [
+            python_path,
+            (
+                f"{plan['source_root']}/tools/"
+                "qwen38_topology_local_tp2_whole_model_worker.py"
+            ),
+            "performance-epoch",
+            "--model-root",
+            plan["model_root"],
+            "--output-root",
+            output_root,
+            "--epoch",
+            str(epoch["epoch"]),
+            "--arm",
+            epoch["arm"],
+            "--workload-order",
+            ",".join(epoch["workload_order"]),
+            "--source-revision",
+            plan["source_revision"],
+            "--model-revision",
+            plan["model_revision"],
+        ],
+        "environment": {
+            "CUDA_VISIBLE_DEVICES": visible,
+            "PYTHONPATH": plan["source_root"],
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            **plan["environment"],
+        },
+        "output_root": output_root,
+    }
+
+
+def _base_worker_command(plan, mode, output_name, python_path):
+    selected = _validate_plan(plan)
+    if not _below(python_path, "/data00/home/sitian"):
+        raise ValueError("remote Python path is invalid")
+    output_root = (
+        f"{plan['controller_root']}/worker_outputs/{output_name}"
+    )
+    if not _below(output_root, plan["attempt_root"]):
+        raise ValueError("worker output path escapes attempt root")
+    visible = ",".join(
+        str(row["gpu_index"]) for row in selected
+    )
+    return {
+        "argv": [
+            python_path,
+            (
+                f"{plan['source_root']}/tools/"
+                "qwen38_topology_local_tp2_whole_model_worker.py"
+            ),
+            mode,
+            "--model-root",
+            plan["model_root"],
+            "--output-root",
+            output_root,
+        ],
+        "environment": {
+            "CUDA_VISIBLE_DEVICES": visible,
+            "PYTHONPATH": plan["source_root"],
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            **plan["environment"],
+        },
+        "output_root": output_root,
+    }
+
+
+def build_remote_correctness_command(
+    plan,
+    *,
+    python_path: str = DEFAULT_REMOTE_PYTHON,
+) -> dict:
+    return _base_worker_command(
+        plan,
+        "correctness",
+        "correctness",
+        python_path,
+    )
+
+
+def build_remote_service_command(
+    plan,
+    *,
+    python_path: str = DEFAULT_REMOTE_PYTHON,
+) -> dict:
+    command = _base_worker_command(
+        plan,
+        "service-control",
+        "service-control",
+        python_path,
+    )
+    command["argv"].extend([
+        "--pair-devices",
+        ";".join(
+            ",".join(str(rank) for rank in pair)
+            for pair in plan["pair_groups"]
+        ),
+        "--workloads",
+        "Q0,Q1,Q2",
+    ])
+    return command
 
 
 def _validate_kerberos(receipt):
@@ -349,6 +504,7 @@ def run_attempt(
     gpu_probe=None,
     identity_probe=None,
     remote_writer=None,
+    correctness_runner=None,
     epoch_runner=None,
     service_runner=None,
     remote_assembler=None,
@@ -382,6 +538,9 @@ def run_attempt(
         }
 
     remote_writer = remote_writer or _required_callback("remote_writer")
+    correctness_runner = (
+        correctness_runner or _required_callback("correctness_runner")
+    )
     epoch_runner = epoch_runner or _required_callback("epoch_runner")
     service_runner = service_runner or _required_callback("service_runner")
     remote_assembler = (
@@ -401,6 +560,25 @@ def run_attempt(
     }]
     remote_writer(plan)
     worker_started = False
+    kerberos = kerberos_probe()
+    if not _validate_kerberos(kerberos):
+        raise RuntimeError("Kerberos launch lifetime is below 1800 seconds")
+    identity = identity_probe()
+    _validate_launch_identity(plan, **identity)
+    inventory = gpu_probe()
+    _validate_gpu_identity(plan, inventory, require_clean=True)
+    resources.append({
+        "stage": "pre_correctness",
+        "gpu_inventory": inventory,
+        "kerberos": kerberos,
+    })
+    correctness = correctness_runner()
+    worker_started = True
+    _validate_launched_processes(plan, correctness)
+    resources.append({
+        "stage": "post_correctness",
+        "process_rows": correctness["process_rows"],
+    })
     for epoch in plan["campaign_epochs"]:
         kerberos = kerberos_probe()
         if not _validate_kerberos(kerberos):
@@ -462,21 +640,251 @@ def run_attempt(
     }
 
 
-def main(argv=None):
+def _run_remote_worker_command(args, plan, command, label):
+    log_root = f"{plan['controller_root']}/logs"
+    script = "\n".join([
+        "import json,os,subprocess,sys",
+        "argv=json.loads(sys.argv[1]); env=json.loads(sys.argv[2])",
+        "attempt,label,log_root=sys.argv[3:]",
+        "os.makedirs(log_root,exist_ok=True)",
+        "stdout_path=os.path.join(log_root,label+'.stdout.log')",
+        "stderr_path=os.path.join(log_root,label+'.stderr.log')",
+        "with open(stdout_path,'w') as out, open(stderr_path,'w') as err:",
+        " p=subprocess.Popen(argv,env={**os.environ,**env},stdout=out,"
+        "stderr=err,start_new_session=True)",
+        " pgid=os.getpgid(p.pid); code=p.wait()",
+        "print(json.dumps({'exit_code':code,'registered_pgids':[pgid],"
+        "'process_rows':[{'pid':p.pid,'pgid':pgid,"
+        "'attempt_tag':attempt}]} ,sort_keys=True))",
+    ])
+    return _remote_json(
+        args,
+        [
+            "python3",
+            "-c",
+            script,
+            json.dumps(command["argv"]),
+            json.dumps(command["environment"]),
+            plan["attempt_tag"],
+            label,
+            log_root,
+        ],
+        max(args.command_timeout_s, 7200),
+    )
+
+
+def _download_final_bundle(args, plan, local_attempt_root):
+    local_root = Path(local_attempt_root).resolve()
+    bundle = local_root / "final_bundle"
+    if bundle.exists():
+        raise ValueError("local final bundle must be fresh")
+    local_root.mkdir(parents=True, exist_ok=True)
+    sender = subprocess.Popen(
+        _ssh_argv(
+            args.ssh_target,
+            ["tar", "-cf", "-", "-C", plan["attempt_root"], "final_bundle"],
+            args.proxy_host,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    receiver = subprocess.run(
+        ["tar", "-xf", "-", "-C", str(local_root)],
+        stdin=sender.stdout,
+        capture_output=True,
+        check=False,
+        timeout=max(args.command_timeout_s, 600),
+    )
+    if sender.stdout is not None:
+        sender.stdout.close()
+    sender_error = sender.stderr.read() if sender.stderr else b""
+    sender_code = sender.wait()
+    if sender_code != 0 or receiver.returncode != 0:
+        raise RuntimeError(
+            sender_error.decode(errors="replace")
+            or receiver.stderr.decode(errors="replace")
+            or "compact final-bundle download failed"
+        )
+
+
+def build_default_adapters(args, plan):
+    repo_root = Path(__file__).resolve().parents[1]
+    local_attempt = (
+        args.local_attempt_root.resolve()
+        if args.local_attempt_root is not None
+        else repo_root / "artifacts" / (
+            "qwen38_topology_local_tp2_whole_model"
+        ) / plan["attempt_tag"]
+    )
+
+    def inventory():
+        return _query_remote_inventory(args)
+
+    def identity():
+        script = "\n".join([
+            "import json,os,sys",
+            "source,model=sys.argv[1:]",
+            "payload=json.load(open(source,encoding='utf-8'))",
+            "print(json.dumps({'source_revision':payload['source_revision'],"
+            "'model_revision':os.path.basename(os.path.realpath(model))},"
+            "sort_keys=True))",
+        ])
+        return _remote_json(
+            args,
+            [
+                "python3", "-c", script,
+                f"{plan['controller_root']}/source_identity.json",
+                plan["model_root"],
+            ],
+            args.command_timeout_s,
+        )
+
+    def write_remote(current):
+        return _create_remote_attempt(
+            args,
+            current,
+            {
+                "source_revision": current["source_revision"],
+                "source_tree_sha256": current["source_tree_sha256"],
+                "model_repository": current["model_repository"],
+                "model_revision": current["model_revision"],
+            },
+        )
+
+    def run_command(command, label):
+        return _run_remote_worker_command(args, plan, command, label)
+
+    def assemble():
+        return _remote_json(
+            args,
+            [
+                args.remote_python,
+                f"{plan['source_root']}/tools/"
+                "assemble_qwen38_topology_local_tp2_whole_model.py",
+                "--attempt-root",
+                plan["raw_root"],
+                "--output-root",
+                plan["bundle_root"],
+            ],
+            max(args.command_timeout_s, 600),
+        )
+
+    remote_receipt = (
+        f"{plan['controller_root']}/remote-verification.json"
+    )
+
+    def verify_remote():
+        _remote_run(
+            ssh_target=args.ssh_target,
+            remote_argv=[
+                args.remote_python,
+                f"{plan['source_root']}/tools/"
+                "verify_qwen38_topology_local_tp2_whole_model.py",
+                "--bundle",
+                plan["bundle_root"],
+                "--output",
+                remote_receipt,
+            ],
+            proxy_host=args.proxy_host,
+            retry_count=args.retry_count,
+            timeout_s=max(args.command_timeout_s, 600),
+        )
+        return _remote_run(
+            ssh_target=args.ssh_target,
+            remote_argv=["cat", remote_receipt],
+            proxy_host=args.proxy_host,
+            retry_count=args.retry_count,
+            timeout_s=args.command_timeout_s,
+        ).stdout.encode()
+
+    def download():
+        _download_final_bundle(args, plan, local_attempt)
+
+    def verify_local():
+        output = local_attempt / "local-verification.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(repo_root / "tools" /
+                    "verify_qwen38_topology_local_tp2_whole_model.py"),
+                "--bundle",
+                str(local_attempt / "final_bundle"),
+                "--output",
+                str(output),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr or "local verifier failed")
+        return output.read_bytes()
+
+    return {
+        "gpu_probe": inventory,
+        "identity_probe": identity,
+        "remote_writer": write_remote,
+        "correctness_runner": lambda: run_command(
+            build_remote_correctness_command(
+                plan, python_path=args.remote_python
+            ),
+            "correctness",
+        ),
+        "epoch_runner": lambda epoch: run_command(
+            build_remote_epoch_command(
+                plan, epoch, python_path=args.remote_python
+            ),
+            f"epoch-{epoch['epoch']}",
+        ),
+        "service_runner": lambda: run_command(
+            build_remote_service_command(
+                plan, python_path=args.remote_python
+            ),
+            "service-control",
+        ),
+        "remote_assembler": assemble,
+        "remote_verifier": verify_remote,
+        "downloader": download,
+        "local_verifier": verify_local,
+    }
+
+
+def main(
+    argv=None,
+    *,
+    adapter_factory=build_default_adapters,
+    printer=print,
+):
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--gpu-wait-timeout-s", type=float, default=21600)
     parser.add_argument("--gpu-poll-interval-s", type=float, default=15)
+    parser.add_argument("--remote-python", default=DEFAULT_REMOTE_PYTHON)
+    parser.add_argument("--ssh-target", default=DEFAULT_SSH_TARGET)
+    parser.add_argument("--proxy-host", default=DEFAULT_PROXY_HOST)
+    parser.add_argument("--retry-count", type=int, default=DEFAULT_RETRY_COUNT)
+    parser.add_argument(
+        "--command-timeout-s",
+        type=int,
+        default=DEFAULT_COMMAND_TIMEOUT_S,
+    )
+    parser.add_argument("--local-attempt-root", type=Path)
     args = parser.parse_args(argv)
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
+    adapters = (
+        {}
+        if args.dry_run or args.check_only
+        else adapter_factory(args, plan)
+    )
     result = run_attempt(
         plan,
         dry_run=args.dry_run,
         check_only=args.check_only,
+        **adapters,
     )
-    print(json.dumps(result, sort_keys=True))
+    printer(json.dumps(result, sort_keys=True))
     return 0
 
 
