@@ -448,9 +448,13 @@ class LogicalTP2LinearAttentionView:
     output_input_range: tuple[int, int]
     pair_group: object
     qkv_weight: object
+    qkv_weight_segments: tuple[object, object, object]
     z_weight: object
+    z_weight_half: object
     b_weight: object
+    b_weight_half: object
     a_weight: object
+    a_weight_half: object
     conv_weight: object
     A_log: object
     dt_bias: object
@@ -566,11 +570,24 @@ def build_logical_tp2_layer_view(
     value_start = logical_rank * 24
     key_width_start = logical_rank * 1024
     value_width_start = logical_rank * 3072
+    qkv_weight_segments = (
+        qkv_full.narrow(0, key_width_start, 1024),
+        qkv_full.narrow(0, 2048 + key_width_start, 1024),
+        qkv_full.narrow(0, 4096 + value_width_start, 3072),
+    )
     selected = {
         "qkv_weight": qkv_full,
+        "qkv_weight_segments": qkv_weight_segments,
         "z_weight": z_full,
+        "z_weight_half": z_full.narrow(
+            0,
+            value_width_start,
+            3072,
+        ),
         "b_weight": b_full,
+        "b_weight_half": b_full.narrow(0, value_start, 24),
         "a_weight": a_full,
+        "a_weight_half": a_full.narrow(0, value_start, 24),
         "conv_weight": _select_state_parameter(
             conv_source,
             name="logical_tp2_conv_weight",
@@ -608,6 +625,15 @@ def build_logical_tp2_layer_view(
             _slice_rows(conv_source, 2048 + key_width_start, 1024),
             _slice_rows(conv_source, 4096 + value_width_start, 3072),
         ), dim=0).contiguous()
+    digest_tensors = {
+        name: tensor
+        for name, tensor in selected.items()
+        if name != "qkv_weight_segments"
+    }
+    digest_tensors.update({
+        f"qkv_weight_segment_{index}": tensor
+        for index, tensor in enumerate(qkv_weight_segments)
+    })
     return LogicalTP2LinearAttentionView(
         logical_parallel_size=2,
         logical_rank=logical_rank,
@@ -621,7 +647,7 @@ def build_logical_tp2_layer_view(
         norm_eps=float(norm_eps),
         tensor_digests=MappingProxyType({
             name: _tensor_digest(tensor)
-            for name, tensor in sorted(selected.items())
+            for name, tensor in sorted(digest_tensors.items())
         }),
         **selected,
     )
@@ -956,29 +982,14 @@ def run_candidate_mixer(
 
     if _event_trace is not None:
         _event_trace["projection_start"].record()
-    key_start = view.key_head_range[0] * HEAD_DIM
-    value_start = view.value_head_range[0] * HEAD_DIM
-    qkv_full = F.linear(hidden, view.qkv_weight)
     qkv = torch.cat((
-        qkv_full.narrow(-1, key_start, 1024),
-        qkv_full.narrow(-1, 2048 + key_start, 1024),
-        qkv_full.narrow(-1, 4096 + value_start, 3072),
+        F.linear(hidden, view.qkv_weight_segments[0]),
+        F.linear(hidden, view.qkv_weight_segments[1]),
+        F.linear(hidden, view.qkv_weight_segments[2]),
     ), dim=-1)
-    z = F.linear(hidden, view.z_weight).narrow(
-        -1,
-        value_start,
-        3072,
-    )
-    b = F.linear(hidden, view.b_weight).narrow(
-        -1,
-        view.value_head_range[0],
-        24,
-    )
-    a = F.linear(hidden, view.a_weight).narrow(
-        -1,
-        view.value_head_range[0],
-        24,
-    )
+    z = F.linear(hidden, view.z_weight_half)
+    b = F.linear(hidden, view.b_weight_half)
+    a = F.linear(hidden, view.a_weight_half)
     if _event_trace is not None:
         _event_trace["projection_end"].record()
     convolved, next_convolution = qwen35_causal_depthwise_conv(

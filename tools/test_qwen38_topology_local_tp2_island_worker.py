@@ -340,9 +340,29 @@ def test_logical_view_selects_contiguous_half_and_pair_group():
     assert view.b_weight is layer.in_proj_b.weight
     assert view.a_weight is layer.in_proj_a.weight
     assert view.qkv_weight.shape == (10240, 5120)
+    assert tuple(
+        tensor.shape for tensor in view.qkv_weight_segments
+    ) == (
+        (1024, 5120),
+        (1024, 5120),
+        (3072, 5120),
+    )
+    assert tuple(
+        tensor.label for tensor in view.qkv_weight_segments
+    ) == (
+        "qkv.narrow(0,1024,1024)",
+        "qkv.narrow(0,3072,1024)",
+        "qkv.narrow(0,7168,3072)",
+    )
     assert view.z_weight.shape == (6144, 5120)
+    assert view.z_weight_half.shape == (3072, 5120)
+    assert view.z_weight_half.label == "z.narrow(0,3072,3072)"
     assert view.b_weight.shape == (48, 5120)
+    assert view.b_weight_half.shape == (24, 5120)
+    assert view.b_weight_half.label == "b.narrow(0,24,24)"
     assert view.a_weight.shape == (48, 5120)
+    assert view.a_weight_half.shape == (24, 5120)
+    assert view.a_weight_half.label == "a.narrow(0,24,24)"
     assert view.conv_weight.shape == (5120, 4)
     assert view.A_log.shape == (24,)
     assert view.dt_bias.shape == (24,)
@@ -351,13 +371,19 @@ def test_logical_view_selects_contiguous_half_and_pair_group():
     assert tuple(view.tensor_digests) == (
         "A_log",
         "a_weight",
+        "a_weight_half",
         "b_weight",
+        "b_weight_half",
         "conv_weight",
         "dt_bias",
         "norm_weight",
         "output_accumulation_weight",
         "qkv_weight",
+        "qkv_weight_segment_0",
+        "qkv_weight_segment_1",
+        "qkv_weight_segment_2",
         "z_weight",
+        "z_weight_half",
     )
 
 
@@ -982,6 +1008,13 @@ def test_candidate_timed_path_has_only_pair_local_collective():
     worker = _load()
     source = inspect.getsource(worker.run_candidate_mixer)
 
+    assert "F.linear(hidden, view.qkv_weight)" not in source
+    assert source.count(
+        "F.linear(hidden, view.qkv_weight_segments["
+    ) == 3
+    assert "F.linear(hidden, view.z_weight_half)" in source
+    assert "F.linear(hidden, view.b_weight_half)" in source
+    assert "F.linear(hidden, view.a_weight_half)" in source
     assert "_pair_reduce(local, view.pair_group)" in source
     assert "dist.all_reduce" not in source
     assert "barrier" not in source
