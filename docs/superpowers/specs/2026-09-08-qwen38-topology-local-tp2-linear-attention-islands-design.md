@@ -355,6 +355,52 @@ The assembler records digests proving:
   parameter used by the baseline; and
 - no full-attention or MLP parameter is changed.
 
+### 7.5 Short-chunk gated-delta specialization
+
+The formal r5 result showed that the fused A/B candidate is correct but does
+not have a stable performance margin: active-token 4/8 geometric aggregate
+speedup was `4.0542%`, and active-token 4 P99 regressed `5.2860%`. Comparing
+r5 with diagnostic-r15 also showed that the diagnostic GO depended partly on
+the second GPU pair having a slower baseline; it is not sufficient evidence
+for a stable software win.
+
+The dominant candidate component for active-token 4 and 8 is the
+gated-delta core, at approximately 10.4 ms of an approximately 10.8 ms
+candidate path. The current chunk implementation pads every non-recurrent
+call to `chunk_size=64`, then executes the 64-step triangular recurrence even
+when only four or eight tokens are active.
+
+The next candidate revision therefore specializes the chunk size:
+
+```text
+token_count == 1       -> recurrent path, unchanged
+2 <= token_count <= 8  -> chunk_size = token_count
+token_count > 8        -> chunk_size = 64, unchanged
+```
+
+This is preferred over a fixed short chunk of eight because token-4 would
+still execute four padded rows, and preferred over token-by-token recurrent
+execution because that would introduce multiple sequential launches. A
+single-GPU CUDA probe over 12- and 24-head geometries measured the
+gated-delta core falling from approximately 6.14 ms at chunk size 64 to
+1.38--1.71 ms at chunk sizes 4 and 8. The probe observed maximum output
+difference `1.220703125e-4` and maximum state difference
+`2.384185791015625e-7`, both within the existing tensor tolerances, but it is
+diagnostic evidence only.
+
+The specialization is part of the candidate composition, not silently
+applied to the TP4 baseline. This makes the comparison answer the practical
+question "does the revised topology-local runtime beat the current TP4
+runtime?" rather than attempting to attribute every nanosecond solely to
+communication topology. Reports must therefore name both ingredients:
+topology-local TP2 islands and short-chunk gated-delta specialization.
+
+The specialization remains default-off outside this Stage-0 worker. It must
+not modify the production Qwen3.5/Qwen3.8 linear-attention path. The existing
+full output/state tolerance, pair-replica equality, downstream exact-greedy,
+allocation, lifecycle, memory, migration, tail, and performance gates remain
+unchanged.
+
 ## 8. State layout and migration
 
 ### 8.1 Exact state sizes
@@ -611,10 +657,12 @@ Only the exact `GO` classification authorizes an end-to-end integration
 design. A `GO` does not itself establish improved TPOT, TTFT, QPS, or
 whole-model latency.
 
-A performance no-go terminates the topology-local pair-replication route for
-this checkpoint and hardware topology. It may not be rescued by dropping
-active-token shapes, ignoring migration, weakening tail gates, or reporting
-only the faster pair.
+A performance no-go terminates that exact frozen candidate revision for this
+checkpoint and hardware topology. It may not be rescued by rerunning until a
+lucky sample appears, dropping active-token shapes, ignoring migration,
+weakening tail gates, or reporting only the faster pair. A later revision may
+continue only after a measured root cause motivates a source change, and it
+must use a fresh immutable attempt tag and preserve the failed evidence.
 
 ## 13. Stage-1 boundary after a microgate GO
 
