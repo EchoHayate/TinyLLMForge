@@ -743,26 +743,11 @@ def main(argv=None):
         if args.bundle_root is not None
         else attempt_root / "final_bundle"
     )
-    timing_rows = []
-    migration_rows = []
-    memory_rows = []
-    cleanup_rows = []
-    for rank in range(4):
-        timing_rows.extend(
-            _load_jsonl(raw / f"measurement_rows.rank-{rank}.jsonl")
-        )
-        migration_rows.extend(
-            _load_jsonl(raw / f"migration_rows.rank-{rank}.jsonl")
-        )
-        memory_rows.append(
-            _load_json(raw / f"memory.rank-{rank}.json")
-        )
-        cleanup_rows.append(
-            _load_json(raw / f"cleanup.rank-{rank}.json")
-        )
+    timing_rows = _load_jsonl(raw / "measurement_rows.jsonl")
+    migration_rows = _load_jsonl(raw / "migration_rows.jsonl")
+    memory_rows = _load_jsonl(raw / "memory_rows.jsonl")
     lifecycle_rows = _load_jsonl(raw / "lifecycle_rows.jsonl")
     cleanup = _load_json(raw / "cleanup.json")
-    cleanup.setdefault("rank_rows", cleanup_rows)
     result = assemble_bundle(
         bundle_root,
         source_identity=_load_json(

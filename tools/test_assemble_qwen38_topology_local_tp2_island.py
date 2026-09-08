@@ -15,6 +15,7 @@ from tools.assemble_qwen38_topology_local_tp2_island import (
     PRODUCER_ARTIFACTS,
     _load_json,
     assemble_bundle,
+    main,
 )
 
 
@@ -409,3 +410,38 @@ def test_json_loader_rejects_duplicate_or_nonfinite_values(
 
     with pytest.raises(ValueError):
         _load_json(path)
+
+
+def test_assembler_cli_consumes_controller_aggregate_rows(tmp_path):
+    inputs = passing_inputs()
+    attempt_root = tmp_path / "attempt"
+    controller = attempt_root / "controller"
+    raw = attempt_root / "raw"
+    controller.mkdir(parents=True)
+    raw.mkdir()
+
+    def write_json(path, payload):
+        path.write_text(json.dumps(payload) + "\n")
+
+    def write_jsonl(path, rows):
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    write_json(controller / "source_identity.json", inputs["source_identity"])
+    write_json(controller / "launch_admission.json", inputs["admission"])
+    write_json(raw / "model_identity.json", inputs["model_identity"])
+    write_json(raw / "topology.json", inputs["topology"])
+    write_json(raw / "workload_manifest.json", inputs["workload"])
+    write_json(
+        raw / "parameter_slice_manifest.json",
+        inputs["parameter_slices"],
+    )
+    write_jsonl(raw / "measurement_rows.jsonl", inputs["timing_rows"])
+    write_jsonl(raw / "migration_rows.jsonl", inputs["migration_rows"])
+    write_jsonl(raw / "memory_rows.jsonl", inputs["memory_rows"])
+    write_jsonl(raw / "lifecycle_rows.jsonl", inputs["lifecycle_rows"])
+    write_json(raw / "cleanup.json", inputs["cleanup"])
+
+    assert main(["--attempt-root", str(attempt_root)]) == 0
+    assert _load_json(
+        attempt_root / "final_bundle" / "producer_result.json"
+    )["classification"] == "GO_TOPOLOGY_LOCAL_TP2_ISLAND_MICROGATE"
