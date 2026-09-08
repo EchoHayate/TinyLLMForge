@@ -14,13 +14,17 @@ import tempfile
 if __package__:
     from tools.lease_sealed_state_commit_overlap import (
         ACTIVE_TOKEN_GROUPS,
+        DIAGNOSTIC_ITERATION_COUNT,
         HIDDEN_SIZE,
         LINEAR_LAYER_COUNT,
         MEASURED_PAIR_COUNT,
         STATE_BYTES_PER_TOKEN_PER_LAYER,
         WARMUP_PAIR_COUNT,
         WORLD_SIZE,
+        classify_stage01,
         classify_stage0,
+        validate_stage01_diagnostic_row,
+        validate_stage01_measurement_row,
         validate_measurement_row,
         validate_runtime_capabilities,
         validate_strict_clean_admission,
@@ -28,13 +32,17 @@ if __package__:
 else:
     from lease_sealed_state_commit_overlap import (
         ACTIVE_TOKEN_GROUPS,
+        DIAGNOSTIC_ITERATION_COUNT,
         HIDDEN_SIZE,
         LINEAR_LAYER_COUNT,
         MEASURED_PAIR_COUNT,
         STATE_BYTES_PER_TOKEN_PER_LAYER,
         WARMUP_PAIR_COUNT,
         WORLD_SIZE,
+        classify_stage01,
         classify_stage0,
+        validate_stage01_diagnostic_row,
+        validate_stage01_measurement_row,
         validate_measurement_row,
         validate_runtime_capabilities,
         validate_strict_clean_admission,
@@ -42,6 +50,7 @@ else:
 
 
 MANIFEST_SCHEMA = "lease-sealed-state-commit-overlap-manifest.v1"
+STAGE01_MANIFEST_SCHEMA = "tp4-completion-owned-overlap-manifest.v2"
 PRODUCER_ARTIFACTS = frozenset(
     {
         "source_manifest.json",
@@ -59,6 +68,9 @@ PRODUCER_ARTIFACTS = frozenset(
         "report.md",
         "manifest.sha256",
     }
+)
+STAGE01_PRODUCER_ARTIFACTS = frozenset(
+    set(PRODUCER_ARTIFACTS) | {"diagnostic_rows.jsonl"}
 )
 
 
@@ -199,7 +211,7 @@ def _sha256(path):
     return digest.hexdigest()
 
 
-def _write_manifest(root):
+def _write_manifest(root, manifest_schema=MANIFEST_SCHEMA):
     artifacts = {
         path.name: _sha256(path)
         for path in sorted(Path(root).iterdir())
@@ -208,7 +220,7 @@ def _write_manifest(root):
     _write_json(
         Path(root) / "manifest.sha256",
         {
-            "schema_version": MANIFEST_SCHEMA,
+            "schema_version": manifest_schema,
             "artifacts": artifacts,
         },
     )
@@ -239,11 +251,14 @@ def _validate_rank_rows(rows):
     )
 
 
-def _validate_source_identity(source):
+def _validate_source_identity(
+    source,
+    expected_schema="lease-sealed-state-commit-overlap-source.v1",
+):
     if (
         not isinstance(source, dict)
         or source.get("schema_version")
-        != "lease-sealed-state-commit-overlap-source.v1"
+        != expected_schema
         or not isinstance(source.get("attempt"), str)
         or not source["attempt"]
         or not _is_hex(source.get("source_revision"), 40)
@@ -278,9 +293,12 @@ def _project(row, fields):
     return {field: row[field] for field in fields}
 
 
-def _report(producer):
+def _report(
+    producer,
+    title="Lease-Sealed State-Commit / AllReduce Overlap Stage-0",
+):
     lines = [
-        "# Lease-Sealed State-Commit / AllReduce Overlap Stage-0",
+        f"# {title}",
         "",
         f"- Classification: `{producer['classification']}`",
         f"- Stage-1 authorized: `{str(producer['stage1_authorized']).lower()}`",
@@ -316,15 +334,74 @@ def assemble_bundle(
     lifecycle,
     cleanup,
 ):
+    return _assemble_validated_bundle(
+        protocol="lease-sealed-stage0",
+        manifest_schema=MANIFEST_SCHEMA,
+        output_root=output_root,
+        source_identity=source_identity,
+        rows=rows,
+        diagnostic_rows=None,
+        memory=memory,
+        lifecycle=lifecycle,
+        cleanup=cleanup,
+    )
+
+
+def assemble_stage01_bundle(
+    *,
+    output_root,
+    source_identity,
+    rows,
+    diagnostic_rows,
+    memory,
+    lifecycle,
+    cleanup,
+):
+    return _assemble_validated_bundle(
+        protocol="completion-owned-stage01",
+        manifest_schema=STAGE01_MANIFEST_SCHEMA,
+        output_root=output_root,
+        source_identity=source_identity,
+        rows=rows,
+        diagnostic_rows=diagnostic_rows,
+        memory=memory,
+        lifecycle=lifecycle,
+        cleanup=cleanup,
+    )
+
+
+def _assemble_validated_bundle(
+    *,
+    protocol,
+    manifest_schema,
+    output_root,
+    source_identity,
+    rows,
+    diagnostic_rows,
+    memory,
+    lifecycle,
+    cleanup,
+):
+    stage01 = protocol == "completion-owned-stage01"
+    if protocol not in {"lease-sealed-stage0", "completion-owned-stage01"}:
+        raise ValueError("assembly protocol is invalid")
     output_root = Path(output_root).resolve()
     if output_root.exists() and any(output_root.iterdir()):
         raise ValueError("output root must be empty")
     output_root.mkdir(parents=True, exist_ok=True)
-    source = _validate_source_identity(source_identity)
+    source = _validate_source_identity(
+        source_identity,
+        (
+            "tp4-completion-owned-overlap-source.v2"
+            if stage01
+            else "lease-sealed-state-commit-overlap-source.v1"
+        ),
+    )
     _require_finite(
         {
             "source": source,
             "rows": rows,
+            "diagnostic_rows": diagnostic_rows,
             "memory": memory,
             "lifecycle": lifecycle,
             "cleanup": cleanup,
@@ -335,7 +412,25 @@ def assemble_bundle(
     for raw in rows:
         if any(raw.get(key) != value for key, value in identity.items()):
             raise ValueError("measurement identity is invalid")
-        validated_rows.append(validate_measurement_row(raw))
+        validated_rows.append(
+            (
+                validate_stage01_measurement_row
+                if stage01
+                else validate_measurement_row
+            )(raw)
+        )
+    validated_diagnostics = []
+    if stage01:
+        for raw in (
+            diagnostic_rows
+            if isinstance(diagnostic_rows, (list, tuple))
+            else ()
+        ):
+            if any(raw.get(key) != value for key, value in identity.items()):
+                raise ValueError("diagnostic identity is invalid")
+            validated_diagnostics.append(
+                validate_stage01_diagnostic_row(raw)
+            )
     _validate_identity(lifecycle, identity, "lifecycle")
     _validate_identity(cleanup, identity, "cleanup")
 
@@ -368,7 +463,16 @@ def assemble_bundle(
     ):
         raise ValueError("cleanup identity is invalid")
 
-    classification = classify_stage0(validated_rows, memory, cleanup)
+    classification = (
+        classify_stage01(
+            validated_rows,
+            validated_diagnostics,
+            memory,
+            cleanup,
+        )
+        if stage01
+        else classify_stage0(validated_rows, memory, cleanup)
+    )
     source_manifest = {
         "schema_version": source["schema_version"],
         **identity,
@@ -405,6 +509,17 @@ def assemble_bundle(
         "output_dtype": "bfloat16",
         "state_dtype": "bfloat16",
     }
+    if stage01:
+        workload_manifest.update({
+            "protocol": "completion-owned-stage01",
+            "diagnostic_iteration_count": DIAGNOSTIC_ITERATION_COUNT,
+            "formal_arms": ["baseline", "completion_owned"],
+            "diagnostic_arms": [
+                "baseline",
+                "event_only",
+                "completion_owned",
+            ],
+        })
     admission = {
         "schema_version": (
             "lease-sealed-state-commit-overlap-admission.v1"
@@ -412,39 +527,66 @@ def assemble_bundle(
         **identity,
         **source["admission"],
     }
-    correctness_fields = (
+    common_fields = (
         "attempt",
         "source_revision",
         "source_tree_sha256",
         "active_tokens",
         "pair_index",
         "rank",
-        "reduced_output_exact",
-        "final_output_exact",
-        "shadow_payload_exact",
-        "active_state_preserved_before_publish",
-        "published_state_exact",
-        "abort_preserved_old_state",
-        "commit_identity_match",
-        "finite_output",
-        "timed_out",
     )
-    overlap_fields = (
-        "attempt",
-        "source_revision",
-        "source_tree_sha256",
-        "active_tokens",
-        "pair_index",
-        "rank",
-        "allreduce_interval_ns",
-        "state_copy_interval_ns",
-        "overlap_intersection_ns",
+    correctness_fields = common_fields + (
+        (
+            "expected_reduced_exact",
+            "baseline_reduced_exact",
+            "candidate_reduced_exact",
+            "baseline_final_exact",
+            "candidate_final_exact",
+            "baseline_candidate_exact",
+            "shadow_payload_exact",
+            "active_state_preserved_before_publish",
+            "published_state_exact",
+            "abort_preserved_old_state",
+            "commit_identity_match",
+            "collective_wait_invoked",
+            "collective_dependency_transferred",
+            "side_effect_dependency_joined",
+            "finite_output",
+            "timed_out",
+        )
+        if stage01
+        else (
+            "reduced_output_exact",
+            "final_output_exact",
+            "shadow_payload_exact",
+            "active_state_preserved_before_publish",
+            "published_state_exact",
+            "abort_preserved_old_state",
+            "commit_identity_match",
+            "finite_output",
+            "timed_out",
+        )
+    )
+    overlap_fields = common_fields + (
+        (
+            "collective_outstanding_window_ns",
+            "side_effect_window_ns",
+            "overlap_intersection_ns",
+        )
+        if stage01
+        else (
+            "allreduce_interval_ns",
+            "state_copy_interval_ns",
+            "overlap_intersection_ns",
+        )
     )
     emitted_lifecycle = [{**identity, **row} for row in lifecycle_rows]
     emitted_memory = [{**identity, **row} for row in memory_rows]
     producer = {
         "schema_version": (
-            "lease-sealed-state-commit-overlap-producer-result.v1"
+            "tp4-completion-owned-overlap-producer-result.v2"
+            if stage01
+            else "lease-sealed-state-commit-overlap-producer-result.v1"
         ),
         "classification": classification["classification"],
         "stage1_authorized": classification["stage1_authorized"],
@@ -452,6 +594,10 @@ def assemble_bundle(
         "measurement_row_count": classification["measurement_row_count"],
         "shape_summaries": classification["shape_summaries"],
     }
+    if stage01:
+        producer["diagnostic_row_count"] = classification[
+            "diagnostic_row_count"
+        ]
 
     _write_json(output_root / "source_manifest.json", source_manifest)
     _write_json(
@@ -461,6 +607,11 @@ def assemble_bundle(
     _write_json(output_root / "gpu_rank_manifest.json", gpu_rank_manifest)
     _write_json(output_root / "workload_manifest.json", workload_manifest)
     _write_json(output_root / "admission.json", admission)
+    if stage01:
+        _write_jsonl(
+            output_root / "diagnostic_rows.jsonl",
+            validated_diagnostics,
+        )
     _write_jsonl(output_root / "paired_rows.jsonl", validated_rows)
     _write_jsonl(
         output_root / "correctness_rows.jsonl",
@@ -485,9 +636,22 @@ def assemble_bundle(
         },
     )
     _write_json(output_root / "producer_result.json", producer)
-    _write_text(output_root / "report.md", _report(producer))
-    _write_manifest(output_root)
-    if {path.name for path in output_root.iterdir()} != PRODUCER_ARTIFACTS:
+    _write_text(
+        output_root / "report.md",
+        _report(
+            producer,
+            (
+                "TP4 Completion-Owned Overlap Stage-0.1"
+                if stage01
+                else "Lease-Sealed State-Commit / AllReduce Overlap Stage-0"
+            ),
+        ),
+    )
+    _write_manifest(output_root, manifest_schema)
+    expected_artifacts = (
+        STAGE01_PRODUCER_ARTIFACTS if stage01 else PRODUCER_ARTIFACTS
+    )
+    if {path.name for path in output_root.iterdir()} != expected_artifacts:
         raise RuntimeError("producer artifact inventory is incomplete")
     return producer
 
@@ -513,14 +677,24 @@ def assemble_raw_attempt(
     lifecycle.update(_identity(source))
     cleanup = _load_json(raw_root / "cleanup.json")
     cleanup.update(_identity(source))
-    return assemble_bundle(
-        output_root=output_root,
-        source_identity=source,
-        rows=_load_jsonl(raw_root / "measurement_rows.jsonl"),
-        memory=_load_json(raw_root / "memory.json"),
-        lifecycle=lifecycle,
-        cleanup=cleanup,
-    )
+    common = {
+        "output_root": output_root,
+        "source_identity": source,
+        "rows": _load_jsonl(raw_root / "measurement_rows.jsonl"),
+        "memory": _load_json(raw_root / "memory.json"),
+        "lifecycle": lifecycle,
+        "cleanup": cleanup,
+    }
+    if source.get("schema_version") == (
+        "tp4-completion-owned-overlap-source.v2"
+    ):
+        return assemble_stage01_bundle(
+            diagnostic_rows=_load_jsonl(
+                raw_root / "diagnostic_rows.jsonl"
+            ),
+            **common,
+        )
+    return assemble_bundle(**common)
 
 
 def build_argument_parser():

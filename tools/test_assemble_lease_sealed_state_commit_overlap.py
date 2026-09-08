@@ -10,13 +10,17 @@ import pytest
 
 from tools.assemble_lease_sealed_state_commit_overlap import (
     PRODUCER_ARTIFACTS,
+    STAGE01_PRODUCER_ARTIFACTS,
     _load_json,
     assemble_raw_attempt,
+    assemble_stage01_bundle,
     assemble_bundle,
 )
 from tools.test_lease_sealed_state_commit_overlap import (
     passing_memory,
     passing_rows,
+    passing_stage01_diagnostics,
+    passing_stage01_rows,
 )
 
 
@@ -129,6 +133,38 @@ def passing_inputs():
     }
 
 
+def passing_stage01_inputs():
+    inputs = passing_inputs()
+    identity = {
+        "attempt": "20260908-tp4-completion-owned-overlap-stage01-r1",
+        "source_revision": "c" * 40,
+        "source_tree_sha256": "d" * 64,
+    }
+    inputs["source_identity"].update(identity)
+    inputs["source_identity"]["schema_version"] = (
+        "tp4-completion-owned-overlap-source.v2"
+    )
+    inputs["lifecycle"].update(identity)
+    inputs["cleanup"].update(identity)
+    inputs["rows"] = passing_stage01_rows()
+    for row in inputs["rows"]:
+        row.update(identity)
+    inputs["diagnostic_rows"] = passing_stage01_diagnostics()
+    for row in inputs["diagnostic_rows"]:
+        row.update(identity)
+    for row in inputs["lifecycle"]["rank_rows"]:
+        row.update({
+            "collective_wait_invoked": True,
+            "collective_dependency_transferred": True,
+            "side_effect_dependency_joined": True,
+        })
+    return inputs
+
+
+def clone_stage01_inputs():
+    return copy.deepcopy(passing_stage01_inputs())
+
+
 def test_assembler_writes_complete_manifested_go_bundle(tmp_path):
     result = assemble_bundle(output_root=tmp_path, **passing_inputs())
 
@@ -143,6 +179,71 @@ def test_assembler_writes_complete_manifested_go_bundle(tmp_path):
     )
     assert producer["stage1_authorized"] is True
     assert producer["measurement_row_count"] == 180
+
+
+def test_stage01_assembler_writes_diagnostic_and_formal_bundle(tmp_path):
+    result = assemble_stage01_bundle(
+        output_root=tmp_path,
+        **passing_stage01_inputs(),
+    )
+
+    assert result["classification"] == (
+        "GO_COMPLETION_OWNED_OVERLAP_MICROGATE"
+    )
+    assert result["stage1_authorized"] is True
+    assert result["measurement_row_count"] == 180
+    assert result["diagnostic_row_count"] == 180
+    assert {path.name for path in tmp_path.iterdir()} == set(
+        STAGE01_PRODUCER_ARTIFACTS
+    )
+    workload = json.loads(
+        (tmp_path / "workload_manifest.json").read_text()
+    )
+    assert workload["protocol"] == "completion-owned-stage01"
+    assert workload["formal_arms"] == ["baseline", "completion_owned"]
+    assert workload["diagnostic_arms"] == [
+        "baseline",
+        "event_only",
+        "completion_owned",
+    ]
+
+
+def test_stage01_assembler_classifies_missing_diagnostic_as_inconclusive(
+    tmp_path,
+):
+    inputs = passing_stage01_inputs()
+    inputs["diagnostic_rows"].pop()
+
+    result = assemble_stage01_bundle(output_root=tmp_path, **inputs)
+
+    assert result["classification"] == (
+        "INCONCLUSIVE_ENVIRONMENT_OR_MEASUREMENT"
+    )
+    assert result["stage1_authorized"] is False
+
+
+def test_stage01_assembler_rejects_identity_nan_and_nonempty_output(tmp_path):
+    inputs = passing_stage01_inputs()
+    inputs["rows"][0]["attempt"] = "different-attempt"
+    with pytest.raises(ValueError, match="identity"):
+        assemble_stage01_bundle(
+            output_root=tmp_path / "identity",
+            **inputs,
+        )
+
+    inputs = passing_stage01_inputs()
+    inputs["rows"][0]["candidate_critical_ns"] = float("nan")
+    with pytest.raises(ValueError, match="finite"):
+        assemble_stage01_bundle(output_root=tmp_path / "nan", **inputs)
+
+    occupied = tmp_path / "occupied"
+    occupied.mkdir()
+    (occupied / "existing").write_text("occupied")
+    with pytest.raises(ValueError, match="must be empty"):
+        assemble_stage01_bundle(
+            output_root=occupied,
+            **passing_stage01_inputs(),
+        )
 
 
 def test_assembler_rejects_nonempty_output_identity_drift_and_nan(tmp_path):
@@ -249,6 +350,53 @@ def test_raw_attempt_includes_runtime_capabilities_in_environment(tmp_path):
         (output_root / "environment_manifest.json").read_text()
     )
     assert environment["runtime_capabilities"] == capabilities
+
+
+def test_raw_attempt_dispatches_stage01_and_loads_diagnostics(tmp_path):
+    inputs = passing_stage01_inputs()
+    raw_root = tmp_path / "raw"
+    raw_root.mkdir()
+    source_path = tmp_path / "source.json"
+    admission_path = tmp_path / "admission.json"
+    output_root = tmp_path / "bundle"
+    source = inputs["source_identity"]
+    admission = source.pop("admission")
+    source_path.write_text(json.dumps(source))
+    admission_path.write_text(json.dumps(admission))
+    (raw_root / "measurement_rows.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in inputs["rows"])
+    )
+    (raw_root / "diagnostic_rows.jsonl").write_text(
+        "".join(
+            json.dumps(row) + "\n"
+            for row in inputs["diagnostic_rows"]
+        )
+    )
+    (raw_root / "memory.json").write_text(json.dumps(inputs["memory"]))
+    (raw_root / "lifecycle.json").write_text(
+        json.dumps(inputs["lifecycle"])
+    )
+    (raw_root / "cleanup.json").write_text(json.dumps(inputs["cleanup"]))
+    capabilities = inputs["source_identity"]["environment"][
+        "runtime_capabilities"
+    ]
+    (raw_root / "runtime_capabilities.json").write_text(
+        json.dumps(capabilities)
+    )
+
+    result = assemble_raw_attempt(
+        raw_root=raw_root,
+        source_identity_path=source_path,
+        admission_path=admission_path,
+        output_root=output_root,
+    )
+
+    assert result["classification"] == (
+        "GO_COMPLETION_OWNED_OVERLAP_MICROGATE"
+    )
+    assert len(
+        (output_root / "diagnostic_rows.jsonl").read_text().splitlines()
+    ) == 180
 
 
 def test_assembler_rejects_runtime_gpu_uuid_drift(tmp_path):
