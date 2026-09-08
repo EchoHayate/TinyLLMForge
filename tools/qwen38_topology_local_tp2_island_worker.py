@@ -1083,7 +1083,8 @@ def build_state_migration_record(
         raise ValueError("migration counters must be non-negative integers")
     if temporary_allocated_bytes_after_release != 0:
         raise RuntimeError(
-            "migration temporary allocation survived steady timing"
+            "migration temporary allocation survived steady timing: "
+            f"{temporary_allocated_bytes_after_release} bytes"
         )
     for name, digest in (
         ("source_digest", source_digest),

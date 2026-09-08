@@ -683,7 +683,7 @@ def test_migration_record_requires_release_before_steady_timing():
         "temporary_released_before_timing",
     }
 
-    with pytest.raises(RuntimeError, match="temporary"):
+    with pytest.raises(RuntimeError, match="1 bytes"):
         worker.build_state_migration_record(
             **{
                 **record,
