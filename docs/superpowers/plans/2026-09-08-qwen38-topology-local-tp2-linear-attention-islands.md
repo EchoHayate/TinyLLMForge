@@ -475,9 +475,17 @@ class LogicalTP2LinearAttentionView:
     output_input_range: tuple[int, int]
     pair_group: object
     qkv_weight: torch.Tensor
+    qkv_weight_segments: tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]
     z_weight: torch.Tensor
+    z_weight_half: torch.Tensor
     b_weight: torch.Tensor
+    b_weight_half: torch.Tensor
     a_weight: torch.Tensor
+    a_weight_half: torch.Tensor
     conv_weight: torch.Tensor
     A_log: torch.Tensor
     dt_bias: torch.Tensor
@@ -491,6 +499,8 @@ Construct the candidate view before warmup:
 - select key heads `[0:8]` or `[8:16]`;
 - select value heads `[0:24]` or `[24:48]`;
 - preserve Q/K/V segment order when slicing fused QKV weights;
+- retain zero-copy row views for the selected Q/K/V, Z, A, and B projection
+  weights so the candidate computes only its logical TP2 half;
 - materialize the matching contiguous FP32 output-projection input-column
   half;
 - keep all parameters immutable; and
@@ -518,10 +528,13 @@ def run_candidate_mixer(
     *,
     view,
 ):
-    qkv = F.linear(hidden, view.qkv_weight)
-    z = F.linear(hidden, view.z_weight)
-    b = F.linear(hidden, view.b_weight)
-    a = F.linear(hidden, view.a_weight)
+    qkv = torch.cat(tuple(
+        F.linear(hidden, weight)
+        for weight in view.qkv_weight_segments
+    ), dim=-1)
+    z = F.linear(hidden, view.z_weight_half)
+    b = F.linear(hidden, view.b_weight_half)
+    a = F.linear(hidden, view.a_weight_half)
     convolved, next_convolution = qwen35_causal_depthwise_conv(
         qkv, convolution_state, view.conv_weight
     )
@@ -618,6 +631,11 @@ logical half on both replicas. Record:
     "candidate_digest": candidate_digest,
 }
 ```
+
+Synchronize the four participating ranks immediately before the migration
+start event. This barrier is outside the measured migration interval and
+prevents prior per-rank digest/GC work from contaminating the collective
+latency. It is not permitted inside the candidate steady-state timed path.
 
 Allocate an exact-size persistent reservation for the unmeasured 47
 linear-attention output-projection increments and all capacity-eight state

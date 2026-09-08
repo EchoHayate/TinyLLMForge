@@ -267,9 +267,18 @@ logical_parallel_size = 2
 logical_parallel_rank = global_rank % 2
 ```
 
-The complete projection is computed using the existing weight. The selected
-output slice is the corresponding half rather than the current global TP4
-quarter.
+The candidate retains the existing complete checkpoint weights, but computes
+only the rows belonging to its logical TP2 half. Q, K, and V use three
+zero-copy row views so their fused segment order remains exact; Z, A, and B
+use one contiguous row range each. The views are created before warmup and do
+not add persistent parameter storage. The current global TP4 quarter remains
+the baseline.
+
+Computing the complete projection and discarding the unused half is rejected:
+it preserves correctness but spends nearly twice the required input-projection
+FLOPs and weakens the small-token communication benefit. Materializing fused
+TP2 copies is also rejected because its per-layer persistent memory cost would
+invalidate the integrated memory budget.
 
 The logical view must not mutate the module's global TP identity or change the
 full-attention path.
@@ -408,6 +417,13 @@ ceil(median migration latency /
 
 If candidate per-token savings are non-positive, break-even is infinite and
 the candidate cannot pass.
+
+The isolated migration microbenchmark aligns all four ranks immediately
+before recording its start event. The alignment is outside the measured
+interval and prevents per-rank CPU digest and garbage-collection work from
+being misclassified as state-transfer latency. The measured interval still
+contains the complete state collectives, layout conversion, and retained
+candidate-state creation.
 
 ### 8.4 Lifecycle
 
