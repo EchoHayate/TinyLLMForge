@@ -41,6 +41,14 @@ class TopologyLocalTP2RankIdentity:
 
 
 @dataclass(frozen=True)
+class TopologyLocalTP2PairContext:
+    identity: TopologyLocalTP2RankIdentity
+    pair_map: "TopologyLocalTP2PairMap"
+    pair_group: object
+    all_pair_groups: tuple[object, object]
+
+
+@dataclass(frozen=True)
 class TopologyLocalTP2StateIdentity:
     request_id: int
     generation: int
@@ -100,6 +108,38 @@ class TopologyLocalTP2PairMap:
                     pair_ranks=pair_ranks,
                 )
         raise ValueError("global_rank is not present in pair_groups")
+
+
+def create_topology_local_tp2_pair_context(
+    distributed,
+    *,
+    global_rank: int,
+    world_size: int,
+    pair_map: TopologyLocalTP2PairMap,
+) -> TopologyLocalTP2PairContext:
+    if (
+        isinstance(world_size, bool)
+        or not isinstance(world_size, int)
+        or world_size != 4
+    ):
+        raise ValueError(
+            "topology-local TP2 pair context requires world_size 4"
+        )
+    if type(pair_map) is not TopologyLocalTP2PairMap:
+        raise ValueError(
+            "pair_map must be a TopologyLocalTP2PairMap"
+        )
+    identity = pair_map.identity(global_rank)
+    pair_groups = tuple(
+        distributed.new_group(ranks=list(pair_ranks))
+        for pair_ranks in pair_map.pair_groups
+    )
+    return TopologyLocalTP2PairContext(
+        identity=identity,
+        pair_map=pair_map,
+        pair_group=pair_groups[identity.pair_id],
+        all_pair_groups=pair_groups,
+    )
 
 
 def logical_half_bounds(

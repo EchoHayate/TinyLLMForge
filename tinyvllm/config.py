@@ -34,6 +34,7 @@ class Config:
     gpu_memory_utilization: float = 0.9                 #gpu利用率 可以用来确定实际 kv cache大小
     tensor_parallel_size: int = 1                       #并行计算gpu的个数
     enforce_eager: bool = False                         # True表示以即时执行模式推理，用于debug   false表示启用cuda graph  cuda graph开启后减少kernal launch时间 可用于吞吐量测试
+    qwen38_topology_local_tp2_islands: bool = False
     replay_aware_decode_metadata: bool = False
     zero_temperature_greedy_fast_path: bool = False
     graph_resident_greedy_tail: bool = False
@@ -198,6 +199,46 @@ class Config:
         assert os.path.isdir(self.model)
         assert self.kvcache_block_size % 256 == 0
         assert 1 <= self.tensor_parallel_size <= 8
+        if not isinstance(
+            self.qwen38_topology_local_tp2_islands,
+            bool,
+        ):
+            raise ValueError(
+                "qwen38_topology_local_tp2_islands must be a bool"
+            )
+        if self.qwen38_topology_local_tp2_islands:
+            if self.tensor_parallel_size != 4:
+                raise ValueError(
+                    "qwen38 topology-local TP2 islands requires "
+                    "tensor_parallel_size 4"
+                )
+            if not self.enforce_eager:
+                raise ValueError(
+                    "qwen38 topology-local TP2 islands requires "
+                    "eager execution"
+                )
+            incompatible = any((
+                self.qwen35_mtp_enabled,
+                self.autoregressive_draft_enabled,
+                self.multi_sequence_cuda_graphs,
+                self.prefill_cuda_graphs,
+                self.cpu_offload,
+                self.kv_offload_mvp0,
+                self.exact_greedy_decode_burst,
+                self.graph_resident_greedy_tail,
+                self.quantization is not None,
+                self.kv_quant_bits != 0,
+                self.act_quant_bits != 0,
+                self.smoothquant_scale_path is not None,
+                self.quest_top_k_blocks > 0,
+                self.kv_cartridge_blocks > 0,
+                self.am_compact_blocks > 0,
+            ))
+            if incompatible:
+                raise ValueError(
+                    "qwen38 topology-local TP2 islands is "
+                    "incompatible with the selected runtime mode"
+                )
         if not isinstance(
             self.replay_aware_decode_metadata,
             bool,
