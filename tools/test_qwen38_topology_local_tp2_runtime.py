@@ -1,4 +1,5 @@
 import __future__
+import ast
 import gc
 import importlib.util
 from pathlib import Path
@@ -13,6 +14,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "tinyvllm" / "config.py"
+LLM_ENGINE_PATH = ROOT / "tinyvllm/engine/llm_engine.py"
 
 for package_name in ("tinyvllm", "tinyvllm.engine"):
     package = types.ModuleType(package_name)
@@ -161,6 +163,35 @@ def _load_source_module(name, path):
     except Exception:
         sys.modules.pop(name, None)
         raise
+
+
+def _load_llm_engine_method(name):
+    tree = ast.parse(
+        LLM_ENGINE_PATH.read_text(encoding="utf-8"),
+        filename=str(LLM_ENGINE_PATH),
+    )
+    engine = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "LLMEngine"
+    )
+    method = next(
+        node
+        for node in engine.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == name
+    )
+    namespace = {}
+    exec(
+        compile(
+            ast.Module(body=[method], type_ignores=[]),
+            str(LLM_ENGINE_PATH),
+            "exec",
+        ),
+        namespace,
+    )
+    return namespace[name]
 
 
 def _load_real_config_class():
@@ -922,6 +953,102 @@ def test_runtime_snapshot_reports_installation_and_transition_state():
     assert before["transition_count"] == 0
     assert len(before["linear_layer_indices"]) == 48
     assert len(before["mixers"]) == 48
+
+
+def test_runtime_close_releases_state_and_both_pair_groups():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    leases = (
+        SimpleNamespace(slot_id=0, generation=1, request_id=10),
+    )
+    runtime.prepare_decode(leases)
+    destroyed = []
+    fake_torch.distributed = SimpleNamespace(
+        destroy_process_group=lambda group: destroyed.append(group),
+    )
+
+    receipt = runtime.close()
+
+    assert receipt == {
+        "pair_groups_destroyed": 2,
+        "candidate_state_released": True,
+        "published_generations_remaining": 0,
+        "temporary_live_tensors": 0,
+    }
+    assert destroyed == ["pair-a", "pair-b"]
+    assert runtime.candidate_state_owner.releases == [leases]
+
+
+def test_engine_collects_rank_complete_qwen38_runtime_snapshots():
+    snapshots = _load_llm_engine_method(
+        "qwen38_topology_local_tp2_snapshots"
+    )
+    calls = []
+    rows = tuple({
+        "schema_version":
+            "qwen38.topology-local-tp2-runtime-snapshot.v1",
+        "rank": rank,
+        "enabled": True,
+    } for rank in range(4))
+
+    def acknowledged(method_name, *, timeout_s):
+        calls.append((method_name, timeout_s))
+        return rows[0], tuple(
+            SimpleNamespace(rank=rank, result=rows[rank])
+            for rank in range(1, 4)
+        )
+
+    engine = SimpleNamespace(
+        model_runner=SimpleNamespace(world_size=4),
+        call_model_runner_acknowledged=acknowledged,
+    )
+
+    assert snapshots(engine, timeout_s=12.5) == rows
+    assert calls == [(
+        "qwen38_topology_local_tp2_snapshot",
+        12.5,
+    )]
+
+
+@pytest.mark.parametrize(
+    "worker_acks",
+    (
+        (
+            SimpleNamespace(rank=1, result={"rank": 1}),
+            SimpleNamespace(rank=1, result={"rank": 1}),
+            SimpleNamespace(rank=3, result={"rank": 3}),
+        ),
+        (
+            SimpleNamespace(rank=1, result={"rank": 2}),
+            SimpleNamespace(rank=2, result={"rank": 2}),
+            SimpleNamespace(rank=3, result={"rank": 3}),
+        ),
+    ),
+)
+def test_engine_rejects_invalid_qwen38_snapshot_rank_inventory(
+    worker_acks,
+):
+    snapshots = _load_llm_engine_method(
+        "qwen38_topology_local_tp2_snapshots"
+    )
+    engine = SimpleNamespace(
+        model_runner=SimpleNamespace(world_size=4),
+        call_model_runner_acknowledged=lambda *_args, **_kwargs: (
+            {"rank": 0},
+            worker_acks,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="rank"):
+        snapshots(engine, timeout_s=1.0)
 
 
 def test_logical_tp2_view_selects_exact_checkpoint_halves():

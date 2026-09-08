@@ -903,6 +903,39 @@ class LLMEngine:
             for acknowledgement in worker_acks
         )
 
+    def qwen38_topology_local_tp2_snapshots(self, timeout_s):
+        local_result, worker_acks = (
+            self.call_model_runner_acknowledged(
+                "qwen38_topology_local_tp2_snapshot",
+                timeout_s=timeout_s,
+            )
+        )
+        ranked = [(0, local_result)]
+        ranked.extend(
+            (ack.rank, ack.result)
+            for ack in worker_acks
+        )
+        rows = {}
+        for outer_rank, row in ranked:
+            if (
+                isinstance(outer_rank, bool)
+                or not isinstance(outer_rank, int)
+                or not isinstance(row, dict)
+                or outer_rank in rows
+                or row.get("rank") != outer_rank
+            ):
+                raise ValueError(
+                    "Qwen3.8 topology-local TP2 snapshot rank mismatch"
+                )
+            rows[outer_rank] = dict(row)
+        expected = tuple(range(self.model_runner.world_size))
+        if tuple(sorted(rows)) != expected:
+            raise ValueError(
+                "Qwen3.8 topology-local TP2 snapshot rank "
+                "inventory mismatch"
+            )
+        return tuple(rows[rank] for rank in expected)
+
     def begin_command_timeline_repeat(
         self,
         repeat_index,

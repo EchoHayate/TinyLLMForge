@@ -292,6 +292,12 @@ def _load_model_runner_module():
     original_torch_distributed = sys.modules.get(
         "torch.distributed"
     )
+    original_qwen38_runtime = sys.modules.get(
+        "tinyvllm.engine.qwen38_topology_local_tp2_runtime"
+    )
+    original_topology_local_tp2 = sys.modules.get(
+        "tinyvllm.engine.topology_local_tp2_island"
+    )
 
     @dataclass(frozen=True)
     class HybridStateLease:
@@ -458,6 +464,23 @@ def _load_model_runner_module():
         ),
     )
     _install_module(
+        "tinyvllm.engine.qwen38_topology_local_tp2_runtime",
+        install_qwen38_topology_local_tp2_runtime=(
+            lambda *args, **kwargs: None
+        ),
+    )
+    _install_module(
+        "tinyvllm.engine.topology_local_tp2_island",
+        TopologyLocalTP2PairMap=type(
+            "TopologyLocalTP2PairMap",
+            (),
+            {},
+        ),
+        create_topology_local_tp2_pair_context=(
+            lambda *args, **kwargs: None
+        ),
+    )
+    _install_module(
         "tinyvllm.engine.qwen35_hybrid_model_publication",
         Qwen35HybridModelOwnerPublicationSlot=type(
             "Qwen35HybridModelOwnerPublicationSlot",
@@ -599,6 +622,24 @@ def _load_model_runner_module():
         sys.modules[
             "torch.distributed"
         ] = original_torch_distributed
+    if original_qwen38_runtime is None:
+        sys.modules.pop(
+            "tinyvllm.engine.qwen38_topology_local_tp2_runtime",
+            None,
+        )
+    else:
+        sys.modules[
+            "tinyvllm.engine.qwen38_topology_local_tp2_runtime"
+        ] = original_qwen38_runtime
+    if original_topology_local_tp2 is None:
+        sys.modules.pop(
+            "tinyvllm.engine.topology_local_tp2_island",
+            None,
+        )
+    else:
+        sys.modules[
+            "tinyvllm.engine.topology_local_tp2_island"
+        ] = original_topology_local_tp2
     return model_runner, context_module
 
 
@@ -855,6 +896,209 @@ def make_runner(**overrides):
         )
     )
     return runner
+
+
+def _qwen38_candidate_sequence(
+    sequence_id,
+    slot_id,
+    *,
+    generation=1,
+):
+    return SimpleNamespace(
+        seq_id=sequence_id,
+        hybrid_state_slot_id=slot_id,
+        hybrid_state_generation=generation,
+    )
+
+
+class _Qwen38CandidateRuntime:
+    def __init__(self):
+        self.prepare_calls = []
+
+    def prepare_decode(self, leases):
+        self.prepare_calls.append(leases)
+        return {"transition": len(self.prepare_calls)}
+
+    def snapshot(self):
+        return {
+            "schema_version":
+                "qwen38.topology-local-tp2-runtime-snapshot.v1",
+            "enabled": True,
+            "rank": 0,
+        }
+
+
+def _qwen38_transition_runner():
+    runner = make_runner()
+    runner.qwen38_topology_local_tp2_runtime = (
+        _Qwen38CandidateRuntime()
+    )
+    runner._qwen38_topology_local_tp2_decode_prepared = False
+    runner._qwen38_topology_local_tp2_request_ids = ()
+    runner.hybrid_state_runtime_bridge = SimpleNamespace(
+        prepare_batch=lambda released, active: tuple(
+            lease.slot_id for lease in active
+        ),
+    )
+    return runner
+
+
+def test_qwen38_candidate_transitions_once_for_fixed_decode_cohort():
+    runner = _qwen38_transition_runner()
+    seqs = [
+        _qwen38_candidate_sequence(10, 0),
+        _qwen38_candidate_sequence(11, 1),
+    ]
+
+    runner._prepare_hybrid_state_batch(seqs, ())
+    first = runner._prepare_qwen38_topology_local_tp2_decode(
+        seqs,
+        is_prefill=False,
+    )
+    second = runner._prepare_qwen38_topology_local_tp2_decode(
+        seqs,
+        is_prefill=False,
+    )
+
+    assert first == {"transition": 1}
+    assert second is None
+    assert len(
+        runner.qwen38_topology_local_tp2_runtime.prepare_calls
+    ) == 1
+    assert (
+        runner.qwen38_topology_local_tp2_runtime.prepare_calls[0]
+        == runner._last_hybrid_state_leases
+    )
+
+
+def test_qwen38_candidate_prefill_never_transitions():
+    runner = _qwen38_transition_runner()
+    seqs = [_qwen38_candidate_sequence(10, 0)]
+    runner._prepare_hybrid_state_batch(seqs, ())
+
+    assert runner._prepare_qwen38_topology_local_tp2_decode(
+        seqs,
+        is_prefill=True,
+    ) is None
+    assert (
+        runner.qwen38_topology_local_tp2_runtime.prepare_calls
+        == []
+    )
+
+
+def test_qwen38_candidate_rejects_changed_cohort_after_activation():
+    runner = _qwen38_transition_runner()
+    first = [_qwen38_candidate_sequence(10, 0)]
+    runner._prepare_hybrid_state_batch(first, ())
+    runner._prepare_qwen38_topology_local_tp2_decode(
+        first,
+        is_prefill=False,
+    )
+    changed = [_qwen38_candidate_sequence(11, 1)]
+    runner._prepare_hybrid_state_batch(changed, ())
+
+    with pytest.raises(
+        RuntimeError,
+        match="fixed candidate cohort changed",
+    ):
+        runner._prepare_qwen38_topology_local_tp2_decode(
+            changed,
+            is_prefill=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("batch_kind", "released", "message"),
+    (
+        ("mixed", (), "mixed"),
+        (
+            None,
+            (
+                model_runner.HybridStateLease(
+                    slot_id=2,
+                    generation=1,
+                    request_id=12,
+                ),
+            ),
+            "released leases",
+        ),
+    ),
+)
+def test_qwen38_candidate_rejects_mixed_or_releasing_decode_batch(
+    batch_kind,
+    released,
+    message,
+):
+    runner = _qwen38_transition_runner()
+    seqs = [_qwen38_candidate_sequence(10, 0)]
+    runner._prepare_hybrid_state_batch(
+        seqs,
+        released,
+        batch_kind=batch_kind,
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        runner._prepare_qwen38_topology_local_tp2_decode(
+            seqs,
+            is_prefill=False,
+        )
+    assert (
+        runner.qwen38_topology_local_tp2_runtime.prepare_calls
+        == []
+    )
+
+
+def test_qwen38_candidate_transition_precedes_model_input_and_forward():
+    source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
+    method_start = source.index("    def _run_model_step(")
+    method = source[
+        method_start:
+        source.index(
+            "    def configure_decode_internal_profile(",
+            method_start,
+        )
+    ]
+
+    transition = method.index(
+        "self._prepare_qwen38_topology_local_tp2_decode("
+    )
+    assert transition > method.index(
+        "self._prepare_hybrid_state_batch("
+    )
+    assert transition < method.index("self.prepare_decode(seqs)")
+    assert transition < method.index("self.run_model(")
+
+
+def test_qwen38_runtime_snapshot_is_management_command_and_ranked():
+    runner = _qwen38_transition_runner()
+
+    assert runner.qwen38_topology_local_tp2_snapshot() == {
+        "schema_version":
+            "qwen38.topology-local-tp2-runtime-snapshot.v1",
+        "enabled": True,
+        "rank": 0,
+    }
+
+    runner.qwen38_topology_local_tp2_runtime = None
+    assert runner.qwen38_topology_local_tp2_snapshot() == {
+        "schema_version":
+            "qwen38.topology-local-tp2-runtime-snapshot.v1",
+        "rank": 0,
+        "enabled": False,
+    }
+    source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
+    dispatch_start = source.index("    def dispatch_command(")
+    dispatch_source = source[
+        dispatch_start:
+        source.index(
+            "    def execute_command_envelope(",
+            dispatch_start,
+        )
+    ]
+    assert (
+        '"qwen38_topology_local_tp2_snapshot"'
+        in dispatch_source
+    )
 
 
 def _collective_census_policy_payload():
@@ -9719,6 +9963,47 @@ def test_model_runner_exit_releases_exact_graphs_before_process_group_shutdown()
     assert len(release_lines) == 1
     assert len(destroy_lines) == 1
     assert release_lines[0] < destroy_lines[0]
+
+
+def test_model_runner_exit_closes_qwen38_runtime_before_process_group_shutdown():
+    tree = ast.parse(open(_MODEL_RUNNER_PATH, encoding="utf-8").read())
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    exit_method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "exit"
+    )
+    close_lines = [
+        node.lineno
+        for node in ast.walk(exit_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "close"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "qwen38_runtime"
+    ]
+    destroy_lines = [
+        node.lineno
+        for node in ast.walk(exit_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "destroy_process_group"
+    ]
+    source = ast.get_source_segment(
+        open(_MODEL_RUNNER_PATH, encoding="utf-8").read(),
+        exit_method,
+    )
+
+    assert len(close_lines) == 1
+    assert len(destroy_lines) == 1
+    assert close_lines[0] < destroy_lines[0]
+    assert '"qwen38_topology_local_tp2_cleanup"' in source
 
 
 def test_replay_failure_publishes_terminal_event_before_reraising():

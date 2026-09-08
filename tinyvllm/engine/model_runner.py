@@ -2552,6 +2552,8 @@ class ModelRunner:
         self._last_hybrid_state_leases = ()
         self._last_hybrid_state_request_ids = ()
         self._last_hybrid_state_token_counts = ()
+        self._last_hybrid_state_released_leases = ()
+        self._last_hybrid_state_batch_kind = None
         self._last_exact_graph_program_key_sha256 = None
         self._last_exact_graph_invocation_identity_sha256 = None
         self._last_exact_graph_lease_manifest_sha256 = None
@@ -2582,6 +2584,8 @@ class ModelRunner:
                 initial_qwen35_owner
             )
         self.qwen38_topology_local_tp2_runtime = None
+        self._qwen38_topology_local_tp2_decode_prepared = False
+        self._qwen38_topology_local_tp2_request_ids = ()
         if config.qwen38_topology_local_tp2_islands:
             if self.qwen38_text_profile is None:
                 raise ValueError(
@@ -3898,6 +3902,14 @@ class ModelRunner:
         return self._last_step_logits_cpu.clone()
 
     def exit(self):
+        qwen38_cleanup_receipt = None
+        qwen38_runtime = getattr(
+            self,
+            "qwen38_topology_local_tp2_runtime",
+            None,
+        )
+        if qwen38_runtime is not None:
+            qwen38_cleanup_receipt = qwen38_runtime.close()
         draft_executor = getattr(
             self,
             "autoregressive_draft_executor",
@@ -3927,6 +3939,8 @@ class ModelRunner:
         return {
             "rank": self.rank,
             "process_group_destroyed": True,
+            "qwen38_topology_local_tp2_cleanup":
+                qwen38_cleanup_receipt,
         }
 
     def loop(self):         #在收到exit命令之前 子进程持续执行method_name方法
@@ -4064,6 +4078,7 @@ class ModelRunner:
             "configure_synchronous_collective_census",
             "reset_synchronous_collective_census",
             "finalize_synchronous_collective_census",
+            "qwen38_topology_local_tp2_snapshot",
         )
         if self.command_timeline.enabled and not management_method:
             trace_context = self._active_command_timeline_trace()
@@ -4213,6 +4228,22 @@ class ModelRunner:
             "kv_capacity_bytes": kv_bytes,
         }
 
+    def qwen38_topology_local_tp2_snapshot(self):
+        runtime = getattr(
+            self,
+            "qwen38_topology_local_tp2_runtime",
+            None,
+        )
+        if runtime is None:
+            return {
+                "schema_version": (
+                    "qwen38.topology-local-tp2-runtime-snapshot.v1"
+                ),
+                "rank": self.rank,
+                "enabled": False,
+            }
+        return runtime.snapshot()
+
     def reset_peak_memory_stats(self):
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
@@ -4222,6 +4253,7 @@ class ModelRunner:
         self,
         seqs: list[Sequence],
         released_leases: tuple[HybridStateLease, ...],
+        batch_kind: str | None = None,
     ):
         released_leases = tuple(released_leases)
         active_leases = []
@@ -4244,6 +4276,12 @@ class ModelRunner:
                 request_id=int(seq.seq_id),
             ))
         active_leases = tuple(active_leases)
+        self._last_hybrid_state_leases = active_leases
+        self._last_hybrid_state_request_ids = tuple(
+            int(seq.seq_id) for seq in seqs
+        )
+        self._last_hybrid_state_released_leases = released_leases
+        self._last_hybrid_state_batch_kind = batch_kind
         slot_ids = tuple(lease.slot_id for lease in active_leases)
         if len(set(slot_ids)) != len(slot_ids):
             rows = tuple(
@@ -4276,6 +4314,54 @@ class ModelRunner:
         )
         self._last_hybrid_state_slot_ids = slot_ids
         return slot_ids
+
+    def _prepare_qwen38_topology_local_tp2_decode(
+        self,
+        seqs,
+        *,
+        is_prefill,
+    ):
+        runtime = getattr(
+            self,
+            "qwen38_topology_local_tp2_runtime",
+            None,
+        )
+        if runtime is None or is_prefill:
+            return None
+        if self._last_hybrid_state_batch_kind == "mixed":
+            raise RuntimeError(
+                "topology-local TP2 decode rejects mixed batches"
+            )
+        if self._last_hybrid_state_released_leases:
+            raise RuntimeError(
+                "topology-local TP2 decode rejects released leases"
+            )
+        request_ids = tuple(int(seq.seq_id) for seq in seqs)
+        if request_ids != self._last_hybrid_state_request_ids:
+            raise RuntimeError(
+                "fixed candidate cohort changed before decode"
+            )
+        leases = self._last_hybrid_state_leases
+        if (
+            len(leases) != len(seqs)
+            or tuple(lease.request_id for lease in leases)
+            != request_ids
+        ):
+            raise RuntimeError(
+                "topology-local TP2 decode requires one active "
+                "lease per sequence"
+            )
+        if self._qwen38_topology_local_tp2_decode_prepared:
+            if (
+                request_ids
+                != self._qwen38_topology_local_tp2_request_ids
+            ):
+                raise RuntimeError("fixed candidate cohort changed")
+            return None
+        transition = runtime.prepare_decode(leases)
+        self._qwen38_topology_local_tp2_request_ids = request_ids
+        self._qwen38_topology_local_tp2_decode_prepared = True
+        return transition
 
     def release_hybrid_state(
         self,
@@ -12215,18 +12301,11 @@ class ModelRunner:
         self._prepare_hybrid_state_batch(
             seqs,
             released_hybrid_state_leases,
+            batch_kind=batch_kind,
         )
-        self._last_hybrid_state_leases = tuple(
-            HybridStateLease(
-                slot_id=seq.hybrid_state_slot_id,
-                generation=seq.hybrid_state_generation,
-                request_id=int(seq.seq_id),
-            )
-            for seq in seqs
-            if seq.hybrid_state_slot_id >= 0
-        )
-        self._last_hybrid_state_request_ids = tuple(
-            int(seq.seq_id) for seq in seqs
+        self._prepare_qwen38_topology_local_tp2_decode(
+            seqs,
+            is_prefill=is_prefill,
         )
         self._last_hybrid_state_token_counts = (
             _qwen35_step_token_counts(
