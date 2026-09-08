@@ -618,6 +618,63 @@ def test_source_staging_timeout_terminates_owned_archive_process(
     assert archive.waited is True
 
 
+def test_source_staging_retries_entire_pipeline_after_ssh_255(
+    tmp_path,
+    monkeypatch,
+):
+    class FakeArchive:
+        def __init__(self):
+            self.stdout = io.BytesIO(b"archive")
+            self.stderr = io.BytesIO()
+            self.waited = False
+
+        def wait(self, timeout=None):
+            self.waited = True
+            return 0
+
+    archives = []
+
+    def launch_archive(*_args, **_kwargs):
+        archive = FakeArchive()
+        archives.append(archive)
+        return archive
+
+    receivers = iter((
+        SimpleNamespace(
+            returncode=255,
+            stdout=b"",
+            stderr=b"Connection closed",
+        ),
+        SimpleNamespace(returncode=0, stdout=b"", stderr=b""),
+    ))
+    monkeypatch.setattr(
+        controller_module.subprocess,
+        "Popen",
+        launch_archive,
+    )
+    monkeypatch.setattr(
+        controller_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: next(receivers),
+    )
+
+    _stage_committed_source(
+        {
+            "source_revision": "a" * 40,
+            "source_root": "/data00/source",
+        },
+        repo_root=tmp_path,
+        ssh_target="host",
+        proxy_host="proxy",
+        retry_count=1,
+        timeout_s=1,
+    )
+
+    assert len(archives) == 2
+    assert all(archive.stdout.closed for archive in archives)
+    assert all(archive.waited for archive in archives)
+
+
 def test_cli_dry_run_is_forwarded_to_execution_gate(tmp_path, monkeypatch):
     clean = [gpu(index) for index in range(4)]
     captured = {}

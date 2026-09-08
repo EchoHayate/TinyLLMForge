@@ -495,52 +495,59 @@ def _stage_committed_source(
     repo_root,
     ssh_target,
     proxy_host,
+    retry_count=0,
     timeout_s,
 ):
-    archive = subprocess.Popen(
-        [
-            "git",
-            "-C",
-            str(Path(repo_root).resolve()),
-            "archive",
-            "--format=tar",
-            plan["source_revision"],
-            "tinyvllm",
-            "tools",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    assert archive.stdout is not None
-    try:
-        receiver = subprocess.run(
-            _ssh_argv(
-                ssh_target,
-                ["tar", "-xf", "-", "-C", plan["source_root"]],
-                proxy_host,
-            ),
-            stdin=archive.stdout,
-            text=False,
-            capture_output=True,
-            check=False,
-            timeout=timeout_s,
+    if type(retry_count) is not int or retry_count < 0:
+        raise ValueError("retry_count is invalid")
+    for attempt in range(retry_count + 1):
+        archive = subprocess.Popen(
+            [
+                "git",
+                "-C",
+                str(Path(repo_root).resolve()),
+                "archive",
+                "--format=tar",
+                plan["source_revision"],
+                "tinyvllm",
+                "tools",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-    except BaseException:
+        assert archive.stdout is not None
+        try:
+            receiver = subprocess.run(
+                _ssh_argv(
+                    ssh_target,
+                    ["tar", "-xf", "-", "-C", plan["source_root"]],
+                    proxy_host,
+                ),
+                stdin=archive.stdout,
+                text=False,
+                capture_output=True,
+                check=False,
+                timeout=timeout_s,
+            )
+        except BaseException:
+            archive.stdout.close()
+            try:
+                archive.terminate()
+            except ProcessLookupError:
+                pass
+            try:
+                archive.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                archive.kill()
+                archive.wait()
+            raise
         archive.stdout.close()
-        try:
-            archive.terminate()
-        except ProcessLookupError:
-            pass
-        try:
-            archive.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            archive.kill()
-            archive.wait()
-        raise
-    archive.stdout.close()
-    archive_stderr = archive.stderr.read() if archive.stderr else b""
-    archive_returncode = archive.wait()
-    if archive_returncode != 0 or receiver.returncode != 0:
+        archive_stderr = archive.stderr.read() if archive.stderr else b""
+        archive_returncode = archive.wait()
+        if archive_returncode == 0 and receiver.returncode == 0:
+            return
+        if receiver.returncode == 255 and attempt < retry_count:
+            continue
         raise RuntimeError(
             archive_stderr.decode(errors="replace")
             or receiver.stderr.decode(errors="replace")
@@ -601,6 +608,7 @@ def _create_remote_attempt(
         repo_root=repo_root,
         ssh_target=ssh_target,
         proxy_host=proxy_host,
+        retry_count=retry_count,
         timeout_s=timeout_s,
     )
     for payload, name in (
