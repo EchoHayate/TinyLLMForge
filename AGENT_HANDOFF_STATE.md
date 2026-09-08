@@ -53002,3 +53002,67 @@ checklist are recorded in:
 docs/superpowers/audits/
   2026-09-07-lease-sealed-state-commit-overlap-stage0-audit.md
 ```
+
+## 2026-09-08 TP4 Completion-Owned Overlap Stage-0.1
+
+```text
+Attempt:
+  20260908-tp4-completion-owned-overlap-stage01-r1
+Protocol:
+  completion-owned-stage01
+Source:
+  472d1cc84de8eea35fe55daab9ebf652100a5206
+Source tree SHA-256:
+  ef237c378f8ddfe17d06b4f74605c3736c29038798ed59c18aa66b2b35f2564e
+Producer classification:
+  NO_GO_PERFORMANCE
+Remote verifier:
+  PASS / NO_GO_PERFORMANCE
+Local verifier:
+  PASS / NO_GO_PERFORMANCE
+Post-seal check-only:
+  PASS / NO_GO_PERFORMANCE
+Cleanup:
+  CLEAN
+Stage-1 authorized:
+  false
+Evidence:
+  artifacts/lease_sealed_state_commit_overlap/20260908-tp4-completion-owned-overlap-stage01-r1/final_bundle
+Next action:
+  stop this mechanism and design a larger-granularity TP path
+```
+
+Completion ownership fixed the preceding asynchronous collective visibility
+defect: all 180 formal correctness rows and all 12 lifecycle rows passed. The
+unsafe event-only diagnostic reproduced 122 reduced-result failures and 119
+final-output failures, while the completion-owned diagnostic arm remained
+exact. Median realized overlap was 100% for active-token shapes 1, 4, and 8.
+
+The mechanism is nevertheless a frozen performance no-go. Median critical
+latency improved 9.044360% for active tokens 1 but regressed 28.670041% and
+10.280405% for active tokens 4 and 8. Their aggregate speedup was
+-19.120881%. Active-token 1 P99 regressed 206.975043%, and host submission
+regressed 99.162755% to 127.951833% across the shapes. The required 4/8-token
+directional counts also missed at 7/15 and 8/15.
+
+The exact post-seal verifier command is:
+
+```bash
+python3 tools/verify_lease_sealed_state_commit_overlap.py \
+  artifacts/lease_sealed_state_commit_overlap/20260908-tp4-completion-owned-overlap-stage01-r1/final_bundle \
+  --check-only
+```
+
+This is model-neutral microgate evidence, not Qwen3.8 end-to-end evidence.
+Qwen integration, model-transaction changes, and edits to
+`tinyvllm/layers/linear.py` remain prohibited. Preserve the immutable r1
+bundle and move only through a separately reviewed larger-granularity TP
+design.
+
+The complete terminal audit, benefit/cost tables, gate matrix, verifier chain,
+and prompt-to-artifact checklist are recorded in:
+
+```text
+docs/superpowers/audits/
+  2026-09-08-tp4-completion-owned-overlap-stage01-audit.md
+```
