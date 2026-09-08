@@ -144,6 +144,7 @@ def test_verifier_reconstructs_every_frozen_no_go(tmp_path, mutation):
         "model_drift",
         "candidate_global_collective",
         "fallback",
+        "temporary_tensor_live",
         "incomplete_cleanup",
         "parameter_reconstruction_mismatch",
     ),
@@ -168,6 +169,10 @@ def test_verifier_reconstructs_invalid_evidence(tmp_path, mutation):
         ] = 1
     elif mutation == "fallback":
         inputs["timing_rows"][0]["fallback_count"] = 1
+    elif mutation == "temporary_tensor_live":
+        inputs["migration_rows"][0][
+            "temporary_live_tensor_count_after_release"
+        ] = 1
     elif mutation == "incomplete_cleanup":
         inputs["cleanup"]["rank_rows"][0][
             "candidate_state_unpublished"

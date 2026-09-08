@@ -151,10 +151,7 @@ def assemble_logical_state_half(
         raise ValueError("state quarters must have compatible layouts")
     first = 2 * logical_rank
     selected = quarters[first:first + 2]
-    return torch.cat(
-        tuple(tensor.clone() for tensor in selected),
-        dim=0,
-    )
+    return torch.cat(selected, dim=0)
 
 
 def validate_state_publication(

@@ -612,6 +612,8 @@ logical half on both replicas. Record:
     "retained_bytes": retained_bytes,
     "temporary_peak_allocated_bytes": temporary_peak_allocated_bytes,
     "steady_allocated_bytes": steady_allocated_bytes,
+    "temporary_tensor_count": 8,
+    "temporary_live_tensor_count_after_release": 0,
     "source_digest": source_digest,
     "candidate_digest": candidate_digest,
 }
@@ -619,8 +621,12 @@ logical half on both replicas. Record:
 
 Allocate an exact-size persistent reservation for the unmeasured 47
 linear-attention output-projection increments and all capacity-eight state
-increments. Release migration temporaries, call
-`torch.cuda.reset_peak_memory_stats()`, and only then begin warmup.
+increments. Track all eight `all_gather` destination tensors with weak
+references, remove their strong references, synchronize, and require zero
+live temporary tensors. Keep allocator-observed steady bytes separate from
+logical retained bytes so CUDA allocation-bin padding cannot masquerade as a
+live temporary. Call `torch.cuda.reset_peak_memory_stats()` only after this
+release proof, and only then begin warmup.
 
 - [ ] **Step 6: Implement paired CUDA timing and untimed correctness**
 

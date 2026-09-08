@@ -110,6 +110,8 @@ def _migration_rows():
                 "retained_bytes": 2_000,
                 "temporary_peak_allocated_bytes": 4_000,
                 "steady_allocated_bytes": 2_000,
+                "temporary_tensor_count": 8,
+                "temporary_live_tensor_count_after_release": 0,
                 "temporary_allocated_bytes_after_release": 0,
                 "temporary_released_before_timing": True,
                 "source_digest": "c" * 64,
@@ -381,6 +383,7 @@ def test_assembler_enforces_frozen_boundaries(
         "model_drift",
         "candidate_global_collective",
         "fallback",
+        "temporary_tensor_live",
         "incomplete_cleanup",
         "parameter_reconstruction_mismatch",
     ),
@@ -405,6 +408,10 @@ def test_assembler_rejects_invalid_evidence(tmp_path, mutation):
         ] = 1
     elif mutation == "fallback":
         inputs["timing_rows"][0]["fallback_count"] = 1
+    elif mutation == "temporary_tensor_live":
+        inputs["migration_rows"][0][
+            "temporary_live_tensor_count_after_release"
+        ] = 1
     elif mutation == "incomplete_cleanup":
         inputs["cleanup"]["rank_rows"][0][
             "candidate_state_unpublished"

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import gc
 import importlib.util
 import inspect
 from pathlib import Path
 import sys
 import types
 from types import SimpleNamespace
+import weakref
 
 import pytest
 
@@ -690,6 +692,28 @@ def test_migration_record_requires_release_before_steady_timing():
                 "temporary_allocated_bytes_after_release": 1,
             }
         )
+
+
+def test_temporary_release_proof_uses_object_lifetime_not_allocator_padding():
+    worker = _load()
+
+    class Temporary:
+        pass
+
+    temporary = Temporary()
+    references = (weakref.ref(temporary),)
+    with pytest.raises(RuntimeError, match="1 live"):
+        worker.build_temporary_release_proof(references)
+
+    del temporary
+    gc.collect()
+
+    assert worker.build_temporary_release_proof(references) == {
+        "temporary_tensor_count": 1,
+        "temporary_live_tensor_count_after_release": 0,
+        "temporary_released_before_timing": True,
+        "temporary_allocated_bytes_after_release": 0,
+    }
 
 
 def test_campaign_rejects_missing_rank_and_path_escape(tmp_path):

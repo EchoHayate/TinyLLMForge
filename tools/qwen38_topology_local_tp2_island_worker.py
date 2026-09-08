@@ -21,6 +21,7 @@ import time
 import traceback
 from types import MappingProxyType
 from typing import Callable, Mapping
+import weakref
 
 from tinyvllm.engine.topology_local_tp2_island import (
     TopologyLocalTP2PairMap,
@@ -1111,6 +1112,34 @@ def build_state_migration_record(
     }
 
 
+def build_temporary_release_proof(references) -> dict:
+    try:
+        references = tuple(references)
+    except TypeError as error:
+        raise ValueError(
+            "temporary references must be iterable"
+        ) from error
+    if not references or any(
+        not isinstance(reference, weakref.ReferenceType)
+        for reference in references
+    ):
+        raise ValueError("temporary references are invalid")
+    live_count = sum(
+        reference() is not None for reference in references
+    )
+    if live_count:
+        raise RuntimeError(
+            "migration temporary tensors survived release: "
+            f"{live_count} live"
+        )
+    return {
+        "temporary_tensor_count": len(references),
+        "temporary_live_tensor_count_after_release": 0,
+        "temporary_released_before_timing": True,
+        "temporary_allocated_bytes_after_release": 0,
+    }
+
+
 def validate_complete_rank_rows(rows: list[dict]) -> tuple[dict, ...]:
     if not isinstance(rows, (list, tuple)):
         raise ValueError("rank rows must be a sequence")
@@ -1592,6 +1621,10 @@ def _migrate_state_once(
         torch.empty_like(local_recurrent)
         for _ in range(WORLD_SIZE)
     ]
+    temporary_references = tuple(
+        weakref.ref(tensor)
+        for tensor in (*convolution_quarters, *recurrent_quarters)
+    )
     started = torch.cuda.Event(enable_timing=True)
     completed = torch.cuda.Event(enable_timing=True)
     started.record()
@@ -1641,11 +1674,11 @@ def _migrate_state_once(
     del convolution_quarters
     del recurrent_quarters
     gc.collect()
-    after_release = int(torch.cuda.memory_allocated(device))
-    temporary_after_release = max(
-        0,
-        after_release - before_allocated - retained_bytes,
+    torch.cuda.synchronize(device)
+    release_proof = build_temporary_release_proof(
+        temporary_references
     )
+    after_release = int(torch.cuda.memory_allocated(device))
     record = build_state_migration_record(
         latency_ns=latency_ns,
         source_bytes=source_bytes,
@@ -1658,8 +1691,14 @@ def _migrate_state_once(
         steady_allocated_bytes=max(0, after_release - before_allocated),
         source_digest=source_digest,
         candidate_digest=candidate_digest,
-        temporary_allocated_bytes_after_release=temporary_after_release,
+        temporary_allocated_bytes_after_release=release_proof[
+            "temporary_allocated_bytes_after_release"
+        ],
+        temporary_released_before_timing=release_proof[
+            "temporary_released_before_timing"
+        ],
     )
+    record.update(release_proof)
     return (candidate_convolution, candidate_recurrent), record
 
 

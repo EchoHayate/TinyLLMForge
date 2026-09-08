@@ -364,6 +364,12 @@ The integrated candidate's calculated persistent increment is therefore:
 These are calculated logical sizes, not physical-memory evidence. The worker
 must report allocator-observed peak allocated and reserved bytes, including
 temporary migration storage and the measured-layer paired-arm overhead.
+Temporary-release proof is object-lifecycle based: the worker records weak
+references to all eight per-rank `all_gather` destination tensors, removes
+every strong reference, synchronizes the device, and requires zero live
+temporary tensors before warmup. Allocator-observed steady bytes remain a
+separate physical measurement because CUDA allocation bins need not equal the
+logical tensor byte count.
 
 ### 8.2 Prefill policy
 

@@ -344,6 +344,10 @@ def _validate_migration_rows(rows, identity):
             or row.get("repetition") not in range(15)
             or row.get("pair_id") != pair_id
             or row.get("logical_rank") != logical_rank
+            or row.get("temporary_tensor_count") != 8
+            or row.get(
+                "temporary_live_tensor_count_after_release"
+            ) != 0
         ):
             return False
         key = (row["repetition"], row["rank"])
