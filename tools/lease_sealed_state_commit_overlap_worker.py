@@ -512,10 +512,10 @@ def _merge_rank_artifacts(output_dir):
         json.loads(path.read_text(encoding="utf-8"))
         for path in memory_paths
     ]
-    lifecycle_rows = [
-        json.loads(path.read_text(encoding="utf-8"))
-        for path in lifecycle_paths
-    ]
+    lifecycle_rows = []
+    for path in lifecycle_paths:
+        rank_lifecycle = json.loads(path.read_text(encoding="utf-8"))
+        lifecycle_rows.extend(rank_lifecycle["shape_rows"])
     cleanup_rows = [
         json.loads(path.read_text(encoding="utf-8"))
         for path in cleanup_paths

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -20,6 +21,7 @@ for package_name in ("tinyvllm", "tinyvllm.engine"):
 
 from tools.lease_sealed_state_commit_overlap_worker import (
     OverlapBuffers,
+    _merge_rank_artifacts,
     _runtime_capability_row,
     _run_candidate,
     _tensor_digest,
@@ -249,3 +251,49 @@ def test_runtime_capability_uses_nvml_uuid_when_properties_omit_uuid(
     row = _runtime_capability_row(2, "cuda:2", torch, dist)
 
     assert row["device_uuid"] == "GPU-physical-6"
+
+
+def test_rank_artifact_merge_flattens_lifecycle_shape_rows(tmp_path):
+    for rank in range(4):
+        (tmp_path / f"measurement_rows.rank-{rank}.jsonl").write_text("")
+        (tmp_path / f"memory.rank-{rank}.json").write_text(
+            json.dumps({"rank": rank})
+        )
+        (tmp_path / f"lifecycle.rank-{rank}.json").write_text(
+            json.dumps({
+                "rank": rank,
+                "classification": "PASS",
+                "shape_rows": [
+                    {
+                        "rank": rank,
+                        "active_tokens": active_tokens,
+                        "commit_identity_match": True,
+                    }
+                    for active_tokens in (1, 4, 8)
+                ],
+            })
+        )
+        (tmp_path / f"cleanup.rank-{rank}.json").write_text(
+            json.dumps({
+                "rank": rank,
+                "process_group_destroyed": True,
+                "streams_released": True,
+                "events_released": True,
+                "timed_out": False,
+            })
+        )
+        (tmp_path / f"capability.rank-{rank}.json").write_text(
+            json.dumps({"rank": rank})
+        )
+
+    _merge_rank_artifacts(tmp_path)
+
+    lifecycle = json.loads((tmp_path / "lifecycle.json").read_text())
+    assert [
+        (row["rank"], row["active_tokens"])
+        for row in lifecycle["rank_rows"]
+    ] == [
+        (rank, active_tokens)
+        for rank in range(4)
+        for active_tokens in (1, 4, 8)
+    ]
