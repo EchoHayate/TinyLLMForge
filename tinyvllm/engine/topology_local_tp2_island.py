@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
+import torch
+
 
 _LINK_COST = {
     "PIX": 0,
@@ -36,6 +38,30 @@ class TopologyLocalTP2RankIdentity:
     pair_id: int
     logical_rank: int
     pair_ranks: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class TopologyLocalTP2StateIdentity:
+    request_id: int
+    generation: int
+    slot_id: int
+    layer_index: int
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("request_id", self.request_id),
+            ("generation", self.generation),
+            ("slot_id", self.slot_id),
+            ("layer_index", self.layer_index),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"{name} must be a non-negative integer"
+                )
 
 
 @dataclass(frozen=True)
@@ -97,6 +123,53 @@ def logical_half_bounds(
         raise ValueError("logical_rank must be zero or one")
     width = total_width // 2
     return logical_rank * width, width
+
+
+def assemble_logical_state_half(
+    quarters: tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ],
+    logical_rank: int,
+) -> torch.Tensor:
+    if not isinstance(quarters, tuple) or len(quarters) != 4:
+        raise ValueError("quarters must contain four tensors")
+    logical_half_bounds(4, logical_rank)
+    if any(not isinstance(tensor, torch.Tensor) for tensor in quarters):
+        raise ValueError("quarters must contain tensors")
+    reference = quarters[0]
+    if not reference.shape:
+        raise ValueError("state quarters must have at least one dimension")
+    if any(
+        tensor.shape != reference.shape
+        or tensor.dtype != reference.dtype
+        or tensor.device != reference.device
+        for tensor in quarters
+    ):
+        raise ValueError("state quarters must have compatible layouts")
+    first = 2 * logical_rank
+    selected = quarters[first:first + 2]
+    return torch.cat(
+        tuple(tensor.clone() for tensor in selected),
+        dim=0,
+    )
+
+
+def validate_state_publication(
+    source: TopologyLocalTP2StateIdentity,
+    candidate: TopologyLocalTP2StateIdentity,
+) -> None:
+    if (
+        type(source) is not TopologyLocalTP2StateIdentity
+        or type(candidate) is not TopologyLocalTP2StateIdentity
+    ):
+        raise ValueError(
+            "state publication identities must use the exact identity type"
+        )
+    if source != candidate:
+        raise RuntimeError("state publication identity mismatch")
 
 
 def select_best_pair_groups(

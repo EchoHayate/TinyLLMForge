@@ -1,3 +1,4 @@
+import dataclasses
 from pathlib import Path
 import sys
 import types
@@ -13,10 +14,59 @@ for package_name in ("tinyvllm", "tinyvllm.engine"):
     sys.modules.setdefault(package_name, package)
 
 
+class FakeTensor:
+    def __init__(self, rows, *, dtype="float32", device="cpu"):
+        self.rows = [list(row) for row in rows]
+        self.dtype = dtype
+        self.device = device
+        self.shape = (
+            len(self.rows),
+            0 if not self.rows else len(self.rows[0]),
+        )
+
+    def clone(self):
+        return FakeTensor(
+            self.rows,
+            dtype=self.dtype,
+            device=self.device,
+        )
+
+    def zero_(self):
+        self.rows = [
+            [0 for _ in row]
+            for row in self.rows
+        ]
+        return self
+
+
+torch = types.ModuleType("torch")
+torch.Tensor = FakeTensor
+torch.float32 = "float32"
+torch.float64 = "float64"
+torch.cat = lambda tensors, dim=0: FakeTensor(
+    [
+        row
+        for tensor in tensors
+        for row in tensor.rows
+    ],
+    dtype=tensors[0].dtype,
+    device=tensors[0].device,
+)
+torch.equal = lambda left, right: (
+    left.rows == right.rows
+    and left.dtype == right.dtype
+    and left.device == right.device
+)
+sys.modules.setdefault("torch", torch)
+
+
 from tinyvllm.engine.topology_local_tp2_island import (
     TopologyLocalTP2PairMap,
+    TopologyLocalTP2StateIdentity,
+    assemble_logical_state_half,
     logical_half_bounds,
     select_best_pair_groups,
+    validate_state_publication,
 )
 
 
@@ -154,3 +204,110 @@ def test_topology_selection_rejects_duplicate_and_unknown_links():
     rows[0]["link"] = "NV8"
     with pytest.raises(ValueError, match="invalid"):
         select_best_pair_groups(rows)
+
+
+def test_assemble_logical_state_half_uses_global_head_order():
+    quarters = tuple(
+        FakeTensor([[rank, rank]], dtype=torch.float32)
+        for rank in range(4)
+    )
+
+    assert torch.equal(
+        assemble_logical_state_half(quarters, 0),
+        FakeTensor([[0, 0], [1, 1]], dtype=torch.float32),
+    )
+    assert torch.equal(
+        assemble_logical_state_half(quarters, 1),
+        FakeTensor([[2, 2], [3, 3]], dtype=torch.float32),
+    )
+
+
+def test_state_assembly_does_not_mutate_source_quarters():
+    quarters = tuple(
+        FakeTensor(
+            [[rank, rank + 1], [rank + 2, rank + 3]],
+            dtype=torch.float32,
+        )
+        for rank in range(4)
+    )
+    snapshots = tuple(tensor.clone() for tensor in quarters)
+
+    result = assemble_logical_state_half(quarters, 0)
+    result.zero_()
+
+    assert all(
+        torch.equal(actual, expected)
+        for actual, expected in zip(quarters, snapshots)
+    )
+
+
+@pytest.mark.parametrize(
+    "quarters",
+    (
+        tuple(FakeTensor([[0, 0]]) for _ in range(3)),
+        (
+            FakeTensor([[0, 0]]),
+            FakeTensor([[0, 0], [0, 0]]),
+            FakeTensor([[0, 0]]),
+            FakeTensor([[0, 0]]),
+        ),
+        (
+            FakeTensor([[0, 0]], dtype=torch.float32),
+            FakeTensor([[0, 0]], dtype=torch.float64),
+            FakeTensor([[0, 0]], dtype=torch.float32),
+            FakeTensor([[0, 0]], dtype=torch.float32),
+        ),
+    ),
+)
+def test_state_assembly_rejects_incompatible_quarters(quarters):
+    with pytest.raises(ValueError):
+        assemble_logical_state_half(quarters, 0)
+
+
+def test_state_publication_accepts_exact_identity():
+    identity = TopologyLocalTP2StateIdentity(
+        request_id=7,
+        generation=3,
+        slot_id=2,
+        layer_index=0,
+    )
+
+    validate_state_publication(identity, identity)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("request_id", 8),
+        ("generation", 4),
+        ("slot_id", 3),
+        ("layer_index", 1),
+    ),
+)
+def test_state_publication_rejects_identity_drift(field, value):
+    source = TopologyLocalTP2StateIdentity(
+        request_id=7,
+        generation=3,
+        slot_id=2,
+        layer_index=0,
+    )
+
+    with pytest.raises(RuntimeError, match="identity mismatch"):
+        validate_state_publication(
+            source,
+            dataclasses.replace(source, **{field: value}),
+        )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        {"request_id": True, "generation": 0, "slot_id": 0, "layer_index": 0},
+        {"request_id": 1, "generation": -1, "slot_id": 0, "layer_index": 0},
+        {"request_id": 1, "generation": 0, "slot_id": -1, "layer_index": 0},
+        {"request_id": 1, "generation": 0, "slot_id": 0, "layer_index": -1},
+    ),
+)
+def test_state_identity_rejects_invalid_fields(arguments):
+    with pytest.raises(ValueError):
+        TopologyLocalTP2StateIdentity(**arguments)
