@@ -914,10 +914,15 @@ def _qwen38_candidate_sequence(
 class _Qwen38CandidateRuntime:
     def __init__(self):
         self.prepare_calls = []
+        self.release_calls = []
 
     def prepare_decode(self, leases):
         self.prepare_calls.append(leases)
         return {"transition": len(self.prepare_calls)}
+
+    def release_decode_cohort(self, leases):
+        self.release_calls.append(leases)
+        return {"released_requests": len(leases)}
 
     def snapshot(self):
         return {
@@ -1046,6 +1051,31 @@ def test_qwen38_candidate_rejects_mixed_or_releasing_decode_batch(
         runner.qwen38_topology_local_tp2_runtime.prepare_calls
         == []
     )
+
+
+def test_qwen38_candidate_release_resets_model_runner_cohort():
+    runner = _qwen38_transition_runner()
+    events = []
+    runner.hybrid_state_runtime_bridge = SimpleNamespace(
+        release=lambda leases: events.append(("baseline", leases)),
+    )
+    runtime = runner.qwen38_topology_local_tp2_runtime
+    leases = (
+        model_runner.HybridStateLease(
+            slot_id=0,
+            generation=1,
+            request_id=10,
+        ),
+    )
+    runner._qwen38_topology_local_tp2_decode_prepared = True
+    runner._qwen38_topology_local_tp2_request_ids = (10,)
+
+    runner.release_hybrid_state(leases)
+
+    assert runtime.release_calls == [leases]
+    assert events == [("baseline", leases)]
+    assert runner._qwen38_topology_local_tp2_decode_prepared is False
+    assert runner._qwen38_topology_local_tp2_request_ids == ()
 
 
 def test_qwen38_candidate_transition_precedes_model_input_and_forward():

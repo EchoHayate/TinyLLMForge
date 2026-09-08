@@ -484,6 +484,11 @@ def _load_runtime_owner_module():
             self.phase = "tp2_decode"
             self.activations += 1
 
+        def activate_tp4_prefill(self):
+            if self.phase != "tp2_decode":
+                raise RuntimeError("TP2 decode phase is not active")
+            self.phase = "tp4_prefill"
+
         def telemetry_snapshot(self):
             return {
                 "phase": self.phase,
@@ -985,6 +990,70 @@ def test_runtime_close_releases_state_and_both_pair_groups():
     }
     assert destroyed == ["pair-a", "pair-b"]
     assert runtime.candidate_state_owner.releases == [leases]
+
+
+def test_runtime_releases_completed_cohort_and_accepts_next_cohort():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    first = (
+        SimpleNamespace(slot_id=0, generation=1, request_id=10),
+    )
+    second = (
+        SimpleNamespace(slot_id=1, generation=2, request_id=11),
+    )
+
+    runtime.prepare_decode(first)
+    receipt = runtime.release_decode_cohort(first)
+
+    assert receipt == {
+        "released_requests": 1,
+        "phase": "tp4_prefill",
+        "fixed_cohort_cleared": True,
+    }
+    assert (
+        model.layer_stack.state_transaction
+        is owner.state_transaction
+    )
+    assert all(mixer.phase == "tp4_prefill" for mixer in runtime.mixers)
+
+    second_receipt = runtime.prepare_decode(second)
+    assert second_receipt["release_rows"] == ()
+    assert second_receipt["released_layer_count"] == 0
+    assert second_receipt["released_bytes"] == 0
+    assert runtime.snapshot()["transition_count"] == 2
+    assert runtime.snapshot()["released_layer_count"] == 48
+    assert runtime.snapshot()["fixed_cohort"] == ((1, 2, 11),)
+
+
+def test_runtime_rejects_partial_or_wrong_cohort_release():
+    runtime_module = _load_runtime_owner_module()
+    model, owner, pair_context = _runtime_fixture()
+    runtime = (
+        runtime_module.install_qwen38_topology_local_tp2_runtime(
+            model=model,
+            owner=owner,
+            pair_context=pair_context,
+            capacity=8,
+        )
+    )
+    leases = (
+        SimpleNamespace(slot_id=0, generation=1, request_id=10),
+        SimpleNamespace(slot_id=1, generation=1, request_id=11),
+    )
+    runtime.prepare_decode(leases)
+
+    with pytest.raises(RuntimeError, match="complete fixed cohort"):
+        runtime.release_decode_cohort(leases[:1])
+
+    assert runtime.snapshot()["phase"] == "tp2_decode"
 
 
 def test_engine_collects_rank_complete_qwen38_runtime_snapshots():

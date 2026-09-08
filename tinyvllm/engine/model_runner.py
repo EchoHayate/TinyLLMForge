@@ -4256,6 +4256,10 @@ class ModelRunner:
         batch_kind: str | None = None,
     ):
         released_leases = tuple(released_leases)
+        if released_leases:
+            self._release_qwen38_topology_local_tp2_cohort(
+                released_leases
+            )
         active_leases = []
         for seq in seqs:
             slot_id = getattr(seq, "hybrid_state_slot_id", -1)
@@ -4363,6 +4367,27 @@ class ModelRunner:
         self._qwen38_topology_local_tp2_decode_prepared = True
         return transition
 
+    def _release_qwen38_topology_local_tp2_cohort(
+        self,
+        released_leases,
+    ):
+        runtime = getattr(
+            self,
+            "qwen38_topology_local_tp2_runtime",
+            None,
+        )
+        if (
+            runtime is None
+            or not self._qwen38_topology_local_tp2_decode_prepared
+        ):
+            return None
+        receipt = runtime.release_decode_cohort(
+            tuple(released_leases)
+        )
+        self._qwen38_topology_local_tp2_decode_prepared = False
+        self._qwen38_topology_local_tp2_request_ids = ()
+        return receipt
+
     def release_hybrid_state(
         self,
         released_leases: tuple[HybridStateLease, ...],
@@ -4370,6 +4395,9 @@ class ModelRunner:
         released_leases = tuple(released_leases)
         if not released_leases:
             return
+        self._release_qwen38_topology_local_tp2_cohort(
+            released_leases
+        )
         runtime_bridge = getattr(
             self,
             "hybrid_state_runtime_bridge",

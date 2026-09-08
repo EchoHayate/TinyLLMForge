@@ -207,7 +207,9 @@ class Qwen38TopologyLocalTP2Runtime:
         self._fixed_cohort = None
         self._active_leases = ()
         self._release_rows: tuple[dict, ...] = ()
+        self._decode_accumulation_released = False
         self._transition_count = 0
+        self._candidate_state_released = False
 
     def prepare_decode(self, leases: tuple[object, ...]) -> dict:
         cohort = _cohort_identity(leases)
@@ -231,18 +233,20 @@ class Qwen38TopologyLocalTP2Runtime:
             )
             for mixer in self.mixers:
                 mixer.activate_tp2_decode()
-            release_rows = tuple(
-                {
-                    "layer_index": layer_index,
-                    **release_global_tp4_decode_accumulation(
-                        baseline,
-                    ),
-                }
-                for layer_index, baseline in zip(
-                    self.linear_layer_indices,
-                    self._baseline_mixers,
+            release_rows = ()
+            if not self._decode_accumulation_released:
+                release_rows = tuple(
+                    {
+                        "layer_index": layer_index,
+                        **release_global_tp4_decode_accumulation(
+                            baseline,
+                        ),
+                    }
+                    for layer_index, baseline in zip(
+                        self.linear_layer_indices,
+                        self._baseline_mixers,
+                    )
                 )
-            )
             torch.cuda.synchronize()
         except Exception:
             if published:
@@ -251,7 +255,9 @@ class Qwen38TopologyLocalTP2Runtime:
 
         self.phase = "tp2_decode"
         self._active_leases = leases
-        self._release_rows = release_rows
+        if release_rows:
+            self._release_rows = release_rows
+            self._decode_accumulation_released = True
         self._transition_count += 1
         return {
             "migration_rows": migration_rows,
@@ -262,6 +268,40 @@ class Qwen38TopologyLocalTP2Runtime:
                 for row in release_rows
             ),
             "synchronized_before_measured_decode": True,
+        }
+
+    def release_decode_cohort(
+        self,
+        leases: tuple[object, ...],
+    ) -> dict:
+        cohort = _cohort_identity(leases)
+        if (
+            self.phase != "tp2_decode"
+            or self._fixed_cohort is None
+            or cohort != self._fixed_cohort
+            or cohort != _cohort_identity(self._active_leases)
+        ):
+            raise RuntimeError(
+                "candidate release must cover the complete fixed cohort"
+            )
+        try:
+            self.candidate_state_owner.release(leases)
+            self.model.layer_stack.state_transaction = (
+                self.baseline_owner.state_transaction
+            )
+            for mixer in self.mixers:
+                mixer.activate_tp4_prefill()
+        except Exception:
+            self.phase = "quarantined"
+            raise
+        self.phase = "tp4_prefill"
+        self._fixed_cohort = None
+        self._active_leases = ()
+        self._candidate_state_released = True
+        return {
+            "released_requests": len(leases),
+            "phase": self.phase,
+            "fixed_cohort_cleared": True,
         }
 
     def snapshot(self) -> dict:
@@ -294,7 +334,7 @@ class Qwen38TopologyLocalTP2Runtime:
             raise RuntimeError(
                 "topology-local TP2 runtime is already closed"
             )
-        candidate_state_released = False
+        candidate_state_released = self._candidate_state_released
         if self._active_leases:
             self.candidate_state_owner.release(
                 self._active_leases

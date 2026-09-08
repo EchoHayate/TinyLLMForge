@@ -517,6 +517,11 @@ class Qwen38TopologyLocalTP2LinearAttention(torch.nn.Module):
         self._phase = "tp2_decode"
         self._telemetry["phase_transition_count"] += 1
 
+    def activate_tp4_prefill(self) -> None:
+        if self._phase != "tp2_decode":
+            raise RuntimeError("TP2 decode phase is not active")
+        self._phase = "tp4_prefill"
+
     def _project_logical_tp2(
         self,
         hidden_states,
