@@ -9,6 +9,8 @@ from types import MappingProxyType
 from typing import Mapping
 import weakref
 
+import torch
+
 
 HIDDEN_SIZE = 5120
 GLOBAL_KEY_HEADS = 16
@@ -451,6 +453,275 @@ class CandidateSetupLifecycle:
 
     def mark_warmup_started(self) -> None:
         self._warmup_started = True
+
+
+def candidate_gated_delta_chunk_size(token_count: int) -> int:
+    if (
+        isinstance(token_count, bool)
+        or not isinstance(token_count, int)
+        or token_count < 2
+    ):
+        raise ValueError(
+            "multi-token chunk size requires token_count >= 2"
+        )
+    return token_count if token_count <= 8 else 64
+
+
+@dataclass(frozen=True)
+class _LogicalTP2Projection:
+    convolved: object
+    gate: object
+    projected_a: object
+    projected_b: object
+    next_convolution: object
+
+
+class Qwen38TopologyLocalTP2LinearAttention(torch.nn.Module):
+
+    def __init__(
+        self,
+        *,
+        baseline: object,
+        candidate_view: LogicalTP2LinearAttentionView,
+        pair_reduce,
+    ):
+        super().__init__()
+        if not callable(baseline):
+            raise ValueError("baseline must be callable")
+        if not callable(pair_reduce):
+            raise ValueError("pair_reduce must be callable")
+        if getattr(candidate_view, "pair_group", None) is None:
+            raise ValueError("candidate_view pair_group must be explicit")
+        self.baseline = baseline
+        self.candidate_view = candidate_view
+        self._pair_reduce = pair_reduce
+        self._phase = "tp4_prefill"
+        self._telemetry = {
+            "tp4_prefill_calls": 0,
+            "tp2_decode_calls": 0,
+            "recurrent_token_one_calls": 0,
+            "short_chunk_calls": 0,
+            "chunk_64_calls": 0,
+            "pair_local_all_reduce_calls": 0,
+            "global_tp4_decode_all_reduce_calls": 0,
+            "phase_transition_count": 0,
+        }
+
+    @property
+    def phase(self) -> str:
+        return self._phase
+
+    def activate_tp2_decode(self) -> None:
+        if self._phase != "tp4_prefill":
+            raise RuntimeError("TP2 decode phase is already active")
+        self._phase = "tp2_decode"
+        self._telemetry["phase_transition_count"] += 1
+
+    def _project_logical_tp2(
+        self,
+        hidden_states,
+        convolution_state,
+    ) -> _LogicalTP2Projection:
+        import torch.nn.functional as F
+
+        from tinyvllm.layers.gated_delta import (
+            qwen35_causal_depthwise_conv,
+        )
+
+        view = self.candidate_view
+        qkv_full = F.linear(hidden_states, view.qkv_weight)
+        key_width_start = view.key_head_range[0] * HEAD_DIM
+        value_width_start = view.value_head_range[0] * HEAD_DIM
+        qkv = torch.cat((
+            qkv_full.narrow(-1, key_width_start, 1024),
+            qkv_full.narrow(-1, 2048 + key_width_start, 1024),
+            qkv_full.narrow(-1, 4096 + value_width_start, 3072),
+        ), dim=-1)
+        gate = F.linear(hidden_states, view.z_weight).narrow(
+            -1,
+            value_width_start,
+            3072,
+        )
+        projected_a, projected_b = F.linear(
+            hidden_states,
+            view.ab_weight_half,
+        ).split((24, 24), dim=-1)
+        convolved, next_convolution = qwen35_causal_depthwise_conv(
+            qkv,
+            convolution_state,
+            view.conv_weight,
+        )
+        return _LogicalTP2Projection(
+            convolved=convolved,
+            gate=gate,
+            projected_a=projected_a,
+            projected_b=projected_b,
+            next_convolution=next_convolution,
+        )
+
+    def _run_delta(
+        self,
+        projected: _LogicalTP2Projection,
+        recurrent_state,
+        *,
+        token_count: int,
+    ) -> tuple[object, object]:
+        from tinyvllm.layers.gated_delta import (
+            qwen35_gated_delta_chunk,
+            qwen35_gated_delta_recurrent,
+            qwen35_gated_rmsnorm,
+        )
+
+        view = self.candidate_view
+        key_width = 8 * HEAD_DIM
+        value_width = 24 * HEAD_DIM
+        query, key, value = projected.convolved.split(
+            (key_width, key_width, value_width),
+            dim=-1,
+        )
+        query = query.reshape(
+            token_count,
+            8,
+            HEAD_DIM,
+        ).repeat_interleave(3, dim=1)
+        key = key.reshape(
+            token_count,
+            8,
+            HEAD_DIM,
+        ).repeat_interleave(3, dim=1)
+        value = value.reshape(token_count, 24, HEAD_DIM)
+        if token_count == 1:
+            core, next_recurrent = qwen35_gated_delta_recurrent(
+                query,
+                key,
+                value,
+                projected.projected_a,
+                projected.projected_b,
+                view.A_log,
+                view.dt_bias,
+                recurrent_state,
+            )
+        else:
+            core, next_recurrent = qwen35_gated_delta_chunk(
+                query,
+                key,
+                value,
+                projected.projected_a,
+                projected.projected_b,
+                view.A_log,
+                view.dt_bias,
+                recurrent_state,
+                chunk_size=candidate_gated_delta_chunk_size(
+                    token_count
+                ),
+            )
+        norm_core = core.reshape(-1, HEAD_DIM)
+        norm_gate = projected.gate.reshape(-1, HEAD_DIM)
+        if token_count == 1:
+            norm_core = norm_core.repeat(
+                view.logical_parallel_size,
+                1,
+            )
+            norm_gate = norm_gate.repeat(
+                view.logical_parallel_size,
+                1,
+            )
+            gated = qwen35_gated_rmsnorm(
+                norm_core,
+                norm_gate,
+                view.norm_weight,
+                eps=view.norm_eps,
+            )[:token_count]
+        else:
+            gated = qwen35_gated_rmsnorm(
+                norm_core,
+                norm_gate,
+                view.norm_weight,
+                eps=view.norm_eps,
+            )
+        return (
+            gated.reshape(token_count, value_width),
+            next_recurrent,
+        )
+
+    def _output_projection(self, core, gate):
+        del gate
+        import torch.nn.functional as F
+
+        return F.linear(
+            core.float(),
+            self.candidate_view.output_accumulation_weight,
+        )
+
+    def forward(
+        self,
+        hidden_states,
+        convolution_state,
+        recurrent_state,
+    ):
+        if self._phase == "tp4_prefill":
+            self._telemetry["tp4_prefill_calls"] += 1
+            return self.baseline(
+                hidden_states,
+                convolution_state,
+                recurrent_state,
+            )
+        if self._phase != "tp2_decode":
+            raise RuntimeError(
+                f"unsupported linear-attention phase: {self._phase}"
+            )
+        try:
+            token_count = int(hidden_states.shape[0])
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ValueError(
+                "hidden_states must expose a valid token count"
+            ) from error
+        if token_count <= 0:
+            raise ValueError("hidden_states token count must be positive")
+
+        projected = self._project_logical_tp2(
+            hidden_states,
+            convolution_state,
+        )
+        core, next_recurrent = self._run_delta(
+            projected,
+            recurrent_state,
+            token_count=token_count,
+        )
+        local = self._output_projection(core, projected.gate)
+        self._pair_reduce(local, self.candidate_view.pair_group)
+        output = local.to(dtype=hidden_states.dtype)
+
+        self._telemetry["tp2_decode_calls"] += 1
+        self._telemetry["pair_local_all_reduce_calls"] += 1
+        if token_count == 1:
+            self._telemetry["recurrent_token_one_calls"] += 1
+        elif token_count <= 8:
+            self._telemetry["short_chunk_calls"] += 1
+        else:
+            self._telemetry["chunk_64_calls"] += 1
+        return output, projected.next_convolution, next_recurrent
+
+    def telemetry_snapshot(self) -> dict:
+        return {
+            "schema_version":
+                "qwen38.topology-local-tp2-linear-attention.v1",
+            "phase": self._phase,
+            **self._telemetry,
+        }
+
+
+def output_digest(output: torch.Tensor) -> str:
+    if output.dtype is not torch.bfloat16:
+        raise ValueError("candidate output digest requires BF16")
+    return hashlib.sha256(
+        output.detach()
+        .contiguous()
+        .view(torch.uint8)
+        .cpu()
+        .numpy()
+        .tobytes()
+    ).hexdigest()
 
 
 def release_global_tp4_decode_accumulation(layer: object) -> dict:

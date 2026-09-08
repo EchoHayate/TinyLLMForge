@@ -90,6 +90,18 @@ fake_torch = types.ModuleType("torch")
 fake_torch.Tensor = FakeTensor
 fake_torch.bfloat16 = "torch.bfloat16"
 fake_torch.float32 = "torch.float32"
+fake_torch.uint8 = "torch.uint8"
+
+
+class FakeModule:
+    def __init__(self):
+        pass
+
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
+
+fake_torch.nn = SimpleNamespace(Module=FakeModule)
 
 
 def _cat(tensors, dim=0):
@@ -493,3 +505,161 @@ def test_release_global_tp4_decode_accumulation_drops_last_owner():
     }
     assert layer.out_proj.accumulation_weight is None
     assert reference() is None
+
+
+class _BaselineMixer:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def __call__(self, *args):
+        self.calls.append(args)
+        return self.result
+
+
+def _wrapper_view():
+    return SimpleNamespace(
+        pair_group="pair-a",
+        logical_parallel_size=2,
+    )
+
+
+def test_pair_local_wrapper_dispatches_prefill_then_decode_and_counts():
+    runtime = _load_linear_attention_module()
+    baseline_result = object()
+    baseline = _BaselineMixer(baseline_result)
+    reductions = []
+    wrapper = runtime.Qwen38TopologyLocalTP2LinearAttention(
+        baseline=baseline,
+        candidate_view=_wrapper_view(),
+        pair_reduce=lambda output, group: reductions.append(
+            (output, group)
+        ),
+    )
+    hidden = FakeTensor((3, 5120), label="prefill")
+    convolution = object()
+    recurrent = object()
+
+    assert wrapper.phase == "tp4_prefill"
+    assert wrapper(hidden, convolution, recurrent) is baseline_result
+    assert baseline.calls == [(hidden, convolution, recurrent)]
+
+    projected = SimpleNamespace(
+        gate=object(),
+        next_convolution=object(),
+    )
+    core = object()
+    next_recurrent = object()
+    local = FakeTensor(
+        (1, 5120),
+        label="local-output",
+        dtype="torch.float32",
+    )
+    wrapper._project_logical_tp2 = (
+        lambda hidden_states, convolution_state: projected
+    )
+    wrapper._run_delta = (
+        lambda projection, recurrent_state, *, token_count: (
+            core,
+            next_recurrent,
+        )
+    )
+    wrapper._output_projection = lambda value, gate: local
+    wrapper.activate_tp2_decode()
+
+    output, next_convolution, actual_recurrent = wrapper(
+        FakeTensor((1, 5120), label="decode"),
+        object(),
+        object(),
+    )
+
+    assert output.dtype == "torch.bfloat16"
+    assert next_convolution is projected.next_convolution
+    assert actual_recurrent is next_recurrent
+    assert reductions == [(local, "pair-a")]
+    snapshot = wrapper.telemetry_snapshot()
+    assert snapshot["tp4_prefill_calls"] == 1
+    assert snapshot["tp2_decode_calls"] == 1
+    assert snapshot["recurrent_token_one_calls"] == 1
+    assert snapshot["short_chunk_calls"] == 0
+    assert snapshot["global_tp4_decode_all_reduce_calls"] == 0
+    assert snapshot["pair_local_all_reduce_calls"] == 1
+
+
+@pytest.mark.parametrize(
+    ("token_count", "expected"),
+    (
+        (2, 2),
+        (3, 3),
+        (4, 4),
+        (5, 5),
+        (6, 6),
+        (7, 7),
+        (8, 8),
+        (9, 64),
+        (64, 64),
+    ),
+)
+def test_candidate_chunk_size_preserves_short_exact_lengths(
+    token_count,
+    expected,
+):
+    runtime = _load_linear_attention_module()
+
+    assert runtime.candidate_gated_delta_chunk_size(
+        token_count
+    ) == expected
+
+
+def test_pair_local_wrapper_cannot_reverse_decode_phase():
+    runtime = _load_linear_attention_module()
+    wrapper = runtime.Qwen38TopologyLocalTP2LinearAttention(
+        baseline=_BaselineMixer(object()),
+        candidate_view=_wrapper_view(),
+        pair_reduce=lambda output, group: None,
+    )
+
+    wrapper.activate_tp2_decode()
+
+    with pytest.raises(RuntimeError, match="already active"):
+        wrapper.activate_tp2_decode()
+    with pytest.raises(AttributeError):
+        wrapper.phase = "tp4_prefill"
+
+
+class _DigestTensor:
+    dtype = "torch.bfloat16"
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def detach(self):
+        return self
+
+    def contiguous(self):
+        return self
+
+    def view(self, dtype):
+        assert dtype == "torch.uint8"
+        return self
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self
+
+    def tobytes(self):
+        return self.payload
+
+
+def test_output_digest_is_bitwise_and_bf16_only():
+    runtime = _load_linear_attention_module()
+
+    first = runtime.output_digest(_DigestTensor(b"\x00\x01"))
+    assert runtime.output_digest(_DigestTensor(b"\x00\x01")) == first
+    assert runtime.output_digest(_DigestTensor(b"\x00\x00")) != first
+    invalid = _DigestTensor(b"\x00\x01")
+    invalid.dtype = "torch.float32"
+    with pytest.raises(ValueError, match="requires BF16"):
+        runtime.output_digest(invalid)

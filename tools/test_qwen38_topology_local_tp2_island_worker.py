@@ -172,6 +172,17 @@ fake_torch.float16 = "torch.float16"
 fake_torch.float32 = "torch.float32"
 
 
+class FakeModule:
+    def __init__(self):
+        pass
+
+    def __call__(self, *args, **kwargs):
+        return self.forward(*args, **kwargs)
+
+
+fake_torch.nn = SimpleNamespace(Module=FakeModule)
+
+
 def _cat(tensors, dim=0):
     tensors = tuple(tensors)
     shape = list(tensors[0].shape)
