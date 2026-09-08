@@ -1,10 +1,12 @@
 import __future__
+import gc
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import sys
 import tempfile
 import types
+import weakref
 
 import pytest
 
@@ -17,10 +19,95 @@ for package_name in ("tinyvllm", "tinyvllm.engine"):
     package.__path__ = [str(ROOT / package_name.replace(".", "/"))]
     sys.modules.setdefault(package_name, package)
 
+
+class FakeTensor:
+    def __init__(
+        self,
+        shape,
+        *,
+        label,
+        dtype="torch.bfloat16",
+        device="cuda:0",
+        floating=True,
+        contiguous=True,
+    ):
+        self.shape = tuple(shape)
+        self.label = label
+        self.dtype = dtype
+        self.device = device
+        self._floating = floating
+        self._contiguous = contiguous
+
+    def is_floating_point(self):
+        return self._floating
+
+    def narrow(self, dim, start, length):
+        shape = list(self.shape)
+        shape[dim] = length
+        return FakeTensor(
+            shape,
+            label=f"{self.label}.narrow({dim},{start},{length})",
+            dtype=self.dtype,
+            device=self.device,
+            floating=self._floating,
+            contiguous=False,
+        )
+
+    def contiguous(self):
+        return FakeTensor(
+            self.shape,
+            label=f"{self.label}.contiguous",
+            dtype=self.dtype,
+            device=self.device,
+            floating=self._floating,
+            contiguous=True,
+        )
+
+    def to(self, *, dtype=None, device=None):
+        return FakeTensor(
+            self.shape,
+            label=f"{self.label}.to",
+            dtype=self.dtype if dtype is None else dtype,
+            device=self.device if device is None else device,
+            floating=self._floating,
+            contiguous=self._contiguous,
+        )
+
+    def numel(self):
+        result = 1
+        for width in self.shape:
+            result *= width
+        return result
+
+    def element_size(self):
+        return {
+            "torch.bfloat16": 2,
+            "torch.float32": 4,
+        }[self.dtype]
+
+
 fake_torch = types.ModuleType("torch")
-fake_torch.Tensor = object
-fake_torch.cat = lambda tensors, dim=0: tuple(tensors)
-sys.modules.setdefault("torch", fake_torch)
+fake_torch.Tensor = FakeTensor
+fake_torch.bfloat16 = "torch.bfloat16"
+fake_torch.float32 = "torch.float32"
+
+
+def _cat(tensors, dim=0):
+    tensors = tuple(tensors)
+    shape = list(tensors[0].shape)
+    shape[dim] = sum(tensor.shape[dim] for tensor in tensors)
+    return FakeTensor(
+        shape,
+        label="cat(" + ",".join(tensor.label for tensor in tensors) + ")",
+        dtype=tensors[0].dtype,
+        device=tensors[0].device,
+        floating=all(tensor._floating for tensor in tensors),
+        contiguous=False,
+    )
+
+
+fake_torch.cat = _cat
+sys.modules["torch"] = fake_torch
 
 
 def _load_source_module(name, path):
@@ -211,3 +298,186 @@ def test_pair_context_rejects_non_tp4_world_size(world_size):
             world_size=world_size,
             pair_map=TopologyLocalTP2PairMap(((0, 1), (2, 3))),
         )
+
+
+class Qwen35LinearAttentionShell:
+    pass
+
+
+def _fake_linear_attention(**overrides):
+    layer = Qwen35LinearAttentionShell()
+    values = {
+        "local_key_heads": 4,
+        "local_value_heads": 12,
+        "key_head_dim": 128,
+        "value_head_dim": 128,
+        "norm_eps": 1e-6,
+        "in_proj_qkv": SimpleNamespace(
+            weight=FakeTensor((10240, 5120), label="qkv"),
+            quant_method=None,
+        ),
+        "in_proj_z": SimpleNamespace(
+            weight=FakeTensor((6144, 5120), label="z"),
+            quant_method=None,
+        ),
+        "in_proj_b": SimpleNamespace(
+            weight=FakeTensor((48, 5120), label="b"),
+            quant_method=None,
+        ),
+        "in_proj_a": SimpleNamespace(
+            weight=FakeTensor((48, 5120), label="a"),
+            quant_method=None,
+        ),
+        "out_proj": SimpleNamespace(
+            weight=FakeTensor((5120, 1536), label="out-quarter"),
+            prefill_weight=FakeTensor((5120, 6144), label="out-full"),
+            accumulation_weight=FakeTensor(
+                (5120, 1536),
+                label="out-quarter-fp32",
+                dtype="torch.float32",
+            ),
+            quant_method=None,
+            tp_size=4,
+        ),
+        "logical_tp2_conv_weight": FakeTensor(
+            (10240, 4),
+            label="conv-full",
+        ),
+        "logical_tp2_A_log": FakeTensor(
+            (48,),
+            label="A-log-full",
+            dtype="torch.float32",
+        ),
+        "logical_tp2_dt_bias": FakeTensor(
+            (48,),
+            label="dt-bias-full",
+        ),
+        "norm_weight": FakeTensor((128,), label="norm"),
+    }
+    values.update(overrides)
+    for name, value in values.items():
+        setattr(layer, name, value)
+    return layer
+
+
+def _load_linear_attention_module():
+    module_path = (
+        ROOT
+        / "tinyvllm/layers/"
+        "qwen38_topology_local_tp2_linear_attention.py"
+    )
+    assert module_path.is_file(), (
+        "Qwen3.8 topology-local TP2 runtime layer module is missing"
+    )
+    sys.modules["torch"] = fake_torch
+    return _load_source_module(
+        "qwen38_topology_local_tp2_linear_attention_under_test",
+        module_path,
+    )
+
+
+def test_logical_tp2_view_selects_exact_checkpoint_halves():
+    runtime = _load_linear_attention_module()
+    runtime._tensor_digest = lambda tensor: "a" * 64
+    layer = _fake_linear_attention()
+
+    view = runtime.build_logical_tp2_linear_attention_view(
+        layer,
+        logical_rank=1,
+        pair_group="pair-b",
+    )
+
+    assert view.logical_parallel_size == 2
+    assert view.logical_rank == 1
+    assert view.key_head_range == (8, 16)
+    assert view.value_head_range == (24, 48)
+    assert view.output_input_range == (3072, 6144)
+    assert tuple(
+        tensor.shape for tensor in view.qkv_weight_segments
+    ) == (
+        (1024, 5120),
+        (1024, 5120),
+        (3072, 5120),
+    )
+    assert view.z_weight.shape == (6144, 5120)
+    assert view.output_accumulation_weight.shape == (5120, 3072)
+    assert view.output_accumulation_weight.dtype == "torch.float32"
+    assert runtime.build_layer_parameter_identity(
+        layer,
+        view,
+    )["checkpoint_reconstruction_match"] is True
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda layer: object(),
+        lambda layer: setattr(
+            layer.in_proj_qkv,
+            "quant_method",
+            object(),
+        ) or layer,
+        lambda layer: setattr(
+            layer.out_proj,
+            "prefill_weight",
+            None,
+        ) or layer,
+        lambda layer: setattr(
+            layer,
+            "local_key_heads",
+            8,
+        ) or layer,
+    ),
+)
+def test_logical_tp2_view_rejects_invalid_layer_contract(mutation):
+    runtime = _load_linear_attention_module()
+
+    with pytest.raises(ValueError):
+        runtime.build_logical_tp2_linear_attention_view(
+            mutation(_fake_linear_attention()),
+            logical_rank=0,
+            pair_group="pair-a",
+        )
+
+
+@pytest.mark.parametrize("logical_rank", (-1, 2, True))
+def test_logical_tp2_view_rejects_invalid_logical_rank(logical_rank):
+    runtime = _load_linear_attention_module()
+
+    with pytest.raises(ValueError, match="logical_rank"):
+        runtime.build_logical_tp2_linear_attention_view(
+            _fake_linear_attention(),
+            logical_rank=logical_rank,
+            pair_group="pair-a",
+        )
+
+
+def test_candidate_view_registration_is_closed_after_warmup():
+    runtime = _load_linear_attention_module()
+    lifecycle = runtime.CandidateSetupLifecycle()
+    lifecycle.mark_warmup_started()
+
+    with pytest.raises(RuntimeError, match="before warmup"):
+        lifecycle.register_candidate_view(
+            runtime.build_logical_tp2_linear_attention_view(
+                _fake_linear_attention(),
+                logical_rank=0,
+                pair_group="pair-a",
+            )
+        )
+
+
+def test_release_global_tp4_decode_accumulation_drops_last_owner():
+    runtime = _load_linear_attention_module()
+    layer = _fake_linear_attention()
+    reference = weakref.ref(layer.out_proj.accumulation_weight)
+
+    receipt = runtime.release_global_tp4_decode_accumulation(layer)
+    gc.collect()
+
+    assert receipt == {
+        "released_bytes": 5120 * 1536 * 4,
+        "released": True,
+    }
+    assert layer.out_proj.accumulation_weight is None
+    assert reference() is None
