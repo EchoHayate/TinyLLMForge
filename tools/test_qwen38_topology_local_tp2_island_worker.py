@@ -1004,14 +1004,12 @@ def test_migration_aligns_ranks_before_starting_latency_interval():
     assert barrier < start
 
 
-def test_candidate_timed_path_has_only_pair_local_collective():
+def test_candidate_timed_path_preserves_fused_qkv_numerics():
     worker = _load()
     source = inspect.getsource(worker.run_candidate_mixer)
 
-    assert "F.linear(hidden, view.qkv_weight)" not in source
-    assert source.count(
-        "F.linear(hidden, view.qkv_weight_segments["
-    ) == 3
+    assert source.count("F.linear(hidden, view.qkv_weight)") == 1
+    assert "F.linear(hidden, view.qkv_weight_segments[" not in source
     assert "F.linear(hidden, view.z_weight_half)" in source
     assert "F.linear(hidden, view.b_weight_half)" in source
     assert "F.linear(hidden, view.a_weight_half)" in source

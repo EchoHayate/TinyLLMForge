@@ -982,10 +982,13 @@ def run_candidate_mixer(
 
     if _event_trace is not None:
         _event_trace["projection_start"].record()
+    qkv_full = F.linear(hidden, view.qkv_weight)
+    key_width_start = view.key_head_range[0] * HEAD_DIM
+    value_width_start = view.value_head_range[0] * HEAD_DIM
     qkv = torch.cat((
-        F.linear(hidden, view.qkv_weight_segments[0]),
-        F.linear(hidden, view.qkv_weight_segments[1]),
-        F.linear(hidden, view.qkv_weight_segments[2]),
+        qkv_full.narrow(-1, key_width_start, 1024),
+        qkv_full.narrow(-1, 2048 + key_width_start, 1024),
+        qkv_full.narrow(-1, 4096 + value_width_start, 3072),
     ), dim=-1)
     z = F.linear(hidden, view.z_weight_half)
     b = F.linear(hidden, view.b_weight_half)

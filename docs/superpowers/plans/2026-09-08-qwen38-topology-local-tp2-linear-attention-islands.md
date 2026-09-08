@@ -498,13 +498,20 @@ Construct the candidate view before warmup:
 
 - select key heads `[0:8]` or `[8:16]`;
 - select value heads `[0:24]` or `[24:48]`;
-- preserve Q/K/V segment order when slicing fused QKV weights;
-- retain zero-copy row views for the selected Q/K/V, Z, A, and B projection
-  weights so the candidate computes only its logical TP2 half;
+- preserve the complete fused QKV projection and select the logical TP2
+  Q/K/V output segments afterward so the candidate retains the baseline BF16
+  GEMM numerical path and exact greedy-token result;
+- retain zero-copy row views for the selected Z, A, and B projection weights
+  so those projections compute only their logical TP2 half;
 - materialize the matching contiguous FP32 output-projection input-column
   half;
 - keep all parameters immutable; and
 - hash every selected tensor.
+
+The test must reject three separate Q/K/V `F.linear` calls in the candidate
+timed path and require exactly one `F.linear(hidden, view.qkv_weight)` call.
+The remote diagnostic must retain exact greedy argmax equality for token
+groups 1, 4, and 8 before any performance classification is accepted.
 
 The worker loads the complete pinned model through the existing Qwen3.8
 checkpoint path, verifies that layer 0 is linear attention, and retains only

@@ -267,18 +267,26 @@ logical_parallel_size = 2
 logical_parallel_rank = global_rank % 2
 ```
 
-The candidate retains the existing complete checkpoint weights, but computes
-only the rows belonging to its logical TP2 half. Q, K, and V use three
-zero-copy row views so their fused segment order remains exact; Z, A, and B
-use one contiguous row range each. The views are created before warmup and do
-not add persistent parameter storage. The current global TP4 quarter remains
-the baseline.
+The candidate retains the existing complete checkpoint weights. Q, K, and V
+must use the same complete fused QKV projection as the TP4 baseline before
+selecting the logical TP2 segments. A diagnostic using three smaller Q/K/V row
+view GEMMs changed the BF16 GEMM numerical path: token-1 remained correct, but
+the first token-4 case changed the downstream greedy argmax despite all tensor
+tolerance checks passing. The complete fused QKV projection is therefore a
+correctness requirement for this Stage-0 comparison, not an optional fallback.
 
-Computing the complete projection and discarding the unused half is rejected:
-it preserves correctness but spends nearly twice the required input-projection
-FLOPs and weakens the small-token communication benefit. Materializing fused
-TP2 copies is also rejected because its per-layer persistent memory cost would
-invalidate the integrated memory budget.
+Z, A, and B continue to use zero-copy row views and compute only the rows
+belonging to the logical TP2 half. A/B were bitwise equal to their full
+projection slices in the diagnostic; Z differed in only 19--21 of 12,288
+elements with maximum absolute error at most `2.44140625e-4`. These views are
+created before warmup and add no persistent parameter storage. The current
+global TP4 quarter remains the baseline.
+
+Computing complete Z, A, and B projections and discarding the unused half is
+rejected because it spends avoidable input-projection FLOPs. Materializing
+fused TP2 copies is also rejected because its per-layer persistent memory cost
+would invalidate the integrated memory budget. Splitting fused QKV is rejected
+because it failed the frozen exact-greedy correctness gate.
 
 The logical view must not mutate the module's global TP identity or change the
 full-attention path.
