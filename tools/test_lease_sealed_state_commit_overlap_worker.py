@@ -21,12 +21,15 @@ for package_name in ("tinyvllm", "tinyvllm.engine"):
 
 from tools.lease_sealed_state_commit_overlap_worker import (
     OverlapBuffers,
+    _expected_reduction_value,
     _merge_rank_artifacts,
+    _run_completion_owned,
+    _run_event_only_diagnostic,
     _runtime_capability_row,
-    _run_candidate,
     _tensor_digest,
     build_argument_parser,
     build_workload_schedule,
+    run_worker,
 )
 
 
@@ -91,14 +94,15 @@ def test_schedule_freezes_shapes_warmups_pairs_and_abba_order():
     schedule = build_workload_schedule()
 
     assert [row["active_tokens"] for row in schedule] == [1, 4, 8]
+    assert all(len(row["diagnostics"]) == 15 for row in schedule)
     assert all(len(row["warmups"]) == 2 for row in schedule)
     assert all(len(row["measurements"]) == 15 for row in schedule)
     assert schedule[0]["measurements"][0]["arm_order"] == (
         "baseline",
-        "candidate",
+        "completion_owned",
     )
     assert schedule[0]["measurements"][1]["arm_order"] == (
-        "candidate",
+        "completion_owned",
         "baseline",
     )
 
@@ -112,21 +116,28 @@ def test_buffers_preallocate_streams_events_and_real_shapes():
     assert buffers.collective_visible_event in torch.cuda.events
     assert not hasattr(buffers, "consumer_ready_event")
     assert buffers.local_result["shape"] == (8, 5120)
+    assert buffers.expected_result["shape"] == (8, 5120)
+    assert buffers.expected_output["shape"] == (8, 5120)
+    assert buffers.diagnostic_result["shape"] == (8, 5120)
+    assert buffers.event_only_snapshot["shape"] == (8, 5120)
+    assert buffers.diagnostic_output["shape"] == (8, 5120)
+    assert buffers.diagnostic_shadow["shape"] == (8, 271360 // 2)
     assert buffers.side_effect_payload["shape"] == (8, 271360 // 2)
     assert [
-        row["dtype"] for row in torch.allocations[:3]
-    ] == ["float32", "float32", "float32"]
+        row["dtype"] for row in torch.allocations[:6]
+    ] == ["float32"] * 6
     assert [
-        row["dtype"] for row in torch.allocations[3:]
-    ] == ["bfloat16", "bfloat16", "bfloat16", "bfloat16", "bfloat16"]
+        row["dtype"] for row in torch.allocations[6:]
+    ] == ["bfloat16"] * 8
 
 
-def test_candidate_timed_path_has_no_sync_item_allocation_or_construction():
-    source = inspect.getsource(_run_candidate)
+def test_completion_owned_timed_path_has_no_sync_item_or_allocation():
+    source = inspect.getsource(_run_completion_owned)
 
     for forbidden in (
         "torch.cuda.synchronize",
         ".item(",
+        ".synchronize(",
         "torch.empty",
         "torch.zeros",
         "torch.cuda.Stream",
@@ -134,6 +145,22 @@ def test_candidate_timed_path_has_no_sync_item_allocation_or_construction():
         "LeaseSealedCollectiveSideEffect(",
     ):
         assert forbidden not in source
+
+
+def test_event_only_arm_is_diagnostic_only():
+    diagnostic_source = inspect.getsource(_run_event_only_diagnostic)
+    assert "collective_work.wait()" not in diagnostic_source
+    formal_source = inspect.getsource(run_worker).split(
+        'for pair in workload["measurements"]:', 1
+    )[1]
+    assert "_run_event_only_diagnostic(" not in formal_source
+
+
+def test_expected_reduction_value_is_independent_and_exact():
+    assert _expected_reduction_value(0) == 6.0
+    assert _expected_reduction_value(1) == 10.0
+    assert _expected_reduction_value(96) == 390.0
+    assert _expected_reduction_value(97) == 6.0
 
 
 def test_worker_records_peak_reserved_memory_for_gate_evidence():
@@ -257,6 +284,7 @@ def test_runtime_capability_uses_nvml_uuid_when_properties_omit_uuid(
 
 def test_rank_artifact_merge_flattens_lifecycle_shape_rows(tmp_path):
     for rank in range(4):
+        (tmp_path / f"diagnostic_rows.rank-{rank}.jsonl").write_text("")
         (tmp_path / f"measurement_rows.rank-{rank}.jsonl").write_text("")
         (tmp_path / f"memory.rank-{rank}.json").write_text(
             json.dumps({"rank": rank})

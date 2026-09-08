@@ -30,6 +30,7 @@ class LeaseSealedOverlapTicket:
     collective_visible_event: object
     side_effect_ready_event: object
     collective_waited: bool = False
+    collective_dependency_transferred: bool = False
     side_effect_joined: bool = False
     state: TicketState = "launched"
 
@@ -94,6 +95,7 @@ class LeaseSealedCollectiveSideEffect:
             ticket.collective_work.wait()
             ticket.collective_waited = True
             ticket.collective_visible_event.record(current)
+            ticket.collective_dependency_transferred = True
             current.wait_event(ticket.side_effect_ready_event)
             ticket.side_effect_joined = True
         ticket.state = "joined"

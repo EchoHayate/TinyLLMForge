@@ -118,6 +118,7 @@ def test_join_transfers_collective_ownership_before_side_effect_join():
         events.index(("context", "exit", "current"))
     )
     assert ticket.collective_waited is True
+    assert ticket.collective_dependency_transferred is True
     assert ticket.side_effect_joined is True
 
 
@@ -136,6 +137,7 @@ def test_failed_collective_wait_cannot_join_seal_or_publish():
 
     assert ticket.state == "launched"
     assert ticket.collective_waited is False
+    assert ticket.collective_dependency_transferred is False
     with pytest.raises(RuntimeError, match="joined"):
         runtime.seal(ticket, "identity-a")
 

@@ -17,6 +17,7 @@ import time
 if __package__:
     from tools.lease_sealed_state_commit_overlap import (
         ACTIVE_TOKEN_GROUPS,
+        DIAGNOSTIC_ITERATION_COUNT,
         HIDDEN_SIZE,
         LINEAR_LAYER_COUNT,
         MEASURED_PAIR_COUNT,
@@ -24,11 +25,13 @@ if __package__:
         WARMUP_PAIR_COUNT,
         WORLD_SIZE,
         interval_intersection_ns,
-        validate_measurement_row,
+        validate_stage01_diagnostic_row,
+        validate_stage01_measurement_row,
     )
 else:
     from lease_sealed_state_commit_overlap import (
         ACTIVE_TOKEN_GROUPS,
+        DIAGNOSTIC_ITERATION_COUNT,
         HIDDEN_SIZE,
         LINEAR_LAYER_COUNT,
         MEASURED_PAIR_COUNT,
@@ -36,7 +39,8 @@ else:
         WARMUP_PAIR_COUNT,
         WORLD_SIZE,
         interval_intersection_ns,
-        validate_measurement_row,
+        validate_stage01_diagnostic_row,
+        validate_stage01_measurement_row,
     )
 
 
@@ -53,23 +57,28 @@ class OverlapBuffers:
     side_effect_stream: object
     producer_ready_event: object
     collective_visible_event: object
+    event_only_submitted_event: object
     side_effect_ready_event: object
     baseline_started: object
     baseline_completed: object
     candidate_started: object
     candidate_completed: object
-    allreduce_started: object
-    allreduce_completed: object
     state_copy_started: object
     state_copy_completed: object
     local_result: object
     baseline_result: object
     candidate_result: object
+    expected_result: object
+    diagnostic_result: object
+    event_only_snapshot: object
     baseline_output: object
     candidate_output: object
+    expected_output: object
+    diagnostic_output: object
     side_effect_payload: object
     baseline_shadow: object
     candidate_shadow: object
+    diagnostic_shadow: object
 
     @classmethod
     def create(cls, torch, device, active_tokens):
@@ -82,13 +91,12 @@ class OverlapBuffers:
             side_effect_stream=torch.cuda.Stream(device=device),
             producer_ready_event=event(),
             collective_visible_event=event(),
+            event_only_submitted_event=event(),
             side_effect_ready_event=event(),
             baseline_started=event(),
             baseline_completed=event(),
             candidate_started=event(),
             candidate_completed=event(),
-            allreduce_started=event(),
-            allreduce_completed=event(),
             state_copy_started=event(),
             state_copy_completed=event(),
             local_result=torch.empty(
@@ -106,12 +114,37 @@ class OverlapBuffers:
                 dtype=torch.float32,
                 device=device,
             ),
+            expected_result=torch.empty(
+                (active_tokens, HIDDEN_SIZE),
+                dtype=torch.float32,
+                device=device,
+            ),
+            diagnostic_result=torch.empty(
+                (active_tokens, HIDDEN_SIZE),
+                dtype=torch.float32,
+                device=device,
+            ),
+            event_only_snapshot=torch.empty(
+                (active_tokens, HIDDEN_SIZE),
+                dtype=torch.float32,
+                device=device,
+            ),
             baseline_output=torch.empty(
                 (active_tokens, HIDDEN_SIZE),
                 dtype=torch.bfloat16,
                 device=device,
             ),
             candidate_output=torch.empty(
+                (active_tokens, HIDDEN_SIZE),
+                dtype=torch.bfloat16,
+                device=device,
+            ),
+            expected_output=torch.empty(
+                (active_tokens, HIDDEN_SIZE),
+                dtype=torch.bfloat16,
+                device=device,
+            ),
+            diagnostic_output=torch.empty(
                 (active_tokens, HIDDEN_SIZE),
                 dtype=torch.bfloat16,
                 device=device,
@@ -131,6 +164,11 @@ class OverlapBuffers:
                 dtype=torch.bfloat16,
                 device=device,
             ),
+            diagnostic_shadow=torch.empty(
+                (active_tokens, state_elements),
+                dtype=torch.bfloat16,
+                device=device,
+            ),
         )
 
 
@@ -139,9 +177,9 @@ def build_workload_schedule():
         return {
             "pair_index": pair_index,
             "arm_order": (
-                ("baseline", "candidate")
+                ("baseline", "completion_owned")
                 if pair_index % 2 == 0
-                else ("candidate", "baseline")
+                else ("completion_owned", "baseline")
             ),
         }
 
@@ -149,6 +187,10 @@ def build_workload_schedule():
         {
             "active_tokens": active_tokens,
             "seed": SEEDS[active_tokens],
+            "diagnostics": tuple(
+                {"diagnostic_index": diagnostic_index}
+                for diagnostic_index in range(DIAGNOSTIC_ITERATION_COUNT)
+            ),
             "warmups": tuple(
                 pair(pair_index) for pair_index in range(WARMUP_PAIR_COUNT)
             ),
@@ -218,11 +260,8 @@ def _atomic_write_jsonl(path, rows):
     temporary.replace(path)
 
 
-def _timed_allreduce(tensor, buffers, dist):
-    buffers.allreduce_started.record(buffers.communication_stream)
-    work = dist.all_reduce(tensor, async_op=True)
-    buffers.allreduce_completed.record(buffers.communication_stream)
-    return work
+def _launch_allreduce(tensor, dist):
+    return dist.all_reduce(tensor, async_op=True)
 
 
 def _timed_state_copy(payload, buffers):
@@ -247,11 +286,7 @@ def build_overlap_runtime(*, buffers, torch, dist):
         ),
         current_stream=lambda tensor: torch.cuda.current_stream(tensor.device),
         stream_context=torch.cuda.stream,
-        collective=lambda tensor: _timed_allreduce(
-            tensor,
-            buffers,
-            dist,
-        ),
+        collective=lambda tensor: _launch_allreduce(tensor, dist),
     )
 
 
@@ -274,7 +309,7 @@ def _run_baseline(*, buffers, torch, dist):
     }
 
 
-def _run_candidate(*, buffers, runtime, torch, commit_identity):
+def _run_completion_owned(*, buffers, runtime, torch, commit_identity):
     stream = torch.cuda.current_stream(buffers.local_result.device)
     submitted = time.perf_counter_ns()
     buffers.candidate_started.record(stream)
@@ -299,7 +334,46 @@ def _run_candidate(*, buffers, runtime, torch, commit_identity):
         "shadow": buffers.candidate_shadow,
         "started": buffers.candidate_started,
         "completed": buffers.candidate_completed,
+        "collective_visible": buffers.collective_visible_event,
+        "state_copy_started": buffers.state_copy_started,
+        "state_copy_completed": buffers.state_copy_completed,
+        "collective_wait_invoked": ticket.collective_waited,
+        "collective_dependency_transferred": (
+            ticket.collective_dependency_transferred
+        ),
+        "side_effect_dependency_joined": ticket.side_effect_joined,
         "host_submission_ns": time.perf_counter_ns() - submitted,
+    }
+
+
+def _run_event_only_diagnostic(*, buffers, torch, dist):
+    stream = torch.cuda.current_stream(buffers.local_result.device)
+    buffers.diagnostic_result.copy_(buffers.local_result)
+    buffers.producer_ready_event.record(stream)
+    with torch.cuda.stream(buffers.communication_stream):
+        buffers.communication_stream.wait_event(
+            buffers.producer_ready_event
+        )
+        work = dist.all_reduce(buffers.diagnostic_result, async_op=True)
+        buffers.event_only_submitted_event.record(
+            buffers.communication_stream
+        )
+    with torch.cuda.stream(buffers.side_effect_stream):
+        buffers.side_effect_stream.wait_event(
+            buffers.producer_ready_event
+        )
+        buffers.diagnostic_shadow.copy_(buffers.side_effect_payload)
+        buffers.side_effect_ready_event.record(buffers.side_effect_stream)
+    stream.wait_event(buffers.event_only_submitted_event)
+    buffers.event_only_snapshot.copy_(buffers.diagnostic_result)
+    buffers.diagnostic_output.copy_(buffers.diagnostic_result)
+    stream.wait_event(buffers.side_effect_ready_event)
+    work.wait()
+    stream.synchronize()
+    return {
+        "reduced_snapshot": buffers.event_only_snapshot,
+        "final_output": buffers.diagnostic_output,
+        "shadow": buffers.diagnostic_shadow,
     }
 
 
@@ -315,10 +389,22 @@ def _tensor_digest(tensor, torch):
     return hashlib.sha256(payload.cpu().numpy().tobytes()).hexdigest()
 
 
+def _expected_reduction_value(flat_index):
+    return float(WORLD_SIZE * (flat_index % 97) + sum(range(WORLD_SIZE)))
+
+
 def _initialize_buffers(buffers, seed, rank, torch, dist):
-    local_generator = torch.Generator(device=buffers.local_result.device)
-    local_generator.manual_seed(seed + rank)
-    buffers.local_result.normal_(generator=local_generator)
+    pattern = torch.arange(
+        buffers.local_result.numel(),
+        dtype=torch.float32,
+        device=buffers.local_result.device,
+    ).reshape(buffers.local_result.shape)
+    pattern.remainder_(97)
+    buffers.local_result.copy_(pattern).add_(rank)
+    buffers.expected_result.copy_(pattern).mul_(WORLD_SIZE).add_(
+        sum(range(WORLD_SIZE))
+    )
+    buffers.expected_output.copy_(buffers.expected_result)
     if rank == 0:
         payload_generator = torch.Generator(
             device=buffers.side_effect_payload.device
@@ -328,6 +414,7 @@ def _initialize_buffers(buffers, seed, rank, torch, dist):
     dist.broadcast(buffers.side_effect_payload, src=0)
     buffers.baseline_shadow.zero_()
     buffers.candidate_shadow.zero_()
+    buffers.diagnostic_shadow.zero_()
 
 
 def _run_lifecycle_probe(
@@ -350,6 +437,11 @@ def _run_lifecycle_probe(
         commit_identity=commit_identity,
     )
     runtime.join(ticket)
+    collective_wait_invoked = ticket.collective_waited
+    collective_dependency_transferred = (
+        ticket.collective_dependency_transferred
+    )
+    side_effect_dependency_joined = ticket.side_effect_joined
     stream.synchronize()
     active_preserved = (
         _tensor_digest(buffers.baseline_shadow, torch) == old_digest
@@ -384,6 +476,11 @@ def _run_lifecycle_probe(
         "active_state_preserved_before_publish": active_preserved,
         "published_state_exact": published_exact,
         "abort_preserved_old_state": abort_preserved,
+        "collective_wait_invoked": collective_wait_invoked,
+        "collective_dependency_transferred": (
+            collective_dependency_transferred
+        ),
+        "side_effect_dependency_joined": side_effect_dependency_joined,
     }
 
 
@@ -455,6 +552,7 @@ def _runtime_capability_row(rank, device, torch, dist):
 
 def _rank_paths(output_dir, rank):
     return {
+        "diagnostics": output_dir / f"diagnostic_rows.rank-{rank}.jsonl",
         "measurements": output_dir / f"measurement_rows.rank-{rank}.jsonl",
         "memory": output_dir / f"memory.rank-{rank}.json",
         "lifecycle": output_dir / f"lifecycle.rank-{rank}.json",
@@ -484,6 +582,10 @@ def _wait_for_rank_files(output_dir, filename, timeout_seconds=60.0):
 
 
 def _merge_rank_artifacts(output_dir):
+    diagnostic_paths = _wait_for_rank_files(
+        output_dir,
+        "diagnostic_rows.rank-{rank}.jsonl",
+    )
     measurement_paths = _wait_for_rank_files(
         output_dir,
         "measurement_rows.rank-{rank}.jsonl",
@@ -504,6 +606,12 @@ def _merge_rank_artifacts(output_dir):
         output_dir,
         "capability.rank-{rank}.json",
     )
+    diagnostic_rows = []
+    for path in diagnostic_paths:
+        with path.open(encoding="utf-8") as handle:
+            diagnostic_rows.extend(
+                json.loads(line) for line in handle if line.strip()
+            )
     rows = []
     for path in measurement_paths:
         with path.open(encoding="utf-8") as handle:
@@ -524,6 +632,10 @@ def _merge_rank_artifacts(output_dir):
         json.loads(path.read_text(encoding="utf-8"))
         for path in capability_paths
     ]
+    _atomic_write_jsonl(
+        output_dir / "diagnostic_rows.jsonl",
+        diagnostic_rows,
+    )
     _atomic_write_jsonl(output_dir / "measurement_rows.jsonl", rows)
     _atomic_write_json(
         output_dir / "memory.json",
@@ -585,6 +697,7 @@ def run_worker(args):
         world_size=args.world_size,
     )
 
+    diagnostic_rows = []
     local_rows = []
     memory_rows = []
     lifecycle_rows = []
@@ -625,6 +738,76 @@ def run_worker(args):
                 f"shape-{active_tokens}"
             )
 
+            for diagnostic in workload["diagnostics"]:
+                buffers.baseline_shadow.zero_()
+                buffers.candidate_shadow.zero_()
+                buffers.diagnostic_shadow.zero_()
+                baseline = _run_baseline(
+                    buffers=buffers,
+                    torch=torch,
+                    dist=dist,
+                )
+                baseline["completed"].synchronize()
+                completion_owned = _run_completion_owned(
+                    buffers=buffers,
+                    runtime=runtime,
+                    torch=torch,
+                    commit_identity=(
+                        f"{commit_identity}:diagnostic:"
+                        f"{diagnostic['diagnostic_index']}"
+                    ),
+                )
+                completion_owned["completed"].synchronize()
+                event_only = _run_event_only_diagnostic(
+                    buffers=buffers,
+                    torch=torch,
+                    dist=dist,
+                )
+                diagnostic_rows.append(validate_stage01_diagnostic_row({
+                    "attempt": args.attempt,
+                    "source_revision": args.source_revision,
+                    "source_tree_sha256": args.source_tree_sha256,
+                    "active_tokens": active_tokens,
+                    "diagnostic_index": diagnostic["diagnostic_index"],
+                    "rank": args.rank,
+                    "baseline_reduced_exact": bool(
+                        torch.equal(
+                            baseline["reduced_result"],
+                            buffers.expected_result,
+                        )
+                    ),
+                    "baseline_final_exact": bool(
+                        torch.equal(
+                            baseline["final_output"],
+                            buffers.expected_output,
+                        )
+                    ),
+                    "completion_owned_reduced_exact": bool(
+                        torch.equal(
+                            completion_owned["reduced_result"],
+                            buffers.expected_result,
+                        )
+                    ),
+                    "completion_owned_final_exact": bool(
+                        torch.equal(
+                            completion_owned["final_output"],
+                            buffers.expected_output,
+                        )
+                    ),
+                    "event_only_reduced_exact": bool(
+                        torch.equal(
+                            event_only["reduced_snapshot"],
+                            buffers.expected_result,
+                        )
+                    ),
+                    "event_only_final_exact": bool(
+                        torch.equal(
+                            event_only["final_output"],
+                            buffers.expected_output,
+                        )
+                    ),
+                }))
+
             for pair in workload["warmups"]:
                 results = {}
                 for arm in pair["arm_order"]:
@@ -635,14 +818,14 @@ def run_worker(args):
                             dist=dist,
                         )
                     else:
-                        results[arm] = _run_candidate(
+                        results[arm] = _run_completion_owned(
                             buffers=buffers,
                             runtime=runtime,
                             torch=torch,
                             commit_identity=commit_identity,
                         )
                 results["baseline"]["completed"].synchronize()
-                results["candidate"]["completed"].synchronize()
+                results["completion_owned"]["completed"].synchronize()
 
             lifecycle = _run_lifecycle_probe(
                 buffers=buffers,
@@ -673,18 +856,18 @@ def run_worker(args):
                             dist=dist,
                         )
                     else:
-                        results[arm] = _run_candidate(
+                        results[arm] = _run_completion_owned(
                             buffers=buffers,
                             runtime=runtime,
                             torch=torch,
                             commit_identity=commit_identity,
                         )
                 results["baseline"]["completed"].synchronize()
-                results["candidate"]["completed"].synchronize()
+                results["completion_owned"]["completed"].synchronize()
                 allocated_after_pair = torch.cuda.memory_allocated(device)
 
                 baseline = results["baseline"]
-                candidate = results["candidate"]
+                candidate = results["completion_owned"]
                 reduced_digest = _tensor_digest(
                     candidate["reduced_result"],
                     torch,
@@ -704,15 +887,39 @@ def run_worker(args):
                 dist.all_gather_object(rank_final_digests, final_digest)
                 dist.all_gather_object(rank_shadow_digests, shadow_digest)
 
-                allreduce_interval = _event_interval_ns(
+                collective_outstanding_window = _event_interval_ns(
                     candidate["started"],
-                    buffers.allreduce_started,
-                    buffers.allreduce_completed,
+                    buffers.producer_ready_event,
+                    candidate["collective_visible"],
                 )
-                state_copy_interval = _event_interval_ns(
+                side_effect_window = _event_interval_ns(
                     candidate["started"],
-                    buffers.state_copy_started,
-                    buffers.state_copy_completed,
+                    candidate["state_copy_started"],
+                    candidate["state_copy_completed"],
+                )
+                baseline_reduced_exact = bool(
+                    torch.equal(
+                        baseline["reduced_result"],
+                        buffers.expected_result,
+                    )
+                )
+                candidate_reduced_exact = bool(
+                    torch.equal(
+                        candidate["reduced_result"],
+                        buffers.expected_result,
+                    )
+                )
+                baseline_final_exact = bool(
+                    torch.equal(
+                        baseline["final_output"],
+                        buffers.expected_output,
+                    )
+                )
+                candidate_final_exact = bool(
+                    torch.equal(
+                        candidate["final_output"],
+                        buffers.expected_output,
+                    )
                 )
                 row = {
                     "attempt": args.attempt,
@@ -740,26 +947,34 @@ def run_worker(args):
                     "candidate_host_submission_ns": candidate[
                         "host_submission_ns"
                     ],
-                    "allreduce_interval_ns": allreduce_interval,
-                    "state_copy_interval_ns": state_copy_interval,
-                    "overlap_intersection_ns": interval_intersection_ns(
-                        allreduce_interval,
-                        state_copy_interval,
+                    "collective_outstanding_window_ns": (
+                        collective_outstanding_window
                     ),
-                    "reduced_output_exact": bool(
+                    "side_effect_window_ns": side_effect_window,
+                    "overlap_intersection_ns": interval_intersection_ns(
+                        collective_outstanding_window,
+                        side_effect_window,
+                    ),
+                    "expected_reduced_exact": (
+                        baseline_reduced_exact
+                        and candidate_reduced_exact
+                    ),
+                    "baseline_reduced_exact": baseline_reduced_exact,
+                    "candidate_reduced_exact": (
+                        candidate_reduced_exact
+                        and len(set(rank_reduced_digests)) == 1
+                    ),
+                    "baseline_final_exact": baseline_final_exact,
+                    "candidate_final_exact": (
+                        candidate_final_exact
+                        and len(set(rank_final_digests)) == 1
+                    ),
+                    "baseline_candidate_exact": bool(
                         torch.equal(
-                            candidate["reduced_result"],
-                            baseline["reduced_result"],
-                        )
-                    )
-                    and len(set(rank_reduced_digests)) == 1,
-                    "final_output_exact": bool(
-                        torch.equal(
-                            candidate["final_output"],
                             baseline["final_output"],
+                            candidate["final_output"],
                         )
-                    )
-                    and len(set(rank_final_digests)) == 1,
+                    ),
                     "shadow_payload_exact": bool(
                         torch.equal(
                             candidate["shadow"],
@@ -769,6 +984,15 @@ def run_worker(args):
                     and len(set(rank_shadow_digests)) == 1,
                     **lifecycle,
                     "commit_identity_match": identity_match,
+                    "collective_wait_invoked": candidate[
+                        "collective_wait_invoked"
+                    ],
+                    "collective_dependency_transferred": candidate[
+                        "collective_dependency_transferred"
+                    ],
+                    "side_effect_dependency_joined": candidate[
+                        "side_effect_dependency_joined"
+                    ],
                     "finite_output": bool(
                         torch.isfinite(candidate["final_output"]).all().item()
                     ),
@@ -780,7 +1004,7 @@ def run_worker(args):
                     "final_output_digest": final_digest,
                     "shadow_payload_digest": shadow_digest,
                 }
-                local_rows.append(validate_measurement_row(row))
+                local_rows.append(validate_stage01_measurement_row(row))
 
             memory_rows.append({
                 "rank": args.rank,
@@ -827,6 +1051,7 @@ def run_worker(args):
             ),
             "shape_rows": memory_rows,
         }
+        _atomic_write_jsonl(paths["diagnostics"], diagnostic_rows)
         _atomic_write_jsonl(paths["measurements"], local_rows)
         _atomic_write_json(paths["memory"], maximum_memory)
         _atomic_write_json(
