@@ -100,8 +100,25 @@ def _kerberos():
     }
 
 
-def test_kerberos_launch_floor_is_three_hours():
-    assert MINIMUM_KERBEROS_LIFETIME_SECONDS == 10_800
+def test_kerberos_launch_floor_is_thirty_minutes():
+    assert MINIMUM_KERBEROS_LIFETIME_SECONDS == 1_800
+
+
+@pytest.mark.parametrize(
+    ("remaining_lifetime_seconds", "expected"),
+    [
+        (1_799, False),
+        (1_800, True),
+    ],
+)
+def test_kerberos_launch_floor_boundary(
+    remaining_lifetime_seconds,
+    expected,
+):
+    receipt = _kerberos()
+    receipt["remaining_lifetime_seconds"] = remaining_lifetime_seconds
+
+    assert controller_module._validate_kerberos(receipt) is expected
 
 
 def test_default_model_root_uses_huggingface_snapshot_layout():

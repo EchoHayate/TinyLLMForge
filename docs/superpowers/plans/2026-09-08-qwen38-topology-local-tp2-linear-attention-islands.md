@@ -57,8 +57,9 @@ at source anchor `3521872de3e48ba17872a458ce894a7c4b13189b`.
   physical memory; migration temporaries released before steady timing.
 - Do not run `kinit` or `krenew`. Kerberos commands use
   `KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian`.
-- Require at least 10,800 seconds of TGT lifetime at launch: the two-hour
-  worker timeout plus one hour for staging, verification, and compact
+- Require at least 1,800 seconds of TGT lifetime at launch. This preserves a
+  thirty-minute startup window but explicitly accepts that credentials may
+  expire during the two-hour worker timeout, staging, verification, or compact
   download. External automatic cache refresh is allowed; the controller does
   not perform renewal itself.
 - Never terminate, pause, adopt, or modify foreign GPU/process workloads.
@@ -1153,7 +1154,7 @@ Run:
 KRB5CCNAME=FILE:/Users/bytedance/krb5cc_sitian klist
 ```
 
-Expected: the `sitian@BYTEDANCE.COM` TGT has at least 10,800 seconds remaining.
+Expected: the `sitian@BYTEDANCE.COM` TGT has at least 1,800 seconds remaining.
 If not, stop before remote mutation and record `BLOCKED_KERBEROS`.
 
 - [ ] **Step 2: Run a non-mutating dry-run**
@@ -1447,7 +1448,7 @@ git push origin feat/kv-sparse-attention
 
 - [ ] **Step 6: Run a fresh diagnostic**
 
-After verifying at least 10,800 seconds of Kerberos lifetime and four
+After verifying at least 1,800 seconds of Kerberos lifetime and four
 admissible GPUs, run the controller with:
 
 ```bash

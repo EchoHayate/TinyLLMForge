@@ -234,8 +234,11 @@ The candidate requires:
 GPU cleanliness, memory allowance, and Kerberos lifetime remain controller
 admission conditions. They are not performance results.
 
-The launch-time Kerberos floor is 10,800 seconds. This covers the two-hour
-worker timeout plus one hour for staging, verification, and compact download.
+The launch-time Kerberos floor is 1,800 seconds. This intentionally permits a
+launch with only thirty minutes of credential lifetime remaining so that a
+short resource-availability window is not lost. It no longer guarantees enough
+lifetime for the two-hour worker timeout, staging, verification, and compact
+download, so the campaign accepts a higher risk of mid-run credential expiry.
 The controller never renews credentials itself; an external credential agent
 may refresh the fixed cache while the campaign is running.
 
