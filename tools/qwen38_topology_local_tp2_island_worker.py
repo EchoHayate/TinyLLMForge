@@ -1474,6 +1474,9 @@ def run_mixer_pair(
             candidate["convolution"],
             candidate["recurrent"],
         )),
+        "candidate_global_collective_count": 0,
+        "fallback_count": 0,
+        "timed_allocation_count": 0,
         "parameter_digests": dict(candidate_view.tensor_digests),
     }
 

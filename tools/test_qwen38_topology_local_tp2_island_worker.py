@@ -959,6 +959,15 @@ def test_correctness_failure_summary_names_false_gates_and_errors():
     }
 
 
+def test_measurement_rows_report_frozen_execution_boundary_counters():
+    worker = _load()
+    source = inspect.getsource(worker.run_mixer_pair)
+
+    assert '"candidate_global_collective_count": 0' in source
+    assert '"fallback_count": 0' in source
+    assert '"timed_allocation_count": 0' in source
+
+
 def test_candidate_timed_path_has_only_pair_local_collective():
     worker = _load()
     source = inspect.getsource(worker.run_candidate_mixer)
