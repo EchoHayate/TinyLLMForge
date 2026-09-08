@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import tempfile
 import time
+import traceback
 from types import MappingProxyType
 from typing import Callable, Mapping
 
@@ -1454,6 +1455,25 @@ def _atomic_write_jsonl(path: Path, rows: tuple[dict, ...]) -> None:
     temporary.replace(path)
 
 
+def build_failure_record(
+    error: BaseException,
+    *,
+    stage: str,
+) -> dict[str, str]:
+    if not isinstance(stage, str) or not stage:
+        raise ValueError("failure stage must be a non-empty string")
+    return {
+        "type": type(error).__name__,
+        "message": str(error),
+        "stage": stage,
+        "traceback": "".join(traceback.format_exception(
+            type(error),
+            error,
+            error.__traceback__,
+        )),
+    }
+
+
 def _load_checkpoint_model(model_root: Path, rank: int):
     import torch
 
@@ -1716,13 +1736,16 @@ def run_worker_campaign(
     capability = _runtime_capability(rank, device)
     failure = None
     lifecycle_proofs = None
+    stage = "checkpoint_model_load"
     try:
         load_start_allocated = int(torch.cuda.memory_allocated(device))
         model, owner, partition_identity = _load_checkpoint_model(
             model_root,
             rank,
         )
+        stage = "layer_zero_lookup"
         mixer = locate_layer_zero_linear_attention(model)
+        stage = "state_parameter_load"
         state_parameters = load_logical_tp2_state_parameters(
             model_root,
             logical_rank=identity.logical_rank,
@@ -1735,11 +1758,13 @@ def run_worker_campaign(
         mixer.logical_tp2_A_log = state_parameters["A_log"]
         mixer.logical_tp2_dt_bias = state_parameters["dt_bias"]
         setup = CandidateSetupLifecycle()
+        stage = "candidate_view_build"
         view = build_logical_tp2_layer_view(
             mixer,
             identity.logical_rank,
             pair_group,
         )
+        stage = "parameter_identity"
         parameter_identity = merge_parameter_identity_records(
             build_layer_parameter_identity(mixer, view),
             state_parameter_identity,
@@ -1757,6 +1782,7 @@ def run_worker_campaign(
         ):
             resources.register_tensor(tensor)
 
+        stage = "persistent_reservation"
         reservation_contract = project_persistent_reservation()
         reservation = resources.register_tensor(torch.empty(
             reservation_contract["reservation_bytes"],
@@ -1774,6 +1800,7 @@ def run_worker_campaign(
 
         migration_state = None
         baseline_state = None
+        stage = "state_migration"
         for phase, count in (
             ("warmup", WARMUP_PAIR_COUNT),
             ("measured", MEASURED_PAIR_COUNT),
@@ -1814,6 +1841,7 @@ def run_worker_campaign(
         torch.cuda.reset_peak_memory_stats(device)
         setup.mark_warmup_started()
         last_case = None
+        stage = "paired_measurement"
         for frozen_case in cases:
             last_case = frozen_case
             hidden, _, _ = _make_case_inputs(
@@ -1931,12 +1959,10 @@ def run_worker_campaign(
             ),
             **reservation_contract,
         }
+        stage = "lifecycle_finalize"
         failed = False
     except BaseException as error:
-        failure = {
-            "type": type(error).__name__,
-            "message": str(error),
-        }
+        failure = build_failure_record(error, stage=stage)
     finally:
         cleanup = resources.close(failed=failed)
     _atomic_write_jsonl(

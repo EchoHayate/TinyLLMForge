@@ -740,6 +740,23 @@ def test_cleanup_is_idempotent_and_unpublishes_on_failure():
     assert receipt["candidate_state_unpublished"] is True
 
 
+def test_failure_record_preserves_stage_and_traceback():
+    worker = _load()
+
+    try:
+        raise AssertionError("diagnostic sentinel")
+    except AssertionError as error:
+        record = worker.build_failure_record(
+            error,
+            stage="checkpoint_model_load",
+        )
+
+    assert record["type"] == "AssertionError"
+    assert record["message"] == "diagnostic sentinel"
+    assert record["stage"] == "checkpoint_model_load"
+    assert "AssertionError: diagnostic sentinel" in record["traceback"]
+
+
 def test_candidate_state_rejects_stale_identity():
     worker = _load()
     lifecycle = worker.CandidateStateLifecycle()
