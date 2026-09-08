@@ -1194,6 +1194,25 @@ def _timed_arm(call: Callable[[], tuple]) -> dict:
     }
 
 
+def gather_contiguous_world(
+    local,
+    *,
+    distributed,
+    torch_module,
+) -> list:
+    is_contiguous = getattr(local, "is_contiguous", None)
+    if not callable(is_contiguous):
+        raise ValueError("collective input must be a tensor")
+    if not is_contiguous():
+        local = local.contiguous()
+    gathered = [
+        torch_module.empty_like(local)
+        for _ in range(WORLD_SIZE)
+    ]
+    distributed.all_gather(gathered, local)
+    return gathered
+
+
 def run_mixer_pair(
     *,
     attempt: str,
@@ -1259,34 +1278,31 @@ def run_mixer_pair(
         else int(case.get("rank", 0))
     )
     if dist.is_available() and dist.is_initialized():
-        gathered_outputs = [
-            torch.empty_like(candidate["output"])
-            for _ in range(WORLD_SIZE)
-        ]
-        gathered_baseline_convolution = [
-            torch.empty_like(baseline["convolution"])
-            for _ in range(WORLD_SIZE)
-        ]
-        gathered_baseline_recurrent = [
-            torch.empty_like(baseline["recurrent"])
-            for _ in range(WORLD_SIZE)
-        ]
-        gathered_candidate_convolution = [
-            torch.empty_like(candidate["convolution"])
-            for _ in range(WORLD_SIZE)
-        ]
-        gathered_candidate_recurrent = [
-            torch.empty_like(candidate["recurrent"])
-            for _ in range(WORLD_SIZE)
-        ]
-        for local, gathered in (
-            (candidate["output"], gathered_outputs),
-            (baseline["convolution"], gathered_baseline_convolution),
-            (baseline["recurrent"], gathered_baseline_recurrent),
-            (candidate["convolution"], gathered_candidate_convolution),
-            (candidate["recurrent"], gathered_candidate_recurrent),
-        ):
-            dist.all_gather(gathered, local)
+        gathered_outputs = gather_contiguous_world(
+            candidate["output"],
+            distributed=dist,
+            torch_module=torch,
+        )
+        gathered_baseline_convolution = gather_contiguous_world(
+            baseline["convolution"],
+            distributed=dist,
+            torch_module=torch,
+        )
+        gathered_baseline_recurrent = gather_contiguous_world(
+            baseline["recurrent"],
+            distributed=dist,
+            torch_module=torch,
+        )
+        gathered_candidate_convolution = gather_contiguous_world(
+            candidate["convolution"],
+            distributed=dist,
+            torch_module=torch,
+        )
+        gathered_candidate_recurrent = gather_contiguous_world(
+            candidate["recurrent"],
+            distributed=dist,
+            torch_module=torch,
+        )
     else:
         gathered_outputs = [candidate["output"]] * WORLD_SIZE
         gathered_baseline_convolution = [

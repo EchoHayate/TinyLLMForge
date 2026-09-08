@@ -59,6 +59,9 @@ class FakeTensor:
     def is_floating_point(self):
         return self._floating
 
+    def is_contiguous(self):
+        return self._contiguous
+
     def narrow(self, dim, start, length):
         shape = list(self.shape)
         assert 0 <= dim < len(shape)
@@ -863,6 +866,42 @@ def test_timed_pair_preclones_inputs_and_syncs_after_both_submissions():
     assert source.count(
         "torch.cuda.current_stream().synchronize()"
     ) == 1
+
+
+def test_correctness_gather_contiguousizes_input_and_destinations():
+    worker = _load()
+    calls = []
+
+    class Distributed:
+        @staticmethod
+        def all_gather(gathered, local):
+            calls.append((gathered, local))
+            assert local.is_contiguous()
+            assert all(tensor.is_contiguous() for tensor in gathered)
+
+    class Torch:
+        @staticmethod
+        def empty_like(tensor):
+            return FakeTensor(
+                tensor.shape,
+                label="gathered",
+                dtype=tensor.dtype,
+                device=tensor.device,
+                contiguous=tensor.is_contiguous(),
+            )
+
+    gathered = worker.gather_contiguous_world(
+        FakeTensor(
+            (4, 8),
+            label="strided",
+            contiguous=False,
+        ),
+        distributed=Distributed,
+        torch_module=Torch,
+    )
+
+    assert len(gathered) == 4
+    assert calls[0][1].label == "strided.contiguous"
 
 
 def test_candidate_timed_path_has_only_pair_local_collective():
