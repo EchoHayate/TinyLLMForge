@@ -950,7 +950,9 @@ Test:
 - topology selects the best perfect matching;
 - a changed process inventory blocks launch;
 - only exact-tag owned process groups may be signaled during cleanup;
-- SSH status 255 retries only within the fixed retry budget;
+- SSH status 255 retries only within the fixed retry budget, with bounded
+  one-, two-, and four-second delays between attempts;
+- non-255 SSH failures return immediately without sleeping;
 - raw traces are excluded from compact download;
 - remote and local independent verifiers must agree;
 - failure paths write a terminal controller receipt; and

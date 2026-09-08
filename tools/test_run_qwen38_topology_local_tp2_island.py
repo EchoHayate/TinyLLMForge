@@ -187,9 +187,11 @@ def test_worker_commands_freeze_world_rank_gpu_map_and_pair_groups():
         ] == "0,1;2,3"
 
 
-def test_ssh_255_retries_only_within_fixed_budget():
+def test_ssh_255_retries_only_within_fixed_budget(monkeypatch):
     returncodes = iter((255, 255, 0))
     calls = []
+    sleeps = []
+    monkeypatch.setattr(controller_module.time, "sleep", sleeps.append)
 
     result = run_ssh_with_retry(
         ["ssh", "host", "true"],
@@ -206,7 +208,9 @@ def test_ssh_255_retries_only_within_fixed_budget():
 
     assert result.returncode == 0
     assert len(calls) == 3
+    assert sleeps == [1.0, 2.0]
     calls.clear()
+    sleeps.clear()
     result = run_ssh_with_retry(
         ["ssh", "host", "false"],
         retry_count=5,
@@ -217,6 +221,7 @@ def test_ssh_255_retries_only_within_fixed_budget():
     )
     assert result.returncode == 7
     assert len(calls) == 1
+    assert sleeps == []
 
 
 def test_cleanup_selects_only_registered_exact_tag_process_groups():

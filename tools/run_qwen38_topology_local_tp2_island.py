@@ -346,7 +346,7 @@ def run_ssh_with_retry(
     if type(retry_count) is not int or retry_count < 0:
         raise ValueError("retry count is invalid")
     result = None
-    for _ in range(retry_count + 1):
+    for attempt in range(retry_count + 1):
         result = runner(
             argv,
             text=True,
@@ -357,6 +357,8 @@ def run_ssh_with_retry(
         )
         if result.returncode != 255:
             return result
+        if attempt < retry_count:
+            time.sleep(min(2.0 ** attempt, 4.0))
     return result
 
 

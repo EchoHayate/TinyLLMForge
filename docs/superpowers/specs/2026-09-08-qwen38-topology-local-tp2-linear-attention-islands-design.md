@@ -239,6 +239,12 @@ worker timeout plus one hour for staging, verification, and compact download.
 The controller never renews credentials itself; an external credential agent
 may refresh the fixed cache while the campaign is running.
 
+Each SSH command retries transport exit status 255 within the frozen retry
+budget. Retries use bounded exponential delays of one, then two, then four
+seconds so a transient proxy close cannot exhaust the entire budget
+instantaneously. Non-255 command failures return immediately, and an attempt
+that was created remotely is never recreated or repaired.
+
 ### 6.3 No hidden global synchronization
 
 The timed candidate linear-attention path may not contain:
