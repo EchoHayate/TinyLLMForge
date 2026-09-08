@@ -109,6 +109,8 @@ def test_buffers_preallocate_streams_events_and_real_shapes():
 
     assert len(torch.cuda.streams) == 2
     assert len(torch.cuda.events) >= 5
+    assert buffers.collective_visible_event in torch.cuda.events
+    assert not hasattr(buffers, "consumer_ready_event")
     assert buffers.local_result["shape"] == (8, 5120)
     assert buffers.side_effect_payload["shape"] == (8, 271360 // 2)
     assert [

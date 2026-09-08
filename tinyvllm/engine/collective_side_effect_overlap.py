@@ -18,7 +18,7 @@ class OverlapResources:
     communication_stream: object
     side_effect_stream: object
     producer_ready_event: object
-    consumer_ready_event: object
+    collective_visible_event: object
     side_effect_ready_event: object
 
 
@@ -27,8 +27,10 @@ class LeaseSealedOverlapTicket:
     commit_identity: str
     local_result: object
     collective_work: object
-    consumer_ready_event: object
+    collective_visible_event: object
     side_effect_ready_event: object
+    collective_waited: bool = False
+    side_effect_joined: bool = False
     state: TicketState = "launched"
 
 
@@ -67,9 +69,6 @@ class LeaseSealedCollectiveSideEffect:
                 resource.producer_ready_event
             )
             work = self.collective(local_result)
-            resource.consumer_ready_event.record(
-                resource.communication_stream
-            )
         with self.stream_context(resource.side_effect_stream):
             resource.side_effect_stream.wait_event(
                 resource.producer_ready_event
@@ -82,7 +81,7 @@ class LeaseSealedCollectiveSideEffect:
             commit_identity=commit_identity,
             local_result=local_result,
             collective_work=work,
-            consumer_ready_event=resource.consumer_ready_event,
+            collective_visible_event=resource.collective_visible_event,
             side_effect_ready_event=resource.side_effect_ready_event,
         )
         self._active_ticket = ticket
@@ -91,8 +90,12 @@ class LeaseSealedCollectiveSideEffect:
     def join(self, ticket: LeaseSealedOverlapTicket):
         self._require_active(ticket, "launched")
         current = self.current_stream(ticket.local_result)
-        current.wait_event(ticket.consumer_ready_event)
-        current.wait_event(ticket.side_effect_ready_event)
+        with self.stream_context(current):
+            ticket.collective_work.wait()
+            ticket.collective_waited = True
+            ticket.collective_visible_event.record(current)
+            current.wait_event(ticket.side_effect_ready_event)
+            ticket.side_effect_joined = True
         ticket.state = "joined"
         return ticket.local_result
 
@@ -115,7 +118,9 @@ class LeaseSealedCollectiveSideEffect:
             raise RuntimeError(f"overlap ticket is already {ticket.state}")
         if self._active_ticket is not ticket:
             raise RuntimeError("overlap ticket is not active")
-        ticket.collective_work.wait()
+        if not ticket.collective_waited:
+            ticket.collective_work.wait()
+            ticket.collective_waited = True
         ticket.side_effect_ready_event.synchronize()
         aborter()
         ticket.state = "aborted"

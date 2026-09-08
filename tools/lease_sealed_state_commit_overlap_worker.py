@@ -52,7 +52,7 @@ class OverlapBuffers:
     communication_stream: object
     side_effect_stream: object
     producer_ready_event: object
-    consumer_ready_event: object
+    collective_visible_event: object
     side_effect_ready_event: object
     baseline_started: object
     baseline_completed: object
@@ -81,7 +81,7 @@ class OverlapBuffers:
             communication_stream=torch.cuda.Stream(device=device),
             side_effect_stream=torch.cuda.Stream(device=device),
             producer_ready_event=event(),
-            consumer_ready_event=event(),
+            collective_visible_event=event(),
             side_effect_ready_event=event(),
             baseline_started=event(),
             baseline_completed=event(),
@@ -242,7 +242,7 @@ def build_overlap_runtime(*, buffers, torch, dist):
             communication_stream=buffers.communication_stream,
             side_effect_stream=buffers.side_effect_stream,
             producer_ready_event=buffers.producer_ready_event,
-            consumer_ready_event=buffers.consumer_ready_event,
+            collective_visible_event=buffers.collective_visible_event,
             side_effect_ready_event=buffers.side_effect_ready_event,
         ),
         current_stream=lambda tensor: torch.cuda.current_stream(tensor.device),

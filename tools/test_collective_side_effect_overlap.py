@@ -42,21 +42,27 @@ class FakeEvent:
 
 
 class FakeWork:
-    def __init__(self, events):
+    def __init__(self, events, wait_error=None):
         self.events = events
+        self.wait_error = wait_error
 
     def wait(self):
         self.events.append(("host", "wait", "collective"))
+        if self.wait_error is not None:
+            raise self.wait_error
 
 
 class FakeContext:
-    def __init__(self, stream):
+    def __init__(self, stream, events):
         self.stream = stream
+        self.events = events
 
     def __enter__(self):
+        self.events.append(("context", "enter", self.stream.name))
         return self.stream
 
     def __exit__(self, exc_type, exc, traceback):
+        self.events.append(("context", "exit", self.stream.name))
         return False
 
 
@@ -65,25 +71,25 @@ def resources(events):
         communication_stream=FakeStream("communication", events),
         side_effect_stream=FakeStream("side_effect", events),
         producer_ready_event=FakeEvent("producer_ready", events),
-        consumer_ready_event=FakeEvent("consumer_ready", events),
+        collective_visible_event=FakeEvent("collective_visible", events),
         side_effect_ready_event=FakeEvent("side_effect_ready", events),
     )
 
 
-def executor(events):
+def executor(events, wait_error=None):
     current = FakeStream("current", events)
     return LeaseSealedCollectiveSideEffect(
         resources=resources(events),
         current_stream=lambda _tensor: current,
-        stream_context=lambda stream: FakeContext(stream),
+        stream_context=lambda stream: FakeContext(stream, events),
         collective=lambda tensor: events.append(
             ("communication", "collective", tensor)
         )
-        or FakeWork(events),
+        or FakeWork(events, wait_error=wait_error),
     )
 
 
-def test_launch_forks_collective_and_side_effect_then_join_waits_both():
+def test_join_transfers_collective_ownership_before_side_effect_join():
     events = []
     runtime = executor(events)
     shadow = {}
@@ -99,8 +105,39 @@ def test_launch_forks_collective_and_side_effect_then_join_waits_both():
     assert result == "local"
     assert shadow == {"value": "candidate"}
     assert ticket.state == "joined"
-    assert ("current", "wait", "consumer_ready") in events
-    assert ("current", "wait", "side_effect_ready") in events
+    assert events.index(("context", "enter", "current")) < events.index(
+        ("host", "wait", "collective")
+    )
+    assert events.index(("host", "wait", "collective")) < events.index(
+        ("current", "record", "collective_visible")
+    )
+    assert events.index(("current", "record", "collective_visible")) < (
+        events.index(("current", "wait", "side_effect_ready"))
+    )
+    assert events.index(("current", "wait", "side_effect_ready")) < (
+        events.index(("context", "exit", "current"))
+    )
+    assert ticket.collective_waited is True
+    assert ticket.side_effect_joined is True
+
+
+def test_failed_collective_wait_cannot_join_seal_or_publish():
+    events = []
+    runtime = executor(events, wait_error=RuntimeError("wait failed"))
+    ticket = runtime.launch(
+        local_result="local",
+        side_effect_payload="candidate",
+        materialize_side_effect=lambda _payload: None,
+        commit_identity="identity-a",
+    )
+
+    with pytest.raises(RuntimeError, match="wait failed"):
+        runtime.join(ticket)
+
+    assert ticket.state == "launched"
+    assert ticket.collective_waited is False
+    with pytest.raises(RuntimeError, match="joined"):
+        runtime.seal(ticket, "identity-a")
 
 
 def test_publish_requires_join_seal_and_matching_identity():
