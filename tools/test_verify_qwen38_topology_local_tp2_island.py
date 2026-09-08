@@ -145,6 +145,7 @@ def test_verifier_reconstructs_every_frozen_no_go(tmp_path, mutation):
         "candidate_global_collective",
         "fallback",
         "incomplete_cleanup",
+        "parameter_reconstruction_mismatch",
     ),
 )
 def test_verifier_reconstructs_invalid_evidence(tmp_path, mutation):
@@ -171,6 +172,10 @@ def test_verifier_reconstructs_invalid_evidence(tmp_path, mutation):
         inputs["cleanup"]["rank_rows"][0][
             "candidate_state_unpublished"
         ] = False
+    elif mutation == "parameter_reconstruction_mismatch":
+        inputs["parameter_slices"]["rank_parameter_evidence"][3][
+            "reconstructed_full_parameter_digests"
+        ]["full"] = "d" * 64
     root = _write_bundle(tmp_path, inputs)
 
     assert verify_bundle(root)["classification"] == "INVALID_EVIDENCE"
