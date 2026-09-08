@@ -990,7 +990,11 @@ def run_candidate_mixer(
         qkv_full.narrow(-1, 2048 + key_width_start, 1024),
         qkv_full.narrow(-1, 4096 + value_width_start, 3072),
     ), dim=-1)
-    z = F.linear(hidden, view.z_weight_half)
+    z = F.linear(hidden, view.z_weight).narrow(
+        -1,
+        value_width_start,
+        3072,
+    )
     b = F.linear(hidden, view.b_weight_half)
     a = F.linear(hidden, view.a_weight_half)
     if _event_trace is not None:

@@ -1010,7 +1010,8 @@ def test_candidate_timed_path_preserves_fused_qkv_numerics():
 
     assert source.count("F.linear(hidden, view.qkv_weight)") == 1
     assert "F.linear(hidden, view.qkv_weight_segments[" not in source
-    assert "F.linear(hidden, view.z_weight_half)" in source
+    assert source.count("F.linear(hidden, view.z_weight)") == 1
+    assert "F.linear(hidden, view.z_weight_half)" not in source
     assert "F.linear(hidden, view.b_weight_half)" in source
     assert "F.linear(hidden, view.a_weight_half)" in source
     assert "_pair_reduce(local, view.pair_group)" in source

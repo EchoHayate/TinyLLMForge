@@ -281,18 +281,20 @@ the first token-4 case changed the downstream greedy argmax despite all tensor
 tolerance checks passing. The complete fused QKV projection is therefore a
 correctness requirement for this Stage-0 comparison, not an optional fallback.
 
-Z, A, and B continue to use zero-copy row views and compute only the rows
-belonging to the logical TP2 half. A/B were bitwise equal to their full
-projection slices in the diagnostic; Z differed in only 19--21 of 12,288
-elements with maximum absolute error at most `2.44140625e-4`. These views are
+Z must likewise use the complete baseline-shaped projection before selecting
+the logical TP2 half. Its half-row GEMM differed in only 19--21 of 12,288
+projection elements with maximum absolute error at most `2.44140625e-4`, but a
+later token-8 diagnostic still changed the downstream greedy argmax. A and B
+continue to use zero-copy row views and compute only their logical TP2 half;
+both were bitwise equal to their full-projection slices. These views are
 created before warmup and add no persistent parameter storage. The current
 global TP4 quarter remains the baseline.
 
-Computing complete Z, A, and B projections and discarding the unused half is
+Computing complete A and B projections and discarding the unused half is
 rejected because it spends avoidable input-projection FLOPs. Materializing
 fused TP2 copies is also rejected because its per-layer persistent memory cost
-would invalidate the integrated memory budget. Splitting fused QKV is rejected
-because it failed the frozen exact-greedy correctness gate.
+would invalidate the integrated memory budget. Splitting fused QKV or Z is
+rejected because each failed the frozen exact-greedy correctness gate.
 
 The logical view must not mutate the module's global TP identity or change the
 full-attention path.
