@@ -1,4 +1,5 @@
 import dataclasses
+import importlib.util
 from pathlib import Path
 import sys
 import types
@@ -57,16 +58,38 @@ torch.equal = lambda left, right: (
     and left.dtype == right.dtype
     and left.device == right.device
 )
-sys.modules.setdefault("torch", torch)
+original_torch = sys.modules.get("torch")
+try:
+    sys.modules["torch"] = torch
+    module_name = "topology_local_tp2_island_test_target"
+    module_path = (
+        ROOT / "tinyvllm/engine/topology_local_tp2_island.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    topology_local_tp2_island = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = topology_local_tp2_island
+    spec.loader.exec_module(topology_local_tp2_island)
+finally:
+    if original_torch is None:
+        sys.modules.pop("torch", None)
+    else:
+        sys.modules["torch"] = original_torch
 
-
-from tinyvllm.engine.topology_local_tp2_island import (
-    TopologyLocalTP2PairMap,
-    TopologyLocalTP2StateIdentity,
-    assemble_logical_state_half,
-    logical_half_bounds,
-    select_best_pair_groups,
-    validate_state_publication,
+TopologyLocalTP2PairMap = (
+    topology_local_tp2_island.TopologyLocalTP2PairMap
+)
+TopologyLocalTP2StateIdentity = (
+    topology_local_tp2_island.TopologyLocalTP2StateIdentity
+)
+assemble_logical_state_half = (
+    topology_local_tp2_island.assemble_logical_state_half
+)
+logical_half_bounds = topology_local_tp2_island.logical_half_bounds
+select_best_pair_groups = (
+    topology_local_tp2_island.select_best_pair_groups
+)
+validate_state_publication = (
+    topology_local_tp2_island.validate_state_publication
 )
 
 

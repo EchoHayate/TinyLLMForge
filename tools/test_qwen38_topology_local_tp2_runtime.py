@@ -107,7 +107,19 @@ def _cat(tensors, dim=0):
 
 
 fake_torch.cat = _cat
-sys.modules["torch"] = fake_torch
+
+
+@pytest.fixture(autouse=True)
+def _isolate_fake_torch():
+    original = sys.modules.get("torch")
+    sys.modules["torch"] = fake_torch
+    try:
+        yield
+    finally:
+        if original is None:
+            sys.modules.pop("torch", None)
+        else:
+            sys.modules["torch"] = original
 
 
 def _load_source_module(name, path):
