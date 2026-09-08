@@ -500,6 +500,7 @@ def run_engine_case(
     sampling_params_factory: Callable = _default_sampling_params_factory,
     clock_ns: Callable[[], int] = time.monotonic_ns,
     timeout_s: float = 120.0,
+    correctness_authority: bool = False,
 ) -> dict:
     if arm not in {"baseline", "candidate"}:
         raise ValueError("arm must be baseline or candidate")
@@ -538,6 +539,7 @@ def run_engine_case(
         )
     before_snapshots = ()
     cleanup = None
+    correctness_step_proofs = []
     try:
         if (
             getattr(getattr(engine, "model_runner", None), "rank", None)
@@ -562,6 +564,15 @@ def run_engine_case(
                     timeout_s=float(timeout_s)
                 )
             )
+        if correctness_authority:
+            receipt = engine.enable_qwen38_correctness_proof(
+                True,
+                timeout_s=float(timeout_s),
+            )
+            if receipt.get("enabled") is not True:
+                raise RuntimeError(
+                    "correctness proof recording was not enabled"
+                )
 
         lifecycle = {}
         for request in request_specs:
@@ -609,6 +620,42 @@ def run_engine_case(
                 or not isinstance(token_deltas, dict)
             ):
                 raise RuntimeError("step timing observation is invalid")
+            if correctness_authority:
+                proofs = engine.qwen38_correctness_step_proofs(
+                    timeout_s=float(timeout_s)
+                )
+                proof_sequence_ids = tuple(
+                    proofs[0].get("sequence_ids", ())
+                ) if proofs else ()
+                expected_token_ids = tuple(
+                    token_deltas.get(sequence_id, ())
+                    for sequence_id in proof_sequence_ids
+                )
+                if (
+                    len(proofs) != tensor_parallel_size
+                    or [row.get("rank") for row in proofs]
+                    != list(range(tensor_parallel_size))
+                    or any(
+                        row.get("finite_logits") is not True
+                        for row in proofs
+                    )
+                    or len({
+                        tuple(row.get("token_ids", ()))
+                        for row in proofs
+                    }) != 1
+                    or any(
+                        tuple(row.get("sequence_ids", ()))
+                        != proof_sequence_ids
+                        for row in proofs
+                    )
+                    or any(len(tokens) != 1 for tokens in expected_token_ids)
+                    or tuple(proofs[0].get("token_ids", ()))
+                    != tuple(tokens[0] for tokens in expected_token_ids)
+                ):
+                    raise RuntimeError(
+                        "rank-local correctness proof mismatch"
+                    )
+                correctness_step_proofs.append(list(proofs))
             scheduled = observation.get("scheduled", [])
             scheduled_ids = [
                 lifecycle[int(row["seq_id"])]["request_id"]
@@ -684,12 +731,21 @@ def run_engine_case(
                 "prompt_tokens": prompt_tokens,
                 "generated_tokens": output_tokens,
                 "completion_ns": row["token_timestamps_ns"][-1],
-                "rank_token_agreement": True,
-                "finite_logits": True,
+                "rank_token_agreement": (
+                    True if correctness_authority else None
+                ),
+                "finite_logits": (
+                    True if correctness_authority else None
+                ),
                 "stop_position": output_tokens,
                 "stop_reason": "length",
             })
     finally:
+        if correctness_authority:
+            engine.enable_qwen38_correctness_proof(
+                False,
+                timeout_s=float(timeout_s),
+            )
         if close_engine:
             cleanup = engine.exit()
 
@@ -713,6 +769,7 @@ def run_engine_case(
             max(row["completion_ns"] for row in requests)
             - min(row["admitted_ns"] for row in requests)
         ),
+        "correctness_step_proofs": correctness_step_proofs,
     }
 
 
@@ -1160,6 +1217,7 @@ def run_correctness_campaign(
                     "warmup": True,
                     "epoch": -1,
                     "repetition": repetition,
+                    "correctness_authority": True,
                 }
                 if engine is not None:
                     kwargs.update({

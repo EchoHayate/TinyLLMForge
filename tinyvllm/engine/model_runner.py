@@ -2532,6 +2532,8 @@ class ModelRunner:
         self._ordinary_graph_generation = 0
         self._record_step_logits = False
         self._last_step_logits_cpu: torch.Tensor | None = None
+        self._qwen38_correctness_proof_enabled = False
+        self._qwen38_last_step_proof: dict | None = None
         self._spec_verify_trace = SpecVerifyTraceRecorder(
             rank=rank,
             block_size=self.block_size,
@@ -3510,6 +3512,21 @@ class ModelRunner:
             "rank": self.rank,
             "enabled": self._record_step_logits,
         }
+
+    def enable_qwen38_correctness_proof(self, enabled: bool) -> dict:
+        self._qwen38_correctness_proof_enabled = bool(enabled)
+        self._qwen38_last_step_proof = None
+        return {
+            "rank": self.rank,
+            "enabled": self._qwen38_correctness_proof_enabled,
+        }
+
+    def qwen38_correctness_step_proof(self) -> dict:
+        if self._qwen38_last_step_proof is None:
+            raise RuntimeError(
+                "Qwen3.8 correctness step proof is unavailable"
+            )
+        return dict(self._qwen38_last_step_proof)
 
     def qwen38_correctness_rank_identity(self) -> dict:
         attestation = getattr(
@@ -12443,6 +12460,27 @@ class ModelRunner:
             batch_kind=batch_kind,
         )
         self._kv_offload_after_forward()
+        if self._qwen38_correctness_proof_enabled and do_sample:
+            proof_logits, proof_seqs = self._select_sample_rows(
+                logits,
+                seqs,
+                batch_kind,
+            )
+            self._qwen38_last_step_proof = {
+                "rank": self.rank,
+                "sequence_ids": [
+                    int(seq.seq_id) for seq in proof_seqs
+                ],
+                "finite_logits": bool(
+                    torch.isfinite(proof_logits).all().item()
+                ),
+                "token_ids": [
+                    int(value)
+                    for value in proof_logits.argmax(dim=-1).tolist()
+                ],
+            }
+        else:
+            self._qwen38_last_step_proof = None
         if not do_sample:
             self._last_step_logits_cpu = None
             reset_context()

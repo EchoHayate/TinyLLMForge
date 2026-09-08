@@ -369,6 +369,8 @@ class _FakeEngine:
         self._admitted = []
         self.exit_calls = 0
         self.flush_calls = 0
+        self.proof_recording = False
+        self._last_tokens = ()
 
     def add_request(self, prompt, sampling):
         self._admitted.append((list(prompt), sampling))
@@ -386,6 +388,10 @@ class _FakeEngine:
             self.seq_offset + index: [1000 + self._step + index]
             for index in range(len(self.request_specs))
         }
+        self._last_tokens = tuple(
+            tokens[self.seq_offset + index][0]
+            for index in range(len(self.request_specs))
+        )
         self.last_step_observation = {
             "step_end_ns": 1_000_000 + self._step * 100,
             "is_prefill": self._step == 0,
@@ -413,6 +419,22 @@ class _FakeEngine:
                 for index in range(len(self.request_specs))
             ], 0
         return [], 0
+
+    def enable_qwen38_correctness_proof(self, enabled, *, timeout_s):
+        self.proof_recording = bool(enabled)
+        return {"enabled": self.proof_recording}
+
+    def qwen38_correctness_step_proofs(self, *, timeout_s):
+        assert self.proof_recording
+        return tuple({
+            "rank": rank,
+            "finite_logits": True,
+            "sequence_ids": [
+                self.seq_offset + index
+                for index in range(len(self.request_specs))
+            ],
+            "token_ids": list(self._last_tokens),
+        } for rank in range(4))
 
     def qwen38_topology_local_tp2_snapshots(self, timeout_s):
         raw = _raw_candidate_evidence(
@@ -494,8 +516,8 @@ def test_run_engine_case_uses_frozen_engine_shape_and_exact_timing():
     assert len(result["request_set_digest"]) == 64
     assert result["cohort_makespan_ns"] >= 0
     assert all(
-        row["rank_token_agreement"] is True
-        and row["finite_logits"] is True
+        row["rank_token_agreement"] is None
+        and row["finite_logits"] is None
         and row["stop_position"] == 128
         and row["stop_reason"] == "length"
         for row in result["requests"]
@@ -535,6 +557,36 @@ def test_shared_engine_case_flushes_and_uses_returned_sequence_ids():
     assert [row["request_id"] for row in result["requests"]] == [
         row["request_id"] for row in specs
     ]
+
+
+def test_correctness_case_uses_rank_local_logit_and_token_proofs():
+    worker = _load()
+    specs = worker.build_request_specs(
+        256,
+        128,
+        2,
+        "correctness/P0/r0",
+    )
+    fake = _FakeEngine(specs, candidate=False)
+
+    result = worker.run_engine_case(
+        model_root=Path("/model"),
+        arm="baseline",
+        workload_id="P0",
+        request_specs=specs,
+        warmup=True,
+        epoch=-1,
+        repetition=0,
+        engine=fake,
+        close_engine=False,
+        correctness_authority=True,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        clock_ns=iter(range(10, 1000)).__next__,
+    )
+
+    assert all(row["rank_token_agreement"] for row in result["requests"])
+    assert all(row["finite_logits"] for row in result["requests"])
+    assert result["correctness_step_proofs"]
 
 
 def test_service_replica_case_uses_a_real_tp2_engine_shape():

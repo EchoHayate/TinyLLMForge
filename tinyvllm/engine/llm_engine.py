@@ -1711,6 +1711,54 @@ class LLMEngine:
             "rank_inventory": list(range(world_size)),
         }
 
+    def enable_qwen38_correctness_proof(
+        self,
+        enabled,
+        *,
+        timeout_s,
+    ):
+        local, acknowledgements = self.call_model_runner_acknowledged(
+            "enable_qwen38_correctness_proof",
+            bool(enabled),
+            timeout_s=timeout_s,
+        )
+        rows = [local]
+        rows.extend(
+            acknowledgement.result
+            for acknowledgement in acknowledgements
+        )
+        expected_ranks = list(range(self.model_runner.world_size))
+        if (
+            sorted(row.get("rank") for row in rows) != expected_ranks
+            or any(row.get("enabled") is not bool(enabled) for row in rows)
+        ):
+            raise ValueError(
+                "Qwen3.8 correctness proof acknowledgement mismatch"
+            )
+        return {
+            "enabled": bool(enabled),
+            "rank_inventory": expected_ranks,
+        }
+
+    def qwen38_correctness_step_proofs(self, *, timeout_s):
+        local, acknowledgements = self.call_model_runner_acknowledged(
+            "qwen38_correctness_step_proof",
+            timeout_s=timeout_s,
+        )
+        rows = [local]
+        rows.extend(
+            acknowledgement.result
+            for acknowledgement in acknowledgements
+        )
+        rows.sort(key=lambda row: row.get("rank", -1))
+        if [row.get("rank") for row in rows] != list(
+            range(self.model_runner.world_size)
+        ):
+            raise ValueError(
+                "Qwen3.8 correctness proof rank inventory mismatch"
+            )
+        return tuple(rows)
+
     def configure_h2d_slot_reuse_diagnostic(
         self,
         mode,
