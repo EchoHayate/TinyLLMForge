@@ -897,3 +897,36 @@ def test_main_full_run_installs_default_remote_adapters(
             "local_verifier",
         )
     )
+
+
+@pytest.mark.parametrize("preflight_flag", ["--dry-run", "--check-only"])
+def test_main_preflight_installs_remote_probe_adapters(
+    tmp_path,
+    monkeypatch,
+    preflight_flag,
+):
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(_plan()), encoding="utf-8")
+    observed = {}
+
+    def adapter_factory(args, plan):
+        observed["args"] = args
+        observed["plan"] = plan
+        return {"gpu_probe": lambda: tuple(_gpu(i) for i in range(4))}
+
+    def fake_run_attempt(plan, **kwargs):
+        observed["callbacks"] = kwargs
+        return {
+            "classification": "CHECK_ONLY_READY",
+            "worker_started": False,
+        }
+
+    monkeypatch.setattr(controller, "run_attempt", fake_run_attempt)
+
+    assert controller.main(
+        ["--plan", str(plan_path), preflight_flag],
+        adapter_factory=adapter_factory,
+        printer=lambda _value: None,
+    ) == 0
+    assert observed["plan"]["attempt_tag"] == _plan()["attempt_tag"]
+    assert callable(observed["callbacks"]["gpu_probe"])

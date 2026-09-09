@@ -1340,11 +1340,7 @@ def main(
     parser.add_argument("--local-attempt-root", type=Path)
     args = parser.parse_args(argv)
     plan = json.loads(args.plan.read_text(encoding="utf-8"))
-    adapters = (
-        {}
-        if args.dry_run or args.check_only
-        else adapter_factory(args, plan)
-    )
+    adapters = adapter_factory(args, plan)
     result = run_attempt(
         plan,
         dry_run=args.dry_run,
