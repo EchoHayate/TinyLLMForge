@@ -53157,3 +53157,67 @@ The mechanism has a formal Stage-0 microgate GO. It does not establish
 whole-model TPOT, TTFT, QPS, end-to-end latency, or production benefit.
 The next promotion step must be a separately designed whole-model integration
 gate using the combined topology-local plus short-chunk candidate.
+
+## 2026-09-10 Latent Action Speculation Stage 0 Analytic Contract Gate
+
+新开的一条线，和 token-level speculative decoding 并列、互不影响：把投机从
+token 级上移到 action 级，drafter 读 actor 的 latent state 而不是生成文本
+tool call。Stage 0 只交付契约和成本模型，**不含模型、不含任何实测加速**。
+
+Design / plan：
+
+```text
+docs/superpowers/specs/2026-09-10-latent-action-speculation-agent-runtime-design.md
+docs/superpowers/plans/2026-09-10-latent-action-speculation-stage0.md
+```
+
+Stage 0 surface（全部 stdlib，无 torch / transformers，可在笔记本上跑）：
+
+```text
+tinyvllm/agentspec/action.py          action 身份与 side-effect 分类
+tinyvllm/agentspec/latent_adapter.py  latent action drafter 契约
+tinyvllm/agentspec/cost_model.py      共享引擎 break-even 模型
+tinyvllm/agentspec/router.py          fail-closed 路由
+tools/agentspec_breakeven_gate.py     Stage 0 gate
+tools/test_agentspec_breakeven_gate.py
+```
+
+Fresh dependency-light verification：
+
+```text
+tools/agentspec_breakeven_gate.py:            status PASS, 16/16 invariants
+tools/test_agentspec_breakeven_gate.py:       48 passed in 0.57s
+py_compile (5 runtime files + gate + tests):  PASS
+third-party imports on Stage 0 surface:       ABSENT
+tinyvllm/speculative/ modified:               NO
+```
+
+Gate 固定的 270 行矩阵：`actor_gpu_seconds=0.080`，`tool_seconds ∈
+{0.2,1.0,5.0}`，`rho ∈ {0.0,0.3,0.6,0.8,0.9}`，`tau ∈ {0.10 discrete_code,
+0.25 continuous_latent, 1.00 text_small_model}`，`p ∈ {0.55,0.75,0.90}`，
+`R ∈ {0.0,0.5}`。verdict 分布：`unstable_capacity` 90 /`net_positive` 76 /
+`infeasible_no_match_benefit` 66 /`net_negative` 38。
+
+五条结论（全部是 declared input 的推论，不是测量值）：
+
+1. 270 个 operating point 里只有 28% 是 net positive；文献里 drafter 免费的
+   那个假设只对应 `rho = 0` 这一层切片。
+2. drafter 成本比 drafter 精度更值钱：tax 0.25→0.10 把 critical rho 从 0.545
+   拉到 0.818，而精度 0.55→0.90 只拉到 0.722。
+3. rollback 才是真正的杀手：`R = 0.5s` 时 `p_min` 在 0.714~0.876，远高于文献
+   报的 55%，所以只能对 read-only / 真沙箱工具投机。
+4. 单步投机盖不住长工具调用：hit 的收益上界是 actor 的 GPU sojourn 而不是
+   tool 延迟，speedup 随 tool 变长衰减（0.2s→1.183，1.0s→1.046，5.0s→1.010）。
+   这条是 macro horizon 的量化理由，已固化成 gate invariant。
+5. branch widening 是 latent drafter 独有的便宜轴：一次 draft pass 出候选集，
+   1→4 分支把 p 从 0.55 抬到 0.87、speedup 1.063→1.138，而 drafter GPU tax
+   不变，只多付 speculative tool call。
+
+Claim boundary（必须原样保留）：Stage 0 `PASS` 只代表契约成立且 16 条解析
+invariant 成立，**不是任何实测加速的证据**。action 级 commit-on-match 给的是
+trajectory equivalence，比 token 级的 distributional losslessness 弱，任何文档
+把两者说成等价都是错的。
+
+Stage 1 入口条件：先在 Stage 1 的 source revision 上重跑 Stage 0 拿到 PASS，
+并提前声明目标负载点 `(rho, tool_seconds, rollback_seconds)`；如果目标精度下
+实测 drafter tax 超过该点的 `critical_draft_tax`，Stage 1 直接 NO_GO。
