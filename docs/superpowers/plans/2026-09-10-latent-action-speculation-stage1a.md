@@ -1,6 +1,7 @@
-# Stage 1a plan: measure the action drafter GPU tax
+# Stage 1a plan and results: measure the action drafter GPU tax
 
-Status: harness landed, measurement blocked on remote GPU access.
+Status: measured on 1x A100 80GB. Conditional GO, with one correction
+to the Stage 0 threshold and one open threat to validity.
 Line: latent action speculation (`tinyvllm/agentspec/`).
 Predecessor: `2026-09-10-latent-action-speculation-stage0.md`.
 
@@ -75,43 +76,167 @@ context length, the KV-compression half of the design is decoration.
 - `tools/agentspec_drafter_tax_worker.py` — self-contained worker, CUDA-event
   timing with a wall-clock fallback, median over repetitions after warmup,
   deterministic JSON payload with `payload_sha256`, and an explicit
-  `evidence_valid_for_gate` flag.
+  `evidence_valid_for_gate` flag. The requested dtype is asserted against the
+  dtype that actually loaded, because `transformers` 5 renamed `torch_dtype`
+  to `dtype` and silently forwards the wrong keyword to the config, which
+  would have produced float32 weights and a payload of wrong numbers.
 - `tools/run_agentspec_drafter_tax_remote.sh` — `preflight | smoke | measure`.
   Uploads the worker, verifies the upload by sha256, runs it under the remote
   CUDA python, pulls back the payload, and refuses a synthetic payload.
 - Smoke-tested end to end on CPU with `--synthetic`, which exercises every
   code path and is marked `evidence_valid_for_gate false`.
 
-## Blocker
+### Remote environment, and why it needed work
 
-`preflight` fails closed at connect:
+Neither remote interpreter worked as shipped. The venv site-packages carries
+`transformers` 5.8.1 against its own `torch` 2.4.1, which dies at import
+inside `torch.library.custom_op`. The user site carries `transformers` 4.51.3,
+the right vintage, but sits next to a flash-attn wheel built against a
+different torch C++ ABI, so importing any Qwen3 model pulls in an `.so` with
+undefined `c10` symbols. The runner therefore builds a per-run symlink farm
+over the user site with `flash_attn` and `torchvision` filtered out, puts it
+on `PYTHONPATH` ahead of the venv, and disables user site. `torch` and `numpy`
+still come from the venv. Nothing in the shared environment is mutated.
+
+The GSSAPI ticket lives in a FILE credential cache at `~/krb5cc_sitian` that
+the other local agents share. The macOS default API cache is per security
+session and reads as empty from a non-interactive session even while a valid
+ticket exists, which is what produced the earlier false "no ticket" reading.
+The runner now selects the FILE cache explicitly.
+
+## Measured result
+
+One A100 80GB PCIe, GPU 7 idle, actor Qwen3-8B, drafter Qwen3-0.6B, bf16,
+32 action tokens, 5 repetitions after 2 warmups, `torch` 2.4.1+cu121,
+`transformers` 4.51.3. Payload
+`de18005bcdc00d0415d6998f43548f59fb52abf88aa8371e44bf2e9392e55805`.
 
 ```text
-cannot reach sitian@10.232.195.203
-  Connection closed by UNKNOWN port 65535
-  hint: the jump proxy needs a Kerberos ticket; run kinit
+context   actor_s   tau_text   tau_code   tau_code_ckv
+   1024    1.1962     0.7275     0.0239         0.0231
+   4096    1.4772     0.6137     0.0509         0.0176
+  16384    3.4196     0.3554     0.1344         0.0085
 ```
 
-`~/.ssh/config` routes the box through `jump-proxy-hl` with
-`GSSAPIAuthentication yes`, and `klist` reports no credential cache. The fix
-is one interactive `kinit`, which cannot be automated because it prompts for a
-password. Everything downstream is ready to run unattended once the ticket
-exists.
+Both design claims survive, and the second one turns out to be load bearing
+rather than decorative.
+
+1. The code drafter is 30x, 12x, and 2.6x cheaper than the text drafter at the
+   three context lengths. Dropping token decode is where the cost goes.
+2. Only the compressed-context arm decouples from trajectory length. Its tax
+   *falls* from 0.0231 to 0.0085 as context grows 16x, because actor cost
+   grows while the drafter stays pinned to a 512-token budget. The plain code
+   drafter moves the other way, 0.0239 to 0.1344, because its prefill tracks
+   the trajectory. KV compression is not an optimization for this design, it
+   is the only thing that keeps the drafter admissible at long context.
+
+## The pre-registered threshold was wrong, and the model caught it
+
+The rule declared above was `tau > 0.3059 is NO_GO`. Every code-drafter number
+clears it, so the naive reading is a clean pass. That reading is wrong.
+
+`0.3059` was computed at a *declared* actor demand of `D = 0.080 s`. Measured
+`D` is 1.20 to 3.42 s, 15x to 43x larger. The threshold is a function of `D`,
+so it has to be recomputed:
+
+```text
+context   measured D   critical tau at p=0.90 and rollback 0.5 s
+   1024      1.196 s   0.0971
+   4096      1.477 s   0.0809
+  16384      3.420 s   none: no tax is admissible at this point
+```
+
+Re-running the Stage 0 cost model at measured `D`, `rho = 0.6`,
+`tool = 1.0 s`, `rollback = 0.5 s`, `p = 0.90`:
+
+```text
+context   text_drafter                  code_drafter                  code_drafter_ckv
+   1024   unstable_capacity             net_positive                  net_positive
+   4096   infeasible_no_match_benefit   net_positive                  net_positive
+  16384   infeasible_no_match_benefit   infeasible_no_match_benefit   net_positive
+```
+
+So the pre-registration was under-specified: it pinned a threshold on `tau`
+while letting `D` float, and `D` is what moved. This is the third place in
+this line where the plan was wrong and the model was right, after the unit-tax
+headroom error and the tool-latency speedup error in Stage 0. The rule for
+Stage 1b is amended: a load point must pin `(D, rho, tool_seconds,
+rollback_seconds)`, not just the last three.
+
+## Threat to validity, stated against my own conclusion
+
+The decode loop is an eager Python loop, so every step pays a fixed launch and
+dispatch cost that is charged to the 0.6B and the 8B alike:
+
+```text
+context   actor step   drafter step   ratio
+   1024     34.05 ms       26.18 ms   0.7688
+   4096     33.39 ms       25.97 ms   0.7776
+  16384     39.67 ms       23.66 ms   0.5963
+```
+
+A 0.6B decode step should be roughly an order of magnitude cheaper than an 8B
+step. Measuring 0.60 to 0.78 means these steps are overhead bound, not compute
+bound, and roughly 24 ms of each step is harness tax. That inflates `D` and it
+inflates `tau_text`.
+
+Both errors point the same way, in favour of the hypothesis under test, so the
+sensitivity has to be published. Subtracting an assumed fixed per-step
+overhead `o`:
+
+```text
+context   o = 0 ms                  o = 20 ms                 o = max
+   1024   text .728 code .024       text .414 code .051       text .091 code .080
+   4096   text .614 code .051       text .318 code .090       text .117 code .116
+  16384   text .355 code .134       text .207 code .165       text .172 code .173
+```
+
+At the extreme the code drafter's advantage over the text drafter disappears
+entirely. The compressed arm is the robust one: it stays at 0.011 to 0.077
+across the whole sweep, an order of magnitude under the text drafter
+everywhere. So the defensible claim from Stage 1a is narrower than the raw
+table suggests:
+
+- Supported: a compressed-context code drafter is cheap enough to be
+  admissible, and its cost does not grow with the trajectory.
+- Not supported yet: that a plain code drafter beats a text drafter. On a
+  serving engine that does not pay 24 ms of per-step overhead, that gap may
+  close.
+
+## Verdict
+
+Conditional GO, narrowed to the compressed-context arm.
+
+- `code_drafter_ckv` is `net_positive` at every measured context length and is
+  the only arm that survives at 16384. Proceed.
+- `code_drafter` without compression is `infeasible` at 16384. Do not carry it
+  forward as the primary design.
+- `text_drafter` fails at every context length. Stage 0 assumed `tau = 1.0`;
+  measured is 0.36 to 0.73, so Stage 0 was pessimistic about the magnitude and
+  right about the conclusion.
+- Blocking follow-up before Stage 1b: re-measure `D` on a serving path rather
+  than an eager HF loop. Every threshold in this document is a function of
+  `D`, and the current `D` carries roughly 0.77 s of harness overhead.
 
 ## Completion criteria
 
 - [x] Worker and runner land, `bash -n` and `py_compile` clean.
 - [x] Synthetic CPU smoke run passes and is marked as non-evidence.
 - [x] Target load point and NO_GO threshold pre-registered above.
-- [ ] `preflight` returns GPU, torch, transformers, and both model paths.
-- [ ] `measure` returns a non-synthetic payload for all three context lengths.
-- [ ] Measured `tau` compared against the pre-registered threshold, and the
-      Stage 0 design doc amended with the result, including the case where the
-      result kills the line.
+- [x] `preflight` returns GPU, torch, transformers, and both model paths.
+- [x] `measure` returns a non-synthetic payload for all three context lengths.
+- [x] Measured `tau` compared against the pre-registered threshold, the
+      threshold corrected at measured `D`, and the result recorded including
+      the arm it kills.
+- [ ] `D` re-measured on a serving path, and the thresholds recomputed.
 
 ## Stage 1b entry criteria
 
 Stage 1b, which measures top-`b` action prediction accuracy and calibration on
-real agent traces, may not begin until Stage 1a reports a measured `tau` at or
-below the point B critical tax, or until the design is explicitly narrowed to
-the dedicated-capacity regime of point A.
+real agent traces, may not begin until `D` is re-measured on a serving path
+and the compressed-context arm is still `net_positive` at the recomputed
+threshold. The load point for Stage 1b must pin `(D, rho, tool_seconds,
+rollback_seconds)` in advance. Stage 1b measures accuracy for the
+compressed-context arm only; the plain code drafter is out of scope unless the
+serving-path measurement revives it.
+

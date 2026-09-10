@@ -1,0 +1,346 @@
+{
+  "actor_identity": {
+    "config_digest": "3ab2048ff4d232a0",
+    "hidden_size": 4096,
+    "num_hidden_layers": 36,
+    "path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+    "vocab_size": 151936
+  },
+  "claim_boundary": "cost measurement only; the code head is randomly initialised and no match probability is measured",
+  "code_vocabulary": 4096,
+  "cuda_device_name": "NVIDIA A100 80GB PCIe",
+  "device": "cuda:0",
+  "drafter_identity": {
+    "config_digest": "2370e62b91893ae9",
+    "hidden_size": 1024,
+    "num_hidden_layers": 28,
+    "path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B",
+    "vocab_size": 151936
+  },
+  "dtype": "torch.bfloat16",
+  "evidence_valid_for_gate": true,
+  "payload_sha256": "de18005bcdc00d0415d6998f43548f59fb52abf88aa8371e44bf2e9392e55805",
+  "python_version": "3.11.15",
+  "rows": [
+    {
+      "action_tokens": 32,
+      "actor_seconds": 1.19623779296875,
+      "arms": {
+        "actor": {
+          "max_seconds": 1.2377886962890625,
+          "median_seconds": 1.19623779296875,
+          "min_seconds": 1.1653529052734375,
+          "repetitions": 5,
+          "samples_seconds": [
+            1.1653529052734375,
+            1.1683184814453125,
+            1.19623779296875,
+            1.2159068603515626,
+            1.2377886962890625
+          ],
+          "warmup": 2
+        },
+        "actor_prefill": {
+          "max_seconds": 0.10738585662841797,
+          "median_seconds": 0.10657177734375,
+          "min_seconds": 0.10617241668701172,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.10617241668701172,
+            0.10627993774414063,
+            0.10657177734375,
+            0.10694656372070313,
+            0.10738585662841797
+          ],
+          "warmup": 2
+        },
+        "code_drafter": {
+          "max_seconds": 0.028742656707763672,
+          "median_seconds": 0.02855526351928711,
+          "min_seconds": 0.028293119430541993,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.028293119430541993,
+            0.02851020812988281,
+            0.02855526351928711,
+            0.028713983535766603,
+            0.028742656707763672
+          ],
+          "warmup": 2
+        },
+        "code_drafter_ckv": {
+          "max_seconds": 0.02776268768310547,
+          "median_seconds": 0.027626495361328125,
+          "min_seconds": 0.0274913272857666,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.0274913272857666,
+            0.02751590347290039,
+            0.027626495361328125,
+            0.027632640838623046,
+            0.02776268768310547
+          ],
+          "warmup": 2
+        },
+        "text_drafter": {
+          "max_seconds": 0.901486572265625,
+          "median_seconds": 0.8702515258789062,
+          "min_seconds": 0.844959716796875,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.844959716796875,
+            0.8611716918945312,
+            0.8702515258789062,
+            0.8710748291015625,
+            0.901486572265625
+          ],
+          "warmup": 2
+        },
+        "text_drafter_prefill": {
+          "max_seconds": 0.03303628921508789,
+          "median_seconds": 0.03256115341186523,
+          "min_seconds": 0.02731827163696289,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.02731827163696289,
+            0.02960691261291504,
+            0.03256115341186523,
+            0.032625663757324216,
+            0.03303628921508789
+          ],
+          "warmup": 2
+        }
+      },
+      "compressed_context_length": 512,
+      "context_length": 1024,
+      "decomposition": {
+        "actor_decode_step_seconds": 0.03405206298828125,
+        "actor_prefill_seconds": 0.10657177734375,
+        "decode_share_of_actor": 0.910910875772227,
+        "decode_step_ratio_drafter_over_actor": 0.7687588311052966,
+        "drafter_decode_step_seconds": 0.02617782413959503,
+        "drafter_prefill_seconds": 0.03256115341186523
+      },
+      "measured_draft_gpu_tax": {
+        "code_drafter": 0.023870892298445443,
+        "code_drafter_ckv": 0.023094484661587537,
+        "text_drafter": 0.7274904128544284
+      }
+    },
+    {
+      "action_tokens": 32,
+      "actor_seconds": 1.4771988525390625,
+      "arms": {
+        "actor": {
+          "max_seconds": 1.4805289306640625,
+          "median_seconds": 1.4771988525390625,
+          "min_seconds": 1.4537164306640624,
+          "repetitions": 5,
+          "samples_seconds": [
+            1.4537164306640624,
+            1.46106982421875,
+            1.4771988525390625,
+            1.47738525390625,
+            1.4805289306640625
+          ],
+          "warmup": 2
+        },
+        "actor_prefill": {
+          "max_seconds": 0.41035162353515625,
+          "median_seconds": 0.408748046875,
+          "min_seconds": 0.4083445739746094,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.4083445739746094,
+            0.408374267578125,
+            0.408748046875,
+            0.4088719482421875,
+            0.41035162353515625
+          ],
+          "warmup": 2
+        },
+        "code_drafter": {
+          "max_seconds": 0.07646822357177735,
+          "median_seconds": 0.07514009857177735,
+          "min_seconds": 0.07485542297363282,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.07485542297363282,
+            0.07489945220947265,
+            0.07514009857177735,
+            0.07560704040527344,
+            0.07646822357177735
+          ],
+          "warmup": 2
+        },
+        "code_drafter_ckv": {
+          "max_seconds": 0.025987071990966795,
+          "median_seconds": 0.025960447311401368,
+          "min_seconds": 0.025802751541137696,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.025802751541137696,
+            0.02591846466064453,
+            0.025960447311401368,
+            0.02596147155761719,
+            0.025987071990966795
+          ],
+          "warmup": 2
+        },
+        "text_drafter": {
+          "max_seconds": 0.9112412109375,
+          "median_seconds": 0.9065062255859375,
+          "min_seconds": 0.8932310791015625,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.8932310791015625,
+            0.8974929809570312,
+            0.9065062255859375,
+            0.90905908203125,
+            0.9112412109375
+          ],
+          "warmup": 2
+        },
+        "text_drafter_prefill": {
+          "max_seconds": 0.07665561676025391,
+          "median_seconds": 0.0756336669921875,
+          "min_seconds": 0.07520358276367188,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.07520358276367188,
+            0.07538585662841797,
+            0.0756336669921875,
+            0.076263427734375,
+            0.07665561676025391
+          ],
+          "warmup": 2
+        }
+      },
+      "compressed_context_length": 512,
+      "context_length": 4096,
+      "decomposition": {
+        "actor_decode_step_seconds": 0.03338908767700195,
+        "actor_prefill_seconds": 0.408748046875,
+        "decode_share_of_actor": 0.7232951771033201,
+        "decode_step_ratio_drafter_over_actor": 0.777642315574227,
+        "drafter_decode_step_seconds": 0.025964767456054687,
+        "drafter_prefill_seconds": 0.0756336669921875
+      },
+      "measured_draft_gpu_tax": {
+        "code_drafter": 0.05086661043814369,
+        "code_drafter_ckv": 0.017574104709585727,
+        "text_drafter": 0.6136656713669943
+      }
+    },
+    {
+      "action_tokens": 32,
+      "actor_seconds": 3.41958251953125,
+      "arms": {
+        "actor": {
+          "max_seconds": 3.42742626953125,
+          "median_seconds": 3.41958251953125,
+          "min_seconds": 3.4122587890625,
+          "repetitions": 5,
+          "samples_seconds": [
+            3.4122587890625,
+            3.416657958984375,
+            3.41958251953125,
+            3.42666552734375,
+            3.42742626953125
+          ],
+          "warmup": 2
+        },
+        "actor_prefill": {
+          "max_seconds": 2.161228759765625,
+          "median_seconds": 2.15018701171875,
+          "min_seconds": 2.123060302734375,
+          "repetitions": 5,
+          "samples_seconds": [
+            2.123060302734375,
+            2.135595947265625,
+            2.15018701171875,
+            2.155228271484375,
+            2.161228759765625
+          ],
+          "warmup": 2
+        },
+        "code_drafter": {
+          "max_seconds": 0.46253363037109374,
+          "median_seconds": 0.4594800720214844,
+          "min_seconds": 0.4484945983886719,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.4484945983886719,
+            0.4512788391113281,
+            0.4594800720214844,
+            0.46175335693359376,
+            0.46253363037109374
+          ],
+          "warmup": 2
+        },
+        "code_drafter_ckv": {
+          "max_seconds": 0.02956800079345703,
+          "median_seconds": 0.02901299285888672,
+          "min_seconds": 0.028832767486572267,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.028832767486572267,
+            0.028847103118896485,
+            0.02901299285888672,
+            0.029099008560180665,
+            0.02956800079345703
+          ],
+          "warmup": 2
+        },
+        "text_drafter": {
+          "max_seconds": 1.267083251953125,
+          "median_seconds": 1.2154859619140626,
+          "min_seconds": 1.2072764892578125,
+          "repetitions": 5,
+          "samples_seconds": [
+            1.2072764892578125,
+            1.208896484375,
+            1.2154859619140626,
+            1.2408135986328126,
+            1.267083251953125
+          ],
+          "warmup": 2
+        },
+        "text_drafter_prefill": {
+          "max_seconds": 0.4659599304199219,
+          "median_seconds": 0.458534912109375,
+          "min_seconds": 0.45321319580078123,
+          "repetitions": 5,
+          "samples_seconds": [
+            0.45321319580078123,
+            0.4566927490234375,
+            0.458534912109375,
+            0.4604671936035156,
+            0.4659599304199219
+          ],
+          "warmup": 2
+        }
+      },
+      "compressed_context_length": 512,
+      "context_length": 16384,
+      "decomposition": {
+        "actor_decode_step_seconds": 0.039668609619140635,
+        "actor_prefill_seconds": 2.15018701171875,
+        "decode_share_of_actor": 0.3712135912972519,
+        "decode_step_ratio_drafter_over_actor": 0.5963082783466847,
+        "drafter_decode_step_seconds": 0.023654720306396485,
+        "drafter_prefill_seconds": 0.458534912109375
+      },
+      "measured_draft_gpu_tax": {
+        "code_drafter": 0.13436730051025908,
+        "code_drafter_ckv": 0.008484366934611586,
+        "text_drafter": 0.35544864174843166
+      }
+    }
+  ],
+  "schema_version": 1,
+  "synthetic": false,
+  "torch_version": "2.4.1+cu121",
+  "transformers_version": "4.51.3",
+  "worker": "agentspec_drafter_tax"
+}

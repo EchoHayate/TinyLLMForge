@@ -1,0 +1,16 @@
+host        n232-195-203
+gpu         0, NVIDIA A100 80GB PCIe, 81920 MiB, 4028 MiB
+gpu         1, NVIDIA A100 80GB PCIe, 81920 MiB, 14382 MiB
+gpu         2, NVIDIA A100 80GB PCIe, 81920 MiB, 0 MiB
+gpu         3, NVIDIA A100 80GB PCIe, 81920 MiB, 0 MiB
+gpu         4, NVIDIA A100 80GB PCIe, 81920 MiB, 3547 MiB
+gpu         5, NVIDIA A100 80GB PCIe, 81920 MiB, 18854 MiB
+gpu         6, NVIDIA A100 80GB PCIe, 81920 MiB, 2491 MiB
+gpu         7, NVIDIA A100 80GB PCIe, 81920 MiB, 0 MiB
+model ok    /data00/home/sitian/.ms_cache/Qwen/Qwen3-8B
+model ok    /data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B
+torch       2.4.1+cu121
+cuda        12.1
+device      NVIDIA A100 80GB PCIe
+bf16        True
+transformers 4.51.3

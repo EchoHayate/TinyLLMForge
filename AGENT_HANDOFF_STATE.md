@@ -53287,3 +53287,84 @@ cannot reach sitian@10.232.195.203
 ### Stage 1b 入口条件
 
 Stage 1b（在真实 agent traces 上测 top-b action 预测精度与校准）必须等 Stage 1a 实测 tau 落在 point B 的 critical tax 以下，或者设计被明确收窄到 point A 的独占算力区间之后，才能开始。
+
+## 2026-09-10 Latent Action Speculation Stage 1a 实测结果（A100，Conditional GO）
+
+### 结论先行
+
+在 1×A100 80GB 上跑完 Stage 1a 成本测量：actor=Qwen3-8B，drafter=Qwen3-0.6B，bf16，32 action token，5 次重复 + 2 次 warmup。payload `de18005bcdc00d0415d6998f43548f59fb52abf88aa8371e44bf2e9392e55805`。
+
+```text
+context   actor_s   tau_text   tau_code   tau_code_ckv
+   1024    1.1962     0.7275     0.0239         0.0231
+   4096    1.4772     0.6137     0.0509         0.0176
+  16384    3.4196     0.3554     0.1344         0.0085
+```
+
+**判决：Conditional GO，但范围收窄到压缩上下文那一个臂。**
+
+- `code_drafter_ckv` 在三个 context 长度上全部 net_positive，且是 16384 下唯一活下来的臂 → 继续。
+- `code_drafter`（不压缩）在 16384 下 infeasible → 不能作为主设计往下带。
+- `text_drafter` 全部失败。Stage 0 假设它 tau=1.0，实测 0.36~0.73，**Stage 0 把量级估悲观了，但结论方向是对的**。
+
+两个设计主张都活下来了，而且第二个从"锦上添花"变成了**承重墙**：只有压缩上下文那一臂的成本与轨迹长度解耦，context 涨 16 倍它的 tau 反而从 0.0231 掉到 0.0085；不压缩的那一臂反向从 0.0239 涨到 0.1344。KV 压缩不是优化项，是长上下文下 drafter 还能被允许存在的唯一原因。
+
+### 预注册阈值被自己的模型推翻了
+
+上一轮预注册的规则是 `tau > 0.3059 就 NO_GO`。所有 code drafter 的数都低于它，天真读法是干净通过。**这个读法是错的。**
+
+`0.3059` 是在**声明的** `D = 0.080s` 下算出来的，而实测 `D = 1.20~3.42s`，大了 15~43 倍。阈值本身是 `D` 的函数，必须重算：
+
+```text
+context   实测 D     critical tau @ p=0.90, rollback=0.5s
+   1024   1.196 s   0.0971
+   4096   1.477 s   0.0809
+  16384   3.420 s   none（这个点上没有任何 tax 是可接受的）
+```
+
+用实测 D 重跑 Stage 0 成本模型（rho=0.6, tool=1.0s, rollback=0.5s, p=0.90）：
+
+```text
+context   text_drafter                  code_drafter                  code_drafter_ckv
+   1024   unstable_capacity             net_positive                  net_positive
+   4096   infeasible_no_match_benefit   net_positive                  net_positive
+  16384   infeasible_no_match_benefit   infeasible_no_match_benefit   net_positive
+```
+
+所以预注册本身是**欠定的**：它把 `tau` 的阈值钉死了，却让 `D` 浮动，而动的恰恰是 `D`。这是这条线上**第三次"计划错、模型对"**（前两次是 Stage 0 的 unit-tax headroom 和 tool latency speedup）。规则已修订：以后声明负载点必须钉 `(D, rho, tool_seconds, rollback_seconds)` 四个，不是后三个。
+
+### 对自己结论不利的效度威胁（必须写进来）
+
+decode 循环是 eager Python loop，每步的固定 launch/dispatch 开销对 0.6B 和 8B 一视同仁地收：
+
+```text
+context   actor step   drafter step   ratio
+   1024     34.05 ms       26.18 ms   0.7688
+   4096     33.39 ms       25.97 ms   0.7776
+  16384     39.67 ms       23.66 ms   0.5963
+```
+
+0.6B 的 decode step 按算力应该比 8B 便宜一个数量级，实测 ratio 0.60~0.78，说明**这些步是 overhead bound 不是 compute bound**，每步约 24ms 是脚手架税。它同时抬高了 `D` 和 `tau_text`——两个偏差都朝着有利于被检验假设的方向，所以必须公布敏感性：
+
+```text
+context   o = 0 ms                  o = 20 ms                 o = max
+   1024   text .728 code .024       text .414 code .051       text .091 code .080
+   4096   text .614 code .051       text .318 code .090       text .117 code .116
+  16384   text .355 code .134       text .207 code .165       text .172 code .173
+```
+
+极端情况下，**普通 code drafter 相对 text drafter 的优势会完全消失**。压缩臂是稳健的：全扫描区间内 0.011~0.077，处处比 text drafter 低一个数量级。所以 Stage 1a 能站住的主张比原始表格窄：
+
+- 站得住：压缩上下文 code drafter 便宜到可接受，且成本不随轨迹增长。
+- 还站不住：普通 code drafter 打赢 text drafter。在不付 24ms/步开销的推理引擎上这个差距可能收敛。
+
+### 工程侧解决的坑
+
+1. **Kerberos 误判**：`~/krb5cc_sitian` 这个 FILE ccache 一直有票（其它终端 Agent 共用），是 macOS 默认 API cache 按 security session 隔离，非交互 session 里读出来是空的。上一轮据此报"没票据"是误判。runner 现在显式选 FILE cache。
+2. **远端两个 python 都不能直接用**：venv 里 transformers 5.8.1 配自己的 torch 2.4.1，在 `torch.library.custom_op` 处 import 就死；user site 里 transformers 4.51.3 版本对，但旁边的 flash-attn wheel 是按别的 torch C++ ABI 编的，import Qwen3 就撞 undefined `c10` symbol。解法是**每次运行建一个 user site 的 symlink farm，过滤掉 `flash_attn` 和 `torchvision`**，放到 PYTHONPATH 最前并关掉 user site；torch/numpy 仍来自 venv。不改动用户共享环境。
+3. **dtype 静默降级**：transformers 5 把 `torch_dtype` 改名 `dtype`，传错的那个不会报错、会被转发到 config，权重悄悄变成 float32——那样这份 payload 里每个数都是错的。worker 现在按版本选关键字，并在加载后断言实际 dtype。
+
+### 下一步（Stage 1b 入口条件已收紧）
+
+- **阻塞项**：在真正的推理引擎路径上重测 `D`。本文档里每一个阈值都是 `D` 的函数，而当前 `D` 里含约 0.77s 脚手架开销。
+- Stage 1b（真实 agent traces 上测 top-b 精度与校准）必须等 `D` 重测完、压缩臂在重算阈值下仍 net_positive 才能开始，且只测压缩臂；普通 code drafter 除非被 serving-path 测量救活，否则不在范围内。

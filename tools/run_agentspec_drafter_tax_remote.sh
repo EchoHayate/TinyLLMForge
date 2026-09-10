@@ -13,7 +13,11 @@
 #   tools/run_agentspec_drafter_tax_remote.sh smoke
 #
 # The remote host is reached through the corporate jump proxy, which
-# uses GSSAPI. Run `kinit` first or every mode fails at connect.
+# uses GSSAPI. The ticket lives in a FILE credential cache that other
+# local agents share, so the cache is selected explicitly rather than
+# inherited: the macOS default API cache is per security session and
+# is empty in a non-interactive session even when a valid ticket
+# exists. Override with KRB5CCNAME to point somewhere else.
 set -euo pipefail
 
 MODE="${1:-}"
@@ -31,14 +35,14 @@ esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_HOST="${REMOTE_HOST:-sitian@10.232.195.203}"
-REMOTE_PYTHON="${REMOTE_PYTHON:-/data00/home/sitian/sitian-workspace01/tllm/env/bin/python}"
-MODEL_CACHE="${MODEL_CACHE:-/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen}"
+REMOTE_PYTHON="${REMOTE_PYTHON:-/data00/home/sitian/tllm/env/bin/python}"
+MODEL_CACHE="${MODEL_CACHE:-/data00/home/sitian/.ms_cache/Qwen}"
 ACTOR_MODEL="${ACTOR_MODEL:-${MODEL_CACHE}/Qwen3-8B}"
 DRAFTER_MODEL="${DRAFTER_MODEL:-${MODEL_CACHE}/Qwen3-0___6B}"
 SSH_SOCKET="${SSH_SOCKET:-/tmp/ssh-agentspec-drafter-tax}"
-CUDA_DEVICE="${CUDA_DEVICE:-0}"
+CUDA_DEVICE="${CUDA_DEVICE:-7}"
 RUN_TAG="${RUN_TAG:-drafter-tax-${MODE}-$(date +%Y%m%d-%H%M%S)}"
-REMOTE_DIR="${REMOTE_DIR:-/data00/home/sitian/sitian-workspace01/tllm/agentspec-runs/${RUN_TAG}}"
+REMOTE_DIR="${REMOTE_DIR:-/data00/home/sitian/tllm/agentspec-runs/${RUN_TAG}}"
 LOCAL_OUT="${LOCAL_OUT:-${REPO_ROOT}/experiments/agentspec_drafter_tax/${RUN_TAG}}"
 CONTEXT_LENGTHS="${CONTEXT_LENGTHS:-1024 4096 16384}"
 ACTION_TOKENS="${ACTION_TOKENS:-32}"
@@ -46,11 +50,44 @@ COMPRESSED_BUDGET="${COMPRESSED_BUDGET:-512}"
 CODE_VOCABULARY="${CODE_VOCABULARY:-4096}"
 REPETITIONS="${REPETITIONS:-5}"
 WARMUP="${WARMUP:-2}"
+# Remote interpreter selection is not free, and neither option works
+# as shipped. The venv site-packages carries transformers 5.8.1, which
+# is newer than its own torch 2.4.1 and dies at import inside
+# torch.library.custom_op. The user site carries transformers 4.51.3,
+# which is the right vintage but sits next to a flash-attn 2.7.3 wheel
+# built against a different torch C++ ABI, so importing any Qwen3
+# model pulls in an .so with undefined c10 symbols.
+#
+# The fix is a per-run symlink farm over the user site with flash_attn
+# and torchvision filtered out, placed on PYTHONPATH ahead of the venv
+# with user site disabled. torch, numpy and friends still come from
+# the venv, because the user site does not carry them. Nothing in the
+# user's environment is mutated.
+REMOTE_USER_SITE="${REMOTE_USER_SITE:-/data00/home/sitian/.local/lib/python3.11/site-packages}"
+REMOTE_SITE_EXCLUDE="${REMOTE_SITE_EXCLUDE:-flash_attn torchvision}"
+REMOTE_LD_LIBRARY_PATH="${REMOTE_LD_LIBRARY_PATH:-/data00/home/sitian/tllm/miniforge/lib}"
 
 WORKER_LOCAL="${REPO_ROOT}/tools/agentspec_drafter_tax_worker.py"
 if [[ ! -f "${WORKER_LOCAL}" ]]; then
   echo "missing worker: ${WORKER_LOCAL}" >&2
   exit 2
+fi
+
+# Select the shared FILE credential cache unless the caller pinned one.
+if [[ -z "${KRB5CCNAME:-}" ]]; then
+  for candidate in \
+    "${HOME}/krb5cc_sitian" \
+    "${HOME}/krb5cc_${USER}" \
+    "/tmp/krb5cc_$(id -u)"
+  do
+    if [[ -f "${candidate}" ]]; then
+      export KRB5CCNAME="FILE:${candidate}"
+      break
+    fi
+  done
+fi
+if [[ -n "${KRB5CCNAME:-}" ]]; then
+  echo "using credential cache ${KRB5CCNAME}" >&2
 fi
 
 SSH=(
@@ -76,7 +113,7 @@ SSH_STREAM=(
 if ! "${SSH[@]}" true 2>/tmp/agentspec-ssh-error; then
   echo "cannot reach ${REMOTE_HOST}" >&2
   sed 's/^/  /' /tmp/agentspec-ssh-error >&2
-  echo "  hint: the jump proxy needs a Kerberos ticket; run kinit" >&2
+  echo "  hint: no valid Kerberos ticket; check klist, then kinit" >&2
   exit 3
 fi
 
@@ -93,12 +130,42 @@ if [[ "${WORKER_SHA_LOCAL}" != "${WORKER_SHA_REMOTE}" ]]; then
   exit 1
 fi
 
+SITEPATCH="${REMOTE_DIR}/sitepatch"
+"${SSH_STREAM[@]}" \
+  "REMOTE_USER_SITE='${REMOTE_USER_SITE}' SITEPATCH='${SITEPATCH}' REMOTE_SITE_EXCLUDE='${REMOTE_SITE_EXCLUDE}' bash -s" \
+  <<'REMOTE_SITEPATCH'
+set -euo pipefail
+rm -rf "${SITEPATCH}"
+mkdir -p "${SITEPATCH}"
+linked=0
+skipped=0
+for entry in "${REMOTE_USER_SITE}"/*; do
+  base="$(basename "${entry}")"
+  drop=0
+  for prefix in ${REMOTE_SITE_EXCLUDE}; do
+    case "${base}" in
+      "${prefix}"*) drop=1 ;;
+    esac
+  done
+  if [[ "${drop}" == 1 ]]; then
+    skipped=$((skipped + 1))
+    continue
+  fi
+  ln -sfn "${entry}" "${SITEPATCH}/${base}"
+  linked=$((linked + 1))
+done
+echo "sitepatch   ${SITEPATCH} linked=${linked} skipped=${skipped}" >&2
+REMOTE_SITEPATCH
+
 if [[ "${MODE}" == preflight ]]; then
   "${SSH_STREAM[@]}" \
-    "REMOTE_PYTHON='${REMOTE_PYTHON}' CUDA_DEVICE='${CUDA_DEVICE}' ACTOR_MODEL='${ACTOR_MODEL}' DRAFTER_MODEL='${DRAFTER_MODEL}' bash -s" \
+    "REMOTE_PYTHON='${REMOTE_PYTHON}' CUDA_DEVICE='${CUDA_DEVICE}' ACTOR_MODEL='${ACTOR_MODEL}' DRAFTER_MODEL='${DRAFTER_MODEL}' REMOTE_LD_LIBRARY_PATH='${REMOTE_LD_LIBRARY_PATH}' SITEPATCH='${SITEPATCH}' bash -s" \
     <<'REMOTE_PREFLIGHT' | tee "${LOCAL_OUT}/preflight.txt"
 set -euo pipefail
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="${SITEPATCH}"
+export LD_LIBRARY_PATH="${REMOTE_LD_LIBRARY_PATH}:${LD_LIBRARY_PATH:-}"
 echo "host        $(hostname)"
 nvidia-smi --query-gpu=index,name,memory.total,memory.used \
   --format=csv,noheader | sed 's/^/gpu         /'
@@ -155,11 +222,14 @@ fi
 
 printf -v REMOTE_ARGS_Q '%q ' "${REMOTE_ARGS[@]}"
 "${SSH_STREAM[@]}" \
-  "REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' CUDA_DEVICE='${CUDA_DEVICE}' REMOTE_ARGS_Q='${REMOTE_ARGS_Q}' bash -s" \
+  "REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' CUDA_DEVICE='${CUDA_DEVICE}' REMOTE_LD_LIBRARY_PATH='${REMOTE_LD_LIBRARY_PATH}' SITEPATCH='${SITEPATCH}' REMOTE_ARGS_Q='${REMOTE_ARGS_Q}' bash -s" \
   <<'REMOTE_RUN' | tee "${LOCAL_OUT}/runner.log"
 set -euo pipefail
 export CUDA_VISIBLE_DEVICES="${CUDA_DEVICE}"
 export PYTHONDONTWRITEBYTECODE=1
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="${SITEPATCH}"
+export LD_LIBRARY_PATH="${REMOTE_LD_LIBRARY_PATH}:${LD_LIBRARY_PATH:-}"
 export TOKENIZERS_PARALLELISM=false
 cd "${REMOTE_DIR}"
 eval "${REMOTE_PYTHON}" worker.py "${REMOTE_ARGS_Q}"

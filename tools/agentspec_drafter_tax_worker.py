@@ -107,15 +107,37 @@ def _digest(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
+def _transformers_version():
+    try:
+        import transformers
+    except ImportError:
+        return None
+    return transformers.__version__
+
+
 def _load_real_model(path, device, dtype):
+    import transformers
     from transformers import AutoConfig, AutoModelForCausalLM
 
     config = AutoConfig.from_pretrained(path, trust_remote_code=True)
+    # transformers 5 renamed torch_dtype to dtype. Passing the wrong
+    # one is silent: the loader forwards unknown keywords to the
+    # config and the weights come back as float32, which would make
+    # every number in this payload wrong. So pick by version and then
+    # assert the dtype that actually landed.
+    major = int(transformers.__version__.split(".")[0])
+    dtype_keyword = "dtype" if major >= 5 else "torch_dtype"
     model = AutoModelForCausalLM.from_pretrained(
         path,
-        torch_dtype=dtype,
         trust_remote_code=True,
+        **{dtype_keyword: dtype},
     )
+    loaded_dtype = next(model.parameters()).dtype
+    if loaded_dtype != dtype:
+        raise RuntimeError(
+            "requested %s but loaded %s from %s"
+            % (dtype, loaded_dtype, path)
+        )
     model.eval()
     model.to(device)
     identity = {
@@ -176,6 +198,24 @@ def _run_prefill_decode(model, input_ids, action_tokens, synthetic):
         )
         past = outputs.past_key_values
         token = torch.argmax(outputs.logits[:, -1, :], dim=-1)
+
+
+@torch.no_grad()
+def _run_prefill_only(model, input_ids, synthetic):
+    """One prefill and nothing else.
+
+    This arm exists to separate compute from harness overhead. The
+    decode loop below is an eager Python loop, so each step carries a
+    fixed launch and dispatch cost that is charged to the small model
+    and the large model alike. Subtracting the prefill isolates that
+    per-step cost, which lets a reader recompute the tax for a serving
+    engine that does not pay it.
+    """
+
+    if synthetic:
+        model(input_ids)
+        return
+    model(input_ids=input_ids, use_cache=False)
 
 
 @torch.no_grad()
@@ -309,7 +349,30 @@ def build_payload(args):
             args.repetitions,
             args.warmup,
         )
+        actor_prefill_row = _measure(
+            lambda: _run_prefill_only(actor, actor_ids, args.synthetic),
+            device,
+            args.repetitions,
+            args.warmup,
+        )
+        drafter_prefill_row = _measure(
+            lambda: _run_prefill_only(
+                drafter,
+                drafter_ids,
+                args.synthetic,
+            ),
+            device,
+            args.repetitions,
+            args.warmup,
+        )
         actor_seconds = actor_row["median_seconds"]
+        actor_decode_step = (
+            actor_seconds - actor_prefill_row["median_seconds"]
+        ) / args.action_tokens
+        drafter_decode_step = (
+            text_row["median_seconds"]
+            - drafter_prefill_row["median_seconds"]
+        ) / args.action_tokens
         rows.append(
             {
                 "context_length": context_length,
@@ -321,6 +384,28 @@ def build_payload(args):
                     "text_drafter": text_row,
                     "code_drafter": code_row,
                     "code_drafter_ckv": code_ckv_row,
+                    "actor_prefill": actor_prefill_row,
+                    "text_drafter_prefill": drafter_prefill_row,
+                },
+                "decomposition": {
+                    "actor_prefill_seconds": actor_prefill_row[
+                        "median_seconds"
+                    ],
+                    "actor_decode_step_seconds": actor_decode_step,
+                    "drafter_prefill_seconds": drafter_prefill_row[
+                        "median_seconds"
+                    ],
+                    "drafter_decode_step_seconds": drafter_decode_step,
+                    "decode_share_of_actor": (
+                        actor_seconds
+                        - actor_prefill_row["median_seconds"]
+                    )
+                    / actor_seconds,
+                    "decode_step_ratio_drafter_over_actor": (
+                        drafter_decode_step / actor_decode_step
+                        if actor_decode_step > 0
+                        else None
+                    ),
                 },
                 "measured_draft_gpu_tax": {
                     "text_drafter": (
@@ -347,6 +432,7 @@ def build_payload(args):
         ),
         "device": str(device),
         "torch_version": torch.__version__,
+        "transformers_version": _transformers_version(),
         "python_version": platform.python_version(),
         "cuda_device_name": (
             torch.cuda.get_device_name(device) if use_cuda else None
@@ -391,6 +477,24 @@ def summarise(payload):
                 tax["text_drafter"],
                 tax["code_drafter"],
                 tax["code_drafter_ckv"],
+            )
+        )
+    lines.append("")
+    lines.append(
+        "context  a_prefill  a_step_ms  d_step_ms  step_ratio  dec_share"
+    )
+    for row in payload["rows"]:
+        d = row["decomposition"]
+        ratio = d["decode_step_ratio_drafter_over_actor"]
+        lines.append(
+            "%7d  %9.4f  %9.3f  %9.3f  %10s  %9.3f"
+            % (
+                row["context_length"],
+                d["actor_prefill_seconds"],
+                d["actor_decode_step_seconds"] * 1000.0,
+                d["drafter_decode_step_seconds"] * 1000.0,
+                "%.4f" % ratio if ratio is not None else "n/a",
+                d["decode_share_of_actor"],
             )
         )
     return "\n".join(lines)
