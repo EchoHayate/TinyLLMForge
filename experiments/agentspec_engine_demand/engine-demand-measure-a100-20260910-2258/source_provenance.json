@@ -1,0 +1,7 @@
+{
+  "source_revision": "3ca65531e43badec03bc743922c197e2d206a8cc",
+  "tinyvllm_dirty_paths": 0,
+  "worker_sha256": "fc9de6f62dbcf919c993743c10160e14478fc0d01590e38753424c3c21abc054",
+  "remote_dir": "/data00/home/sitian/tllm/agentspec-runs/engine-demand-measure-a100-20260910-2258",
+  "cuda_device": "2"
+}

@@ -1,0 +1,7 @@
+{
+  "source_revision": "3ca65531e43badec03bc743922c197e2d206a8cc",
+  "tinyvllm_dirty_paths": 0,
+  "worker_sha256": "f792a43ab395eb607768b4bb70a502c65cffd8cbe89e2a81fb390beae658032b",
+  "remote_dir": "/data00/home/sitian/tllm/agentspec-runs/engine-demand-preflight-20260910-225038",
+  "cuda_device": "2"
+}

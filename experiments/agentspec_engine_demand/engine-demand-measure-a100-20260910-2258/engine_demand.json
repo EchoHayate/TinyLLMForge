@@ -1,0 +1,398 @@
+{
+  "actor_identity": {
+    "config_digest": "3ab2048ff4d232a0",
+    "hidden_size": 4096,
+    "num_hidden_layers": 36,
+    "path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+    "vocab_size": 151936
+  },
+  "claim_boundary": "cost measurement on the tinyvllm serving path; the code head is randomly initialised and no match probability is measured",
+  "code_head": {
+    "count": 20,
+    "max_seconds": 5.222399905323982e-05,
+    "median_seconds": 3.174399957060814e-05,
+    "min_seconds": 3.071999922394752e-05,
+    "p90_seconds": 4.095999896526337e-05
+  },
+  "code_vocabulary": 4096,
+  "cuda_device_name": "NVIDIA A100 80GB PCIe",
+  "drafter_identity": {
+    "config_digest": "2370e62b91893ae9",
+    "hidden_size": 1024,
+    "num_hidden_layers": 28,
+    "path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B",
+    "vocab_size": 151936
+  },
+  "dtype": "bfloat16",
+  "evidence_valid_for_gate": true,
+  "gpu_memory_utilization": 0.85,
+  "modes": {
+    "cuda_graph": {
+      "enforce_eager": false,
+      "rows": [
+        {
+          "action_tokens": 32,
+          "actor_decode_step_seconds": 0.01320198504254222,
+          "actor_demand_seconds": 0.490702492184937,
+          "actor_prefill_seconds": 0.0814409558661282,
+          "arm_gpu_seconds": {
+            "code_drafter": 0.03475122420117259,
+            "code_drafter_ckv": 0.03392897067591548,
+            "text_drafter": 0.1510208174586296
+          },
+          "compressed_context_length": 512,
+          "compressed_prefill_seconds": 0.03389722667634487,
+          "context_length": 1024,
+          "decode_share_of_demand": 0.8340319090219037,
+          "decode_step_ratio_drafter_over_actor": 0.28417363210607355,
+          "decode_steps_per_action": 31,
+          "drafter_decode_step_seconds": 0.0037516560405492783,
+          "drafter_prefill_seconds": 0.03471948020160198,
+          "measured_draft_gpu_tax": {
+            "code_drafter": 0.07081933504441114,
+            "code_drafter_ckv": 0.06914366895680704,
+            "text_drafter": 0.30776452099557006
+          },
+          "raw": {
+            "actor": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.014282973948866129,
+                "median_seconds": 0.01320198504254222,
+                "min_seconds": 0.013044870924204588,
+                "p90_seconds": 0.013767418917268515
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.08176840515807271,
+                "median_seconds": 0.0814409558661282,
+                "min_seconds": 0.08106396300718188,
+                "p90_seconds": 0.08176840515807271
+              }
+            },
+            "drafter": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.0044383518397808075,
+                "median_seconds": 0.0037516560405492783,
+                "min_seconds": 0.003680707886815071,
+                "p90_seconds": 0.004153971094638109
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.034845272079110146,
+                "median_seconds": 0.03471948020160198,
+                "min_seconds": 0.03438602527603507,
+                "p90_seconds": 0.034845272079110146
+              }
+            }
+          }
+        },
+        {
+          "action_tokens": 32,
+          "actor_decode_step_seconds": 0.013842530082911253,
+          "actor_demand_seconds": 0.7487116055563092,
+          "actor_prefill_seconds": 0.3195931729860604,
+          "arm_gpu_seconds": {
+            "code_drafter": 0.04744354063645005,
+            "code_drafter_ckv": 0.03392897067591548,
+            "text_drafter": 0.17944538919255137
+          },
+          "compressed_context_length": 512,
+          "compressed_prefill_seconds": 0.03389722667634487,
+          "context_length": 4096,
+          "decode_share_of_demand": 0.5731424882233586,
+          "decode_step_ratio_drafter_over_actor": 0.3076856702818455,
+          "decode_steps_per_action": 31,
+          "drafter_decode_step_seconds": 0.004259148146957159,
+          "drafter_prefill_seconds": 0.047411796636879444,
+          "measured_draft_gpu_tax": {
+            "code_drafter": 0.06336690961428126,
+            "code_drafter_ckv": 0.04531647489383513,
+            "text_drafter": 0.23967224210344582
+          },
+          "raw": {
+            "actor": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.015426358208060265,
+                "median_seconds": 0.013842530082911253,
+                "min_seconds": 0.013599776662886143,
+                "p90_seconds": 0.014512788038700819
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.3208916010335088,
+                "median_seconds": 0.3195931729860604,
+                "min_seconds": 0.3174386410973966,
+                "p90_seconds": 0.3208916010335088
+              }
+            },
+            "drafter": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.00532778212800622,
+                "median_seconds": 0.004259148146957159,
+                "min_seconds": 0.004205312114208937,
+                "p90_seconds": 0.004658128134906292
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.04795722896233201,
+                "median_seconds": 0.047411796636879444,
+                "min_seconds": 0.0472594671882689,
+                "p90_seconds": 0.04795722896233201
+              }
+            }
+          }
+        },
+        {
+          "action_tokens": 32,
+          "actor_decode_step_seconds": 0.015520620159804821,
+          "actor_demand_seconds": 2.0384784722700715,
+          "actor_prefill_seconds": 1.557339247316122,
+          "arm_gpu_seconds": {
+            "code_drafter": 0.2865628226287663,
+            "code_drafter_ckv": 0.03392897067591548,
+            "text_drafter": 0.45742803951725364
+          },
+          "compressed_context_length": 512,
+          "compressed_prefill_seconds": 0.03389722667634487,
+          "context_length": 16384,
+          "decode_share_of_demand": 0.2360286024596314,
+          "decode_step_ratio_drafter_over_actor": 0.3551923269286863,
+          "decode_steps_per_action": 31,
+          "drafter_decode_step_seconds": 0.005512805189937353,
+          "drafter_prefill_seconds": 0.2865310786291957,
+          "measured_draft_gpu_tax": {
+            "code_drafter": 0.1405768206664684,
+            "code_drafter_ckv": 0.01664426244253235,
+            "text_drafter": 0.22439679679710176
+          },
+          "raw": {
+            "actor": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.01698340428993106,
+                "median_seconds": 0.015520620159804821,
+                "min_seconds": 0.01513300510123372,
+                "p90_seconds": 0.016296392772346735
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 1.5586386937648058,
+                "median_seconds": 1.557339247316122,
+                "min_seconds": 1.5544186541810632,
+                "p90_seconds": 1.5586386937648058
+              }
+            },
+            "drafter": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.006982502061873674,
+                "median_seconds": 0.005512805189937353,
+                "min_seconds": 0.0054049319587647915,
+                "p90_seconds": 0.006079765968024731
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.287409994751215,
+                "median_seconds": 0.2865310786291957,
+                "min_seconds": 0.285945288836956,
+                "p90_seconds": 0.287409994751215
+              }
+            }
+          }
+        }
+      ]
+    },
+    "eager": {
+      "enforce_eager": true,
+      "rows": [
+        {
+          "action_tokens": 32,
+          "actor_decode_step_seconds": 0.041317534167319536,
+          "actor_demand_seconds": 1.362387693952769,
+          "actor_prefill_seconds": 0.08154413476586342,
+          "arm_gpu_seconds": {
+            "code_drafter": 0.0373630191758275,
+            "code_drafter_ckv": 0.036364957094192504,
+            "text_drafter": 0.9551712512038648
+          },
+          "compressed_context_length": 512,
+          "compressed_prefill_seconds": 0.0363332130946219,
+          "context_length": 1024,
+          "decode_share_of_demand": 0.9401461602098923,
+          "decode_step_ratio_drafter_over_actor": 0.7165902263741432,
+          "decode_steps_per_action": 31,
+          "drafter_decode_step_seconds": 0.0296077411621809,
+          "drafter_prefill_seconds": 0.037331275176256895,
+          "measured_draft_gpu_tax": {
+            "code_drafter": 0.0274246599126451,
+            "code_drafter_ckv": 0.02669207689970018,
+            "text_drafter": 0.7011009094133659
+          },
+          "raw": {
+            "actor": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.04807929089292884,
+                "median_seconds": 0.041317534167319536,
+                "min_seconds": 0.0389732513576746,
+                "p90_seconds": 0.04229736793786287
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.08184385392814875,
+                "median_seconds": 0.08154413476586342,
+                "min_seconds": 0.08082027174532413,
+                "p90_seconds": 0.08184385392814875
+              }
+            },
+            "drafter": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.0368971168063581,
+                "median_seconds": 0.0296077411621809,
+                "min_seconds": 0.02875735890120268,
+                "p90_seconds": 0.03064711717888713
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.04015688318759203,
+                "median_seconds": 0.037331275176256895,
+                "min_seconds": 0.036767507903277874,
+                "p90_seconds": 0.04015688318759203
+              }
+            }
+          }
+        },
+        {
+          "action_tokens": 32,
+          "actor_decode_step_seconds": 0.040884611662477255,
+          "actor_demand_seconds": 1.5879241088405252,
+          "actor_prefill_seconds": 0.32050114730373025,
+          "arm_gpu_seconds": {
+            "code_drafter": 0.04730214025825262,
+            "code_drafter_ckv": 0.036364957094192504,
+            "text_drafter": 0.9554653940722346
+          },
+          "compressed_context_length": 512,
+          "compressed_prefill_seconds": 0.0363332130946219,
+          "context_length": 4096,
+          "decode_share_of_demand": 0.798163435192281,
+          "decode_step_ratio_drafter_over_actor": 0.7165682060172985,
+          "decode_steps_per_action": 31,
+          "drafter_decode_step_seconds": 0.029296612832695246,
+          "drafter_prefill_seconds": 0.04727039625868201,
+          "measured_draft_gpu_tax": {
+            "code_drafter": 0.029788665588553743,
+            "code_drafter_ckv": 0.022900941481860598,
+            "text_drafter": 0.6017072155733557
+          },
+          "raw": {
+            "actor": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.05142480321228504,
+                "median_seconds": 0.040884611662477255,
+                "min_seconds": 0.03938361490145326,
+                "p90_seconds": 0.043644210789352655
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.32121944800019264,
+                "median_seconds": 0.32050114730373025,
+                "min_seconds": 0.3197010769508779,
+                "p90_seconds": 0.32121944800019264
+              }
+            },
+            "drafter": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.034639660734683275,
+                "median_seconds": 0.029296612832695246,
+                "min_seconds": 0.028651338070631027,
+                "p90_seconds": 0.030151257757097483
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.047368395142257214,
+                "median_seconds": 0.04727039625868201,
+                "min_seconds": 0.04697059094905853,
+                "p90_seconds": 0.047368395142257214
+              }
+            }
+          }
+        },
+        {
+          "action_tokens": 32,
+          "actor_decode_step_seconds": 0.041326813865453005,
+          "actor_demand_seconds": 2.846312646754086,
+          "actor_prefill_seconds": 1.5651814169250429,
+          "arm_gpu_seconds": {
+            "code_drafter": 0.28590868167579175,
+            "code_drafter_ckv": 0.036364957094192504,
+            "text_drafter": 1.2393106990493834
+          },
+          "compressed_context_length": 512,
+          "compressed_prefill_seconds": 0.0363332130946219,
+          "context_length": 16384,
+          "decode_share_of_demand": 0.45010207550109993,
+          "decode_step_ratio_drafter_over_actor": 0.7442124110114703,
+          "decode_steps_per_action": 31,
+          "drafter_decode_step_seconds": 0.03075592778623104,
+          "drafter_prefill_seconds": 0.28587693767622113,
+          "measured_draft_gpu_tax": {
+            "code_drafter": 0.1004487971487742,
+            "code_drafter_ckv": 0.012776163973294653,
+            "text_drafter": 0.4354091952838295
+          },
+          "raw": {
+            "actor": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.054073510225862265,
+                "median_seconds": 0.041326813865453005,
+                "min_seconds": 0.039320288226008415,
+                "p90_seconds": 0.04252385115250945
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 1.5710390703752637,
+                "median_seconds": 1.5651814169250429,
+                "min_seconds": 1.5624823868274689,
+                "p90_seconds": 1.5710390703752637
+              }
+            },
+            "drafter": {
+              "decode_step": {
+                "count": 155,
+                "max_seconds": 0.03985185408964753,
+                "median_seconds": 0.03075592778623104,
+                "min_seconds": 0.029659403953701258,
+                "p90_seconds": 0.03260528203099966
+              },
+              "prefill": {
+                "count": 5,
+                "max_seconds": 0.2864523599855602,
+                "median_seconds": 0.28587693767622113,
+                "min_seconds": 0.2851692521944642,
+                "p90_seconds": 0.2864523599855602
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "payload_sha256": "1a9bb5c61dddcb39f579dab245fccc88471dc426b4e228773418888f61fb32ab",
+  "python_version": "3.11.15",
+  "repetitions": 5,
+  "schema_version": 1,
+  "seed": 20260910,
+  "serving_path": "tinyvllm.LLM",
+  "torch_version": "2.4.1+cu121",
+  "warmup": 2,
+  "worker": "agentspec_engine_demand"
+}

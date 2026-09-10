@@ -1,0 +1,166 @@
+{
+  "actor_identity": {
+    "config_digest": "2370e62b91893ae9",
+    "hidden_size": 1024,
+    "num_hidden_layers": 28,
+    "path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B",
+    "vocab_size": 151936
+  },
+  "claim_boundary": "cost measurement on the tinyvllm serving path; the code head is randomly initialised and no match probability is measured",
+  "code_head": {
+    "count": 20,
+    "max_seconds": 5.8368001133203504e-05,
+    "median_seconds": 3.2767999917268756e-05,
+    "min_seconds": 2.969600073993206e-05,
+    "p90_seconds": 3.891199827194214e-05
+  },
+  "code_vocabulary": 4096,
+  "cuda_device_name": "NVIDIA A100 80GB PCIe",
+  "drafter_identity": {
+    "config_digest": "2370e62b91893ae9",
+    "hidden_size": 1024,
+    "num_hidden_layers": 28,
+    "path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B",
+    "vocab_size": 151936
+  },
+  "dtype": "bfloat16",
+  "evidence_valid_for_gate": true,
+  "gpu_memory_utilization": 0.85,
+  "modes": {
+    "cuda_graph": {
+      "enforce_eager": false,
+      "rows": [
+        {
+          "action_tokens": 4,
+          "actor_decode_step_seconds": 0.0034952606074512005,
+          "actor_demand_seconds": 0.04497845284640789,
+          "actor_prefill_seconds": 0.03449267102405429,
+          "arm_gpu_seconds": {
+            "code_drafter": 0.03647663409076631,
+            "code_drafter_ckv": 0.03548377786949277,
+            "text_drafter": 0.04700616910122335
+          },
+          "compressed_context_length": 512,
+          "compressed_prefill_seconds": 0.0354510098695755,
+          "context_length": 1024,
+          "decode_share_of_demand": 0.2331290019725751,
+          "decode_step_ratio_drafter_over_actor": 1.0072976139802545,
+          "decode_steps_per_action": 3,
+          "drafter_decode_step_seconds": 0.003520767670124769,
+          "drafter_prefill_seconds": 0.03644386609084904,
+          "measured_draft_gpu_tax": {
+            "code_drafter": 0.8109801867869149,
+            "code_drafter_ckv": 0.788906145586255,
+            "text_drafter": 1.04508194761033
+          },
+          "raw": {
+            "actor": {
+              "decode_step": {
+                "count": 6,
+                "max_seconds": 0.004183849785476923,
+                "median_seconds": 0.0034952606074512005,
+                "min_seconds": 0.0033921566791832447,
+                "p90_seconds": 0.003843192011117935
+              },
+              "prefill": {
+                "count": 2,
+                "max_seconds": 0.034789890982210636,
+                "median_seconds": 0.03449267102405429,
+                "min_seconds": 0.03419545106589794,
+                "p90_seconds": 0.034789890982210636
+              }
+            },
+            "drafter": {
+              "decode_step": {
+                "count": 6,
+                "max_seconds": 0.0036678831093013287,
+                "median_seconds": 0.003520767670124769,
+                "min_seconds": 0.0034883078187704086,
+                "p90_seconds": 0.003599753137677908
+              },
+              "prefill": {
+                "count": 2,
+                "max_seconds": 0.036510464269667864,
+                "median_seconds": 0.03644386609084904,
+                "min_seconds": 0.03637726791203022,
+                "p90_seconds": 0.036510464269667864
+              }
+            }
+          }
+        }
+      ]
+    },
+    "eager": {
+      "enforce_eager": true,
+      "rows": [
+        {
+          "action_tokens": 4,
+          "actor_decode_step_seconds": 0.03298213751986623,
+          "actor_demand_seconds": 0.13810934126377106,
+          "actor_prefill_seconds": 0.03916292870417237,
+          "arm_gpu_seconds": {
+            "code_drafter": 0.042169967779889704,
+            "code_drafter_ckv": 0.03961043210886419,
+            "text_drafter": 0.13403719710186124
+          },
+          "compressed_context_length": 512,
+          "compressed_prefill_seconds": 0.03957766410894692,
+          "context_length": 1024,
+          "decode_share_of_demand": 0.7164353377851812,
+          "decode_step_ratio_drafter_over_actor": 0.9287855410274163,
+          "decode_steps_per_action": 3,
+          "drafter_decode_step_seconds": 0.0306333324406296,
+          "drafter_prefill_seconds": 0.042137199779972434,
+          "measured_draft_gpu_tax": {
+            "code_drafter": 0.3053375491767099,
+            "code_drafter_ckv": 0.2868048731998031,
+            "text_drafter": 0.9705150707066762
+          },
+          "raw": {
+            "actor": {
+              "decode_step": {
+                "count": 6,
+                "max_seconds": 0.036387629341334105,
+                "median_seconds": 0.03298213751986623,
+                "min_seconds": 0.03224622178822756,
+                "p90_seconds": 0.03625956131145358
+              },
+              "prefill": {
+                "count": 2,
+                "max_seconds": 0.03968090610578656,
+                "median_seconds": 0.03916292870417237,
+                "min_seconds": 0.038644951302558184,
+                "p90_seconds": 0.03968090610578656
+              }
+            },
+            "drafter": {
+              "decode_step": {
+                "count": 6,
+                "max_seconds": 0.03469703299924731,
+                "median_seconds": 0.0306333324406296,
+                "min_seconds": 0.030459722969681025,
+                "p90_seconds": 0.034567472990602255
+              },
+              "prefill": {
+                "count": 2,
+                "max_seconds": 0.045620893593877554,
+                "median_seconds": 0.042137199779972434,
+                "min_seconds": 0.038653505966067314,
+                "p90_seconds": 0.045620893593877554
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "payload_sha256": "33f07475b1975c56b6ed249dcaf9d473b496f436c34c0b454a85798427c9e3be",
+  "python_version": "3.11.15",
+  "repetitions": 2,
+  "schema_version": 1,
+  "seed": 20260910,
+  "serving_path": "tinyvllm.LLM",
+  "torch_version": "2.4.1+cu121",
+  "warmup": 1,
+  "worker": "agentspec_engine_demand"
+}

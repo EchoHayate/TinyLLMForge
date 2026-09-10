@@ -1,0 +1,24 @@
+[rank0]:W0910 22:54:07.377000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:54:07.495000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:54:31.492000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:54:31.615000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:54:34.736000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:54:34.787000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:54:53.062000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:54:53.160000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:57:05.449000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/4] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:57:05.497000 139770232009728 torch/fx/experimental/symbolic_shapes.py:4449] [1/4] xindex is not in var_ranges, defaulting to unknown range.
+worker          agentspec_engine_demand
+serving path    tinyvllm.LLM
+device          NVIDIA A100 80GB PCIe
+actor           /data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B
+drafter         /data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B
+code head       0.000033 s
+
+mode cuda_graph
+context      D_s  a_pre_s  a_step_ms  d_step_ms  ratio  tau_text  tau_code  tau_ckv
+   1024   0.0450   0.0345      3.495      3.521  1.007    1.0451    0.8110   0.7889
+
+mode eager
+context      D_s  a_pre_s  a_step_ms  d_step_ms  ratio  tau_text  tau_code  tau_ckv
+   1024   0.1381   0.0392     32.982     30.633  0.929    0.9705    0.3053   0.2868

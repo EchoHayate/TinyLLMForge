@@ -1,0 +1,24 @@
+[rank0]:W0910 22:51:14.885000 140443590382592 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:51:15.003000 140443590382592 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:51:39.302000 140443590382592 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:51:39.427000 140443590382592 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:51:43.307000 140443590382592 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:51:43.359000 140443590382592 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:52:01.479000 140443590382592 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0910 22:52:01.582000 140443590382592 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/data00/home/sitian/tllm/agentspec-runs/engine-demand-smoke-20260910-225100/worker.py", line 465, in <module>
+[rank0]:     raise SystemExit(main())
+[rank0]:                      ^^^^^^
+[rank0]:   File "/data00/home/sitian/tllm/agentspec-runs/engine-demand-smoke-20260910-225100/worker.py", line 451, in main
+[rank0]:     payload = build_payload(args)
+[rank0]:               ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/tllm/agentspec-runs/engine-demand-smoke-20260910-225100/worker.py", line 255, in build_payload
+[rank0]:     actor_rows = _measure_model(
+[rank0]:                  ^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/tllm/agentspec-runs/engine-demand-smoke-20260910-225100/worker.py", line 214, in _measure_model
+[rank0]:     prefill, decodes = _time_one_request(
+[rank0]:                        ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/data00/home/sitian/tllm/agentspec-runs/engine-demand-smoke-20260910-225100/worker.py", line 169, in _time_one_request
+[rank0]:     raise RuntimeError(
+[rank0]: RuntimeError: expected 4 decode steps, saw 3

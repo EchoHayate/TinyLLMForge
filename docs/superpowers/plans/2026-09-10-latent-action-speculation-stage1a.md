@@ -1,7 +1,10 @@
 # Stage 1a plan and results: measure the action drafter GPU tax
 
-Status: measured on 1x A100 80GB. Conditional GO, with one correction
-to the Stage 0 threshold and one open threat to validity.
+Status: measured on 1x A100 80GB. Conditional GO, superseded on the `D`
+question by `2026-09-10-latent-action-speculation-stage1a-bis.md`, which
+re-measures `D` on the serving path. The `tau` values in this document
+come from an eager Hugging Face harness and are not the load point for
+Stage 1b.
 Line: latent action speculation (`tinyvllm/agentspec/`).
 Predecessor: `2026-09-10-latent-action-speculation-stage0.md`.
 
@@ -228,14 +231,19 @@ Conditional GO, narrowed to the compressed-context arm.
 - [x] Measured `tau` compared against the pre-registered threshold, the
       threshold corrected at measured `D`, and the result recorded including
       the arm it kills.
-- [ ] `D` re-measured on a serving path, and the thresholds recomputed.
+- [x] `D` re-measured on a serving path, and the thresholds recomputed.
+      Done in `2026-09-10-latent-action-speculation-stage1a-bis.md`: the
+      serving-path `D` is 1.4x to 2.8x smaller, the conclusions on the
+      text and compressed arms hold, and the plain code drafter is
+      revived at 1024 and 4096 only.
 
 ## Stage 1b entry criteria
 
 Stage 1b, which measures top-`b` action prediction accuracy and calibration on
 real agent traces, may not begin until `D` is re-measured on a serving path
 and the compressed-context arm is still `net_positive` at the recomputed
-threshold. The load point for Stage 1b must pin `(D, rho, tool_seconds,
+threshold. Both conditions were met in Stage 1a-bis, and the pinned load
+point for Stage 1b lives in that document, not this one. The load point for Stage 1b must pin `(D, rho, tool_seconds,
 rollback_seconds)` in advance. Stage 1b measures accuracy for the
 compressed-context arm only; the plain code drafter is out of scope unless the
 serving-path measurement revives it.

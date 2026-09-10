@@ -53368,3 +53368,83 @@ context   o = 0 ms                  o = 20 ms                 o = max
 
 - **阻塞项**：在真正的推理引擎路径上重测 `D`。本文档里每一个阈值都是 `D` 的函数，而当前 `D` 里含约 0.77s 脚手架开销。
 - Stage 1b（真实 agent traces 上测 top-b 精度与校准）必须等 `D` 重测完、压缩臂在重算阈值下仍 net_positive 才能开始，且只测压缩臂；普通 code drafter 除非被 serving-path 测量救活，否则不在范围内。
+
+---
+
+## Stage 1a-bis：serving path 上重测 `D`（2026-09-10 夜）
+
+结论：**GO Stage 1b，范围锁死在 `code_drafter_ckv`**。成本已不再是约束，精度是。
+
+文档：`docs/superpowers/plans/2026-09-10-latent-action-speculation-stage1a-bis.md`
+产物：`experiments/agentspec_engine_demand/engine-demand-measure-a100-20260910-2258/engine_demand.json`
+payload sha256：`1a9bb5c61dddcb39f579dab245fccc88471dc426b4e228773418888f61fb32ab`
+
+### 怎么测的
+
+`tools/agentspec_engine_demand_worker.py` 直接驱动 `tinyvllm.LLM`，一次 `step()` 一拍，靠 `num_tokens` 正负分离 prefill 与 decode。引擎的 prefill step 本身就吐第一个 token，所以要 A 个 action token 实际是 1 次 prefill + A-1 次 decode（第一次跑挂在这个假设上，已修正为显式断言）。同一份 artifact 里同时测 `enforce_eager=False/True`，让 CUDA graph 的贡献可归因而不是靠猜。每个 repetition 用新的随机 prompt，防止 reusable prefix cache 把 prefill 变成免费。
+
+### 关键数字
+
+```text
+context   D_eager   D_serving   ratio   step ratio eager   step ratio serving
+   1024    1.3624      0.4907   2.776              0.717                0.284
+   4096    1.5879      0.7487   2.121              0.717                0.308
+  16384    2.8463      2.0385   1.396              0.744                0.355
+```
+
+- 修正**全部发生在 decode**：actor prefill 两种模式一致（1024 上 0.0815 vs 0.0814，16384 上 1.5652 vs 1.5573），actor decode step 从 41.3ms 掉到 13.2ms。Stage 1a 估的"约 0.77s 脚手架开销"方向对、量偏小。
+- drafter 仍然没跑到 roofline：CUDA graph 下 0.6B/8B 的 step ratio 还是 0.28~0.36（带宽推算应该约 0.08），batch 1 下是 per-layer launch 地板。所以 `tau_text` 是上界不是估计；code 臂不含 decode 循环，不受影响。
+
+```text
+context     D_s   tau_text   tau_code   tau_ckv    text_s   code_s   ckv_s
+   1024  0.4907     0.3078     0.0708    0.0691    0.1510   0.0347  0.0339
+   4096  0.7487     0.2397     0.0634    0.0453    0.1795   0.0474  0.0339
+  16384  2.0385     0.2244     0.1406    0.0166    0.4574   0.2866  0.0339
+```
+
+压缩论证第一次以实测形式成立：普通 code drafter 要重读整条轨迹，prefill 从 34.7ms 涨到 286.6ms，16384 上 tax 到 0.14；压缩臂把 drafter prefill 钉在 512 token，恒定 33.9ms，tax 随上下文**下降** 0.069→0.017。code head 本身 32 微秒，任何上下文下都不是成本项。
+
+### 重算判决（`tools/agentspec_engine_demand_verdict.py`）
+
+参考点先声明后读表：`tool=1.0s, rho=0.6, p=0.75, rollback=0.5s`。不复用 Stage 1a 预注册的 `tau<0.3059`，因为那是 `D=0.080s` 下算的。
+
+```text
+context   arm                 tau      verdict         speedup   min_p   crit_tax
+   1024   text_drafter     0.3078   no_match_benefit    0.6637     n/a        n/a
+   1024   code_drafter     0.0708   net_positive        1.2071   0.495     0.1561
+   1024   code_drafter_ckv 0.0691   net_positive        1.2113   0.491     0.1561
+   4096   code_drafter     0.0634   net_positive        1.1155   0.552     0.1113
+   4096   code_drafter_ckv 0.0453   net_positive        1.1606   0.485     0.1113
+  16384   code_drafter     0.1406   no_match_benefit    0.7875     n/a        n/a
+  16384   code_drafter_ckv 0.0166   net_positive        1.0716   0.478     0.0457
+```
+
+- serving path **没有救活 text drafter**：三个上下文在参考点全是 `infeasible_no_match_benefit`，而且它是唯一会把容量搞不稳的臂。Stage 0 假设它 tax=1.0，实测 0.22~0.31——量级又错了，结论又对。
+- 普通 code drafter 在 1024/4096 是 net_positive，16384 仍不可行（结构性原因：prefill 随轨迹涨）。只当 fallback，不当主设计。
+- 压缩臂三个上下文全 net_positive，相对重算 critical tax 有 2.3x~2.8x 余量，而且是唯一余量随上下文**变大**的臂。
+
+**这张表里难受的数是 `min_p`**：压缩臂需要 top-1 action match 0.478~0.491，普通 code drafter 在 4096 需要 0.552；而 Stage 0 引用的公开 single-branch action match 参考值是 0.55。整条线的剩余风险已经全部压到这一个量上，余量只有几个百分点，而它正是 Stage 1b 要测的东西。
+
+### 仍然存在的效度威胁
+
+1. batch 1 测的 `D`。真实批处理下 actor decode step 会被多序列摊薄，per-agent-step `D` 变小，于是所有 `tau` 变大、所有余量变小。Stage 3 必须在并发下重测，Stage 1b 的 GO 是有条件的。
+2. drafter decode 仍 overhead bound，`tau_text` 只是上界。
+3. 16384 上 prefill 占 `D` 的 76%，`D` 对 prefill attention 实现和未来 chunked-prefill 调度改动敏感。worker 遇到 prompt 被切块直接报错，这条假设是强制的不是许愿的。
+4. 512 token 压缩预算只是**成本假设**，不是能用的压缩器。压缩上下文里是否还有足够信号预测下一个 action，完全没测——那是 Stage 1b 的问题，也是现在唯一要紧的问题。
+
+### Stage 1b 入口（已预注册，不许自己重推阈值）
+
+```text
+serving path      tinyvllm.LLM, enforce_eager=False, batch 1, bf16
+actor/drafter     Qwen3-8B / Qwen3-0.6B
+D                 0.4907s @1024, 0.7487s @4096, 2.0385s @16384
+rho 0.6, tool 1.0s, rollback 0.5s
+tau_ckv           0.0691, 0.0453, 0.0166
+required p        >= 0.491 @1024, >= 0.485 @4096, >= 0.478 @16384
+```
+
+NO_GO 条件：若真实 trace 上 branch width=1 的 top-1 action match 在 4096 低于 required `p`，这条线停，**不许靠加宽 `b>1` 来补**——加宽同时乘大 drafter tax 并把阈值一起顶高。
+
+### Stage 0 回归
+
+`python3 tools/agentspec_breakeven_gate.py` 仍 PASS（270 rows，sha `d18f42ea...`），`pytest tools/test_agentspec_breakeven_gate.py` 48 passed。

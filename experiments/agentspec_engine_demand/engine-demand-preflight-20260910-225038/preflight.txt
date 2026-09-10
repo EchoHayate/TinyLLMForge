@@ -1,0 +1,17 @@
+host        n232-195-203
+gpu         0, NVIDIA A100 80GB PCIe, 4028 MiB, 0 %
+gpu         1, NVIDIA A100 80GB PCIe, 14382 MiB, 0 %
+gpu         2, NVIDIA A100 80GB PCIe, 0 MiB, 0 %
+gpu         3, NVIDIA A100 80GB PCIe, 0 MiB, 0 %
+gpu         4, NVIDIA A100 80GB PCIe, 3547 MiB, 0 %
+gpu         5, NVIDIA A100 80GB PCIe, 18854 MiB, 0 %
+gpu         6, NVIDIA A100 80GB PCIe, 2491 MiB, 0 %
+gpu         7, NVIDIA A100 80GB PCIe, 0 MiB, 0 %
+model ok    /data00/home/sitian/.ms_cache/Qwen/Qwen3-8B
+model ok    /data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B
+torch        2.4.1+cu121
+transformers 4.51.3
+flash_attn   2.6.3
+device       NVIDIA A100 80GB PCIe
+tinyvllm     /data00/home/sitian/tllm/agentspec-runs/engine-demand-preflight-20260910-225038/source/tinyvllm/__init__.py
+enforce_eager default False
