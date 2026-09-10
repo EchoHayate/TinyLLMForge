@@ -53221,3 +53221,69 @@ trajectory equivalence，比 token 级的 distributional losslessness 弱，任�
 Stage 1 入口条件：先在 Stage 1 的 source revision 上重跑 Stage 0 拿到 PASS，
 并提前声明目标负载点 `(rho, tool_seconds, rollback_seconds)`；如果目标精度下
 实测 drafter tax 超过该点的 `critical_draft_tax`，Stage 1 直接 NO_GO。
+
+## 2026-09-10 Latent Action Speculation Stage 1a 成本测量脚手架
+
+### 目标
+
+Stage 0 用的是**声明的** drafter tax（tau）和 actor GPU 需求（D），Stage 1a 把这两个数从"声明"换成"实测"。
+
+先测成本、不测精度，理由是 Stage 0 的 270 个点里只有 76 个 net positive，而且判决对 tau 的敏感度远高于对 p 的敏感度。先去测 p 需要 agent traces + argument codebook + 训好的 head，如果 drafter 根本压不到可接受的成本，这些投入全是沉没成本。
+
+代码 head 是随机初始化的，这是故意的：head 权重影响精度，不影响成本。Stage 1a 不允许声称任何 match probability 或加速比。
+
+### 预注册的负载点与 NO_GO 阈值
+
+按 Stage 0 的入口条件，负载点必须在测量前声明，已用当前 revision 的成本模型算好写进 plan：
+
+```text
+declared point B    rho = 0.6, tool = 1.0s, rollback = 0.5s, D = 0.080s
+stability bound     tau < 0.6667
+critical_draft_tax  tau < 0.3059  (p = 0.90)
+minimum p           p >= 0.7600 @ tau=0.10 ; p >= 0.8537 @ tau=0.25
+
+point A  rho=0.3, tool=0.2s, rollback=0   -> critical tau 0.385 .. 0.630
+point C  rho=0.8, tool=5.0s, rollback=0.5 -> critical tau 0.117 .. 0.172
+```
+
+判决规则（已预注册，不能事后改）：
+
+- 实测 tau > 0.3059：共享 serving 这条故事 NO_GO，只能退到 point A 的独占算力场景，且必须改设计文档。
+- 实测 tau <= 0.1722：连重载的 point C 也能活，这才是设计声称要打的区间。
+- text drafter 在 tau=1.0 时于 point B 已经是 unstable_capacity。如果实测发现 text drafter 明显比这便宜，说明 Stage 0 的 tax 假设本身错了，必须先重跑矩阵再谈 Stage 1b。
+
+### 四个测量臂
+
+`tools/agentspec_drafter_tax_worker.py`，context 1024/4096/16384，action token 32：
+
+| arm | 内容 | 检验什么 |
+| --- | --- | --- |
+| `actor` | 目标模型 prefill + 32 步贪心 decode | 分母 D |
+| `text_drafter` | 小模型 prefill + 同样 32 步 decode | 已发表方案 |
+| `code_drafter` | 小模型 prefill + 一次 4096 词表 action code 线性头 | 去掉 token decode 到底能不能压 tau |
+| `code_drafter_ckv` | 同上但只吃 512 token 压缩上下文 | drafter 成本能否与轨迹长度解耦 |
+
+后两个臂就是这条线的两个核心主张。`code_drafter` 若不能大幅赢 `text_drafter`，latent/离散码这层包装就没有成本优势，诚实做法是退役它、直接用小文本 drafter。`code_drafter_ckv` 若压不平随 context 的增长，KV 压缩那半边设计就是装饰。
+
+### 已落地
+
+- `tools/agentspec_drafter_tax_worker.py`：自包含 worker，CUDA event 计时（无 CUDA 时回落 wall clock），warmup 后取中位数，输出带 `payload_sha256` 的确定性 JSON，并显式标 `evidence_valid_for_gate`。
+- `tools/run_agentspec_drafter_tax_remote.sh`：`preflight | smoke | measure`。上传 worker 并用 sha256 校验、在远端 CUDA python 下运行、回拉 payload，且拒绝 synthetic payload 冒充证据。
+- CPU `--synthetic` 端到端 smoke 已通过，走遍全部代码路径，并被标记为非证据。
+- Stage 0 gate 在本 revision 复跑仍 PASS，48 个测试全绿。
+
+### 当前阻塞
+
+`preflight` 在连接处 fail closed：
+
+```text
+cannot reach sitian@10.232.195.203
+  Connection closed by UNKNOWN port 65535
+  hint: the jump proxy needs a Kerberos ticket; run kinit
+```
+
+`~/.ssh/config` 走 `jump-proxy-hl` 且 `GSSAPIAuthentication yes`，`klist` 显示无票据缓存。解法是本机跑一次交互式 `kinit`（要输密码，无法自动化）。票据到位后下游可以无人值守跑完。
+
+### Stage 1b 入口条件
+
+Stage 1b（在真实 agent traces 上测 top-b action 预测精度与校准）必须等 Stage 1a 实测 tau 落在 point B 的 critical tax 以下，或者设计被明确收窄到 point A 的独占算力区间之后，才能开始。
