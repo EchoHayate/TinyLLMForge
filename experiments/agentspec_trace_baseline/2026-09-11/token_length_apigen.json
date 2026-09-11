@@ -1,0 +1,207 @@
+{
+  "all_steps": {
+    "minimal": {
+      "count": 21955,
+      "fraction_within_budget": {
+        "102": 0.9780004554771122,
+        "11": 0.10371213846504213,
+        "16": 0.555590981553177,
+        "27": 0.7227966294693692,
+        "42": 0.7782737417444774,
+        "67": 0.9300387155545434,
+        "8": 0.06595308585743566
+      },
+      "mean": 27.091505351856068,
+      "p50": 15,
+      "p75": 33,
+      "p90": 51,
+      "p99": 192
+    },
+    "tool_only": {
+      "count": 21955,
+      "fraction_within_budget": {
+        "102": 1.0,
+        "11": 1.0,
+        "16": 1.0,
+        "27": 1.0,
+        "42": 1.0,
+        "67": 1.0,
+        "8": 1.0
+      },
+      "mean": 3.6368480983830564,
+      "p50": 3,
+      "p75": 5,
+      "p90": 5,
+      "p99": 6
+    },
+    "verbatim": {
+      "count": 21955,
+      "fraction_within_budget": {
+        "102": 0.9674789341835572,
+        "11": 0.0002732862673650649,
+        "16": 0.016488271464358915,
+        "27": 0.578683671145525,
+        "42": 0.7296287861534958,
+        "67": 0.8690047825096789,
+        "8": 0.0
+      },
+      "mean": 40.24882714643589,
+      "p50": 26,
+      "p75": 49,
+      "p90": 68,
+      "p99": 229
+    }
+  },
+  "budgets": [
+    8,
+    11,
+    16,
+    27,
+    42,
+    67,
+    102
+  ],
+  "corpus": "apigen",
+  "eligible_steps": {
+    "minimal": {
+      "count": 16414,
+      "fraction_within_budget": {
+        "102": 0.9889119044717923,
+        "11": 0.11965395394175704,
+        "16": 0.7157304739856221,
+        "27": 0.9111733885707323,
+        "42": 0.9543682222492994,
+        "67": 0.973193615206531,
+        "8": 0.07061045449006945
+      },
+      "mean": 17.88302668453759,
+      "p50": 14,
+      "p75": 17,
+      "p90": 21,
+      "p99": 107
+    },
+    "tool_only": {
+      "count": 16414,
+      "fraction_within_budget": {
+        "102": 1.0,
+        "11": 1.0,
+        "16": 1.0,
+        "27": 1.0,
+        "42": 1.0,
+        "67": 1.0,
+        "8": 1.0
+      },
+      "mean": 3.490495918118679,
+      "p50": 3,
+      "p75": 4,
+      "p90": 6,
+      "p99": 6
+    },
+    "verbatim": {
+      "count": 16414,
+      "fraction_within_budget": {
+        "102": 0.9869623492140855,
+        "11": 0.0,
+        "16": 0.013829657609357865,
+        "27": 0.7514317046423784,
+        "42": 0.9446204459607652,
+        "67": 0.9672231022298038,
+        "8": 0.0
+      },
+      "mean": 28.064457170707932,
+      "p50": 23,
+      "p75": 27,
+      "p90": 36,
+      "p99": 115
+    }
+  },
+  "payload_sha256": "cbec5b8c9ce41d4bda9619e59e47a08a74ae1d48f128dc80346ce16c5506fc82",
+  "per_tool_verbatim_median": {
+    "calculate": {
+      "median_tokens": 24,
+      "steps": 183
+    },
+    "find_item_by_product_and_options": {
+      "median_tokens": 41,
+      "steps": 29
+    },
+    "find_item_by_product_options": {
+      "median_tokens": 44,
+      "steps": 17
+    },
+    "find_item_id_by_product_and_options": {
+      "median_tokens": 49,
+      "steps": 15
+    },
+    "find_item_id_by_product_options": {
+      "median_tokens": 44,
+      "steps": 25
+    },
+    "find_order_by_id": {
+      "median_tokens": 35,
+      "steps": 18
+    },
+    "find_user_id_by_email": {
+      "median_tokens": 24,
+      "steps": 1883
+    },
+    "find_user_id_by_name_zip": {
+      "median_tokens": 32,
+      "steps": 1761
+    },
+    "get_flight_price": {
+      "median_tokens": 36,
+      "steps": 9
+    },
+    "get_item_details": {
+      "median_tokens": 39,
+      "steps": 43
+    },
+    "get_order_details": {
+      "median_tokens": 22,
+      "steps": 4069
+    },
+    "get_order_status": {
+      "median_tokens": 34,
+      "steps": 45
+    },
+    "get_product_details": {
+      "median_tokens": 23,
+      "steps": 2933
+    },
+    "get_reservation_details": {
+      "median_tokens": 18,
+      "steps": 1601
+    },
+    "get_user_details": {
+      "median_tokens": 23,
+      "steps": 1890
+    },
+    "list_all_product_types": {
+      "median_tokens": 12,
+      "steps": 152
+    },
+    "list_product_items": {
+      "median_tokens": 23,
+      "steps": 26
+    },
+    "search_direct_flight": {
+      "median_tokens": 32,
+      "steps": 513
+    },
+    "search_onestop_flight": {
+      "median_tokens": 34,
+      "steps": 208
+    },
+    "think": {
+      "median_tokens": 77,
+      "steps": 849
+    }
+  },
+  "tokenizer": "/tmp/qwen3_tokenizer.json",
+  "totals": {
+    "eligible": 16414,
+    "steps": 21955
+  },
+  "worker": "agentspec_action_token_length"
+}
