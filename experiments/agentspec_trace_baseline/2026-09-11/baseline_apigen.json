@@ -1,0 +1,176 @@
+{
+  "codebook_size": 4096,
+  "corpus": "apigen",
+  "eligible_classes": [
+    "read_only",
+    "sandboxable",
+    "reversible"
+  ],
+  "payload_sha256": "197172d3514cf31d14e05af8183329eacc187f31a0fa4d99c137d7ab18ba5e7e",
+  "required_match_probability": {
+    "1024": 0.491,
+    "4096": 0.485,
+    "16384": 0.478
+  },
+  "results": {
+    "exact|all_actions": {
+      "rates": {
+        "bigram_prev": 0.14790159189580318,
+        "global_top1": 0.008393632416787264,
+        "oracle_codebook_or_prefix": 0.42373371924746744,
+        "oracle_in_codebook_4096": 0.40752532561505067,
+        "oracle_in_own_prefix": 0.020549927641099856,
+        "oracle_in_train_vocabulary": 0.5192474674384949,
+        "prefix_mode": 0.004341534008683068,
+        "repeat_last": 0.008972503617945007,
+        "trigram_prev2": 0.1658465991316932
+      },
+      "scored_steps": 3455,
+      "skipped_first_action": 1020,
+      "skipped_ineligible": 0
+    },
+    "exact|eligible_only": {
+      "rates": {
+        "bigram_prev": 0.20654044750430292,
+        "global_top1": 0.012478485370051634,
+        "oracle_codebook_or_prefix": 0.5989672977624785,
+        "oracle_in_codebook_4096": 0.5813253012048193,
+        "oracle_in_own_prefix": 0.024096385542168676,
+        "oracle_in_train_vocabulary": 0.697934595524957,
+        "prefix_mode": 0.004733218588640275,
+        "repeat_last": 0.00946643717728055,
+        "trigram_prev2": 0.20783132530120482
+      },
+      "scored_steps": 2324,
+      "skipped_first_action": 1020,
+      "skipped_ineligible": 1131
+    },
+    "exact|read_only_only": {
+      "rates": {
+        "bigram_prev": 0.20654044750430292,
+        "global_top1": 0.012478485370051634,
+        "oracle_codebook_or_prefix": 0.5989672977624785,
+        "oracle_in_codebook_4096": 0.5813253012048193,
+        "oracle_in_own_prefix": 0.024096385542168676,
+        "oracle_in_train_vocabulary": 0.697934595524957,
+        "prefix_mode": 0.004733218588640275,
+        "repeat_last": 0.00946643717728055,
+        "trigram_prev2": 0.20783132530120482
+      },
+      "scored_steps": 2324,
+      "skipped_first_action": 1020,
+      "skipped_ineligible": 1131
+    },
+    "tool|all_actions": {
+      "rates": {
+        "bigram_prev": 0.49898697539797393,
+        "global_top1": 0.24167872648335745,
+        "oracle_codebook_or_prefix": 0.9965267727930536,
+        "oracle_in_codebook_4096": 0.9947901591895804,
+        "oracle_in_own_prefix": 0.14008683068017366,
+        "oracle_in_train_vocabulary": 0.9947901591895804,
+        "prefix_mode": 0.06164978292329957,
+        "repeat_last": 0.09088277858176556,
+        "trigram_prev2": 0.5609261939218524
+      },
+      "scored_steps": 3455,
+      "skipped_first_action": 1020,
+      "skipped_ineligible": 0
+    },
+    "tool|eligible_only": {
+      "rates": {
+        "bigram_prev": 0.612736660929432,
+        "global_top1": 0.35929432013769363,
+        "oracle_codebook_or_prefix": 0.9952667814113597,
+        "oracle_in_codebook_4096": 0.9926850258175559,
+        "oracle_in_own_prefix": 0.16480206540447503,
+        "oracle_in_train_vocabulary": 0.9926850258175559,
+        "prefix_mode": 0.08089500860585198,
+        "repeat_last": 0.11746987951807229,
+        "trigram_prev2": 0.6445783132530121
+      },
+      "scored_steps": 2324,
+      "skipped_first_action": 1020,
+      "skipped_ineligible": 1131
+    },
+    "tool|read_only_only": {
+      "rates": {
+        "bigram_prev": 0.612736660929432,
+        "global_top1": 0.35929432013769363,
+        "oracle_codebook_or_prefix": 0.9952667814113597,
+        "oracle_in_codebook_4096": 0.9926850258175559,
+        "oracle_in_own_prefix": 0.16480206540447503,
+        "oracle_in_train_vocabulary": 0.9926850258175559,
+        "prefix_mode": 0.08089500860585198,
+        "repeat_last": 0.11746987951807229,
+        "trigram_prev2": 0.6445783132530121
+      },
+      "scored_steps": 2324,
+      "skipped_first_action": 1020,
+      "skipped_ineligible": 1131
+    }
+  },
+  "shape": {
+    "actions": 21955,
+    "distinct_exact_actions": 11765,
+    "distinct_tools": 107,
+    "eligible_fraction": 0.7476201320883625,
+    "exact_actions_seen_once": 8449,
+    "max_actions_per_trace": 23,
+    "median_actions_per_trace": 4,
+    "median_argument_bytes": 55,
+    "side_effect_classes": {
+      "irreversible": 5538,
+      "read_only": 16414,
+      "unknown": 3
+    },
+    "top_tools": [
+      [
+        "get_order_details",
+        4069
+      ],
+      [
+        "get_product_details",
+        2933
+      ],
+      [
+        "get_user_details",
+        1890
+      ],
+      [
+        "find_user_id_by_email",
+        1883
+      ],
+      [
+        "find_user_id_by_name_zip",
+        1761
+      ],
+      [
+        "modify_pending_order_items",
+        1637
+      ],
+      [
+        "get_reservation_details",
+        1601
+      ],
+      [
+        "exchange_delivered_order_items",
+        1511
+      ],
+      [
+        "think",
+        849
+      ],
+      [
+        "search_direct_flight",
+        513
+      ]
+    ],
+    "traces": 4977
+  },
+  "split": {
+    "eval_traces": 1020,
+    "train_traces": 3957
+  },
+  "worker": "agentspec_trace_match_baseline"
+}

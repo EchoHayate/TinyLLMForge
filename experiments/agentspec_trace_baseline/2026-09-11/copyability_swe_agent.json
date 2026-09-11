@@ -1,0 +1,118 @@
+{
+  "copyable_fraction_of_eligible": 0.5288795646758014,
+  "corpus": "swe_agent",
+  "no_argument_fraction_of_eligible": 0.05851307939421753,
+  "payload_sha256": "37e472c586ffd34ebe85a58671e1a201a0fc8ee0b9c480ff4f9d4b02dcc8aec5",
+  "per_tool": {
+    "asv": {
+      "copyable": 431,
+      "rate": 0.9410480349344978,
+      "steps": 458
+    },
+    "cd": {
+      "copyable": 58,
+      "rate": 0.6041666666666666,
+      "steps": 96
+    },
+    "cd..": {
+      "copyable": 120,
+      "rate": 0.9917355371900827,
+      "steps": 121
+    },
+    "create": {
+      "copyable": 130,
+      "rate": 0.30303030303030304,
+      "steps": 429
+    },
+    "echo": {
+      "copyable": 3,
+      "rate": 0.02586206896551724,
+      "steps": 116
+    },
+    "edit": {
+      "copyable": 1,
+      "rate": 0.00011373976342129209,
+      "steps": 8792
+    },
+    "find": {
+      "copyable": 86,
+      "rate": 0.24431818181818182,
+      "steps": 352
+    },
+    "find.": {
+      "copyable": 600,
+      "rate": 0.9630818619582665,
+      "steps": 623
+    },
+    "find_file": {
+      "copyable": 410,
+      "rate": 0.45964125560538116,
+      "steps": 892
+    },
+    "goto": {
+      "copyable": 1247,
+      "rate": 0.9795758051846033,
+      "steps": 1273
+    },
+    "grep": {
+      "copyable": 61,
+      "rate": 0.2687224669603524,
+      "steps": 227
+    },
+    "ls": {
+      "copyable": 1128,
+      "rate": 0.6190998902305159,
+      "steps": 1822
+    },
+    "ls.github": {
+      "copyable": 428,
+      "rate": 1.0,
+      "steps": 428
+    },
+    "open": {
+      "copyable": 2522,
+      "rate": 0.7463746670612608,
+      "steps": 3379
+    },
+    "python": {
+      "copyable": 4208,
+      "rate": 0.9611694837825491,
+      "steps": 4378
+    },
+    "rm": {
+      "copyable": 418,
+      "rate": 0.9393258426966292,
+      "steps": 445
+    },
+    "scroll_down": {
+      "copyable": 817,
+      "rate": 0.9987775061124694,
+      "steps": 818
+    },
+    "scroll_up": {
+      "copyable": 210,
+      "rate": 1.0,
+      "steps": 210
+    },
+    "search_dir": {
+      "copyable": 1910,
+      "rate": 0.6237753102547354,
+      "steps": 3062
+    },
+    "search_file": {
+      "copyable": 652,
+      "rate": 0.3949121744397335,
+      "steps": 1651
+    }
+  },
+  "totals": {
+    "copyable": 16134,
+    "eligible": 30506,
+    "ineligible": 934,
+    "missing_values": 14372,
+    "no_arguments": 1785,
+    "not_copyable": 14372,
+    "steps": 31440
+  },
+  "worker": "agentspec_trace_copyability"
+}

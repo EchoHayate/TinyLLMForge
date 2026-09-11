@@ -1,0 +1,177 @@
+{
+  "codebook_size": 4096,
+  "corpus": "swe_agent",
+  "eligible_classes": [
+    "read_only",
+    "sandboxable",
+    "reversible"
+  ],
+  "payload_sha256": "ed8bdc1816e92710cf3bf59535ec6dc29e7762635961920df706a8baec330042",
+  "required_match_probability": {
+    "1024": 0.491,
+    "4096": 0.485,
+    "16384": 0.478
+  },
+  "results": {
+    "exact|all_actions": {
+      "rates": {
+        "bigram_prev": 0.11130434782608696,
+        "global_top1": 0.07481810115350487,
+        "oracle_codebook_or_prefix": 0.5666015971606033,
+        "oracle_in_codebook_4096": 0.21394853593611357,
+        "oracle_in_own_prefix": 0.46165039929015084,
+        "oracle_in_train_vocabulary": 0.24518189884649513,
+        "prefix_mode": 0.2079503105590062,
+        "repeat_last": 0.10626441881100267,
+        "trigram_prev2": 0.11261756876663709
+      },
+      "scored_steps": 28175,
+      "skipped_first_action": 1156,
+      "skipped_ineligible": 0
+    },
+    "exact|eligible_only": {
+      "rates": {
+        "bigram_prev": 0.1111111111111111,
+        "global_top1": 0.08359108573241336,
+        "oracle_codebook_or_prefix": 0.5360853358712031,
+        "oracle_in_codebook_4096": 0.2051709096676977,
+        "oracle_in_own_prefix": 0.4513442778967404,
+        "oracle_in_train_vocabulary": 0.23554603854389722,
+        "prefix_mode": 0.19359187881671822,
+        "repeat_last": 0.09425806963280196,
+        "trigram_prev2": 0.11289555079704973
+      },
+      "scored_steps": 25218,
+      "skipped_first_action": 1156,
+      "skipped_ineligible": 2957
+    },
+    "exact|read_only_only": {
+      "rates": {
+        "bigram_prev": 0.03968335560810116,
+        "global_top1": 0.0,
+        "oracle_codebook_or_prefix": 0.5413796648504163,
+        "oracle_in_codebook_4096": 0.2177444227408245,
+        "oracle_in_own_prefix": 0.42099311195641,
+        "oracle_in_train_vocabulary": 0.2784003289811864,
+        "prefix_mode": 0.14156471676775984,
+        "repeat_last": 0.11010589081936877,
+        "trigram_prev2": 0.04441246016243446
+      },
+      "scored_steps": 9727,
+      "skipped_first_action": 1156,
+      "skipped_ineligible": 18448
+    },
+    "tool|all_actions": {
+      "rates": {
+        "bigram_prev": 0.41476486246672584,
+        "global_top1": 0.30796805678793254,
+        "oracle_codebook_or_prefix": 0.9930079858030169,
+        "oracle_in_codebook_4096": 0.9526530612244898,
+        "oracle_in_own_prefix": 0.7343034605146407,
+        "oracle_in_train_vocabulary": 0.9526530612244898,
+        "prefix_mode": 0.374622892635315,
+        "repeat_last": 0.27304347826086955,
+        "trigram_prev2": 0.5516237799467613
+      },
+      "scored_steps": 28175,
+      "skipped_first_action": 1156,
+      "skipped_ineligible": 0
+    },
+    "tool|eligible_only": {
+      "rates": {
+        "bigram_prev": 0.43694979776350223,
+        "global_top1": 0.34407962566420813,
+        "oracle_codebook_or_prefix": 0.9996827662780554,
+        "oracle_in_codebook_4096": 0.9964707748433659,
+        "oracle_in_own_prefix": 0.7475612657625506,
+        "oracle_in_train_vocabulary": 0.9964707748433659,
+        "prefix_mode": 0.37945118566103575,
+        "repeat_last": 0.2750812911412483,
+        "trigram_prev2": 0.5885478626377983
+      },
+      "scored_steps": 25218,
+      "skipped_first_action": 1156,
+      "skipped_ineligible": 2957
+    },
+    "tool|read_only_only": {
+      "rates": {
+        "bigram_prev": 0.24858640896473733,
+        "global_top1": 0.0,
+        "oracle_codebook_or_prefix": 1.0,
+        "oracle_in_codebook_4096": 1.0,
+        "oracle_in_own_prefix": 0.656625886707104,
+        "oracle_in_train_vocabulary": 1.0,
+        "prefix_mode": 0.290325896987766,
+        "repeat_last": 0.27644700318700527,
+        "trigram_prev2": 0.41862855967924334
+      },
+      "scored_steps": 9727,
+      "skipped_first_action": 1156,
+      "skipped_ineligible": 18448
+    }
+  },
+  "shape": {
+    "actions": 174815,
+    "distinct_exact_actions": 49920,
+    "distinct_tools": 667,
+    "eligible_fraction": 0.9013299774046849,
+    "exact_actions_seen_once": 36741,
+    "max_actions_per_trace": 398,
+    "median_actions_per_trace": 16,
+    "median_argument_bytes": 40,
+    "side_effect_classes": {
+      "irreversible": 5499,
+      "read_only": 68207,
+      "sandboxable": 89359,
+      "unknown": 11750
+    },
+    "top_tools": [
+      [
+        "edit",
+        50218
+      ],
+      [
+        "python",
+        24382
+      ],
+      [
+        "open",
+        17448
+      ],
+      [
+        "search_dir",
+        12924
+      ],
+      [
+        "search_file",
+        9206
+      ],
+      [
+        "ls",
+        8013
+      ],
+      [
+        "create",
+        6629
+      ],
+      [
+        "goto",
+        6550
+      ],
+      [
+        "find_file",
+        5679
+      ],
+      [
+        "scroll_down",
+        4663
+      ]
+    ],
+    "traces": 6669
+  },
+  "split": {
+    "eval_traces": 1156,
+    "train_traces": 5513
+  },
+  "worker": "agentspec_trace_match_baseline"
+}

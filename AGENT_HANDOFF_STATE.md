@@ -53448,3 +53448,82 @@ NO_GO 条件：若真实 trace 上 branch width=1 的 top-1 action match 在 409
 ### Stage 0 回归
 
 `python3 tools/agentspec_breakeven_gate.py` 仍 PASS（270 rows，sha `d18f42ea...`），`pytest tools/test_agentspec_breakeven_gate.py` 48 passed。
+
+---
+
+## Stage 1b step 0：先验证 trace 可预测性（2026-09-11）
+
+结论：**Stage 1a-bis 里那个固定 4096 码本的 code head，被数据证伪了**。线不死，但必须换表示：从「固定码本枚举 action」换成「tool 分类 + argument 从上下文 copy 的指针头」，并且对「模型自己写出来的 action」（edit / create / think）直接拒绝投机。
+
+文档：`docs/superpowers/plans/2026-09-11-latent-action-speculation-stage1b-step0.md`
+产物：`experiments/agentspec_trace_baseline/2026-09-11/`（4 个 JSON，全是派生统计，不含语料原文）
+
+### 语料
+
+- `Salesforce/APIGen-MT-5k`（CC BY-NC 4.0）：4977 条 trace / 21955 个 action，tau-bench 风格航司+零售 agent，action 是结构化 `{"name","arguments"}`。
+- `nebius/SWE-agent-trajectories`（CC BY 4.0，12 分片取 1）：6669 条 trace / 174815 个 action，真实 SWE-agent 跑真实仓库，action 是 shell 命令行。
+
+按 trace（不是按 step）留出 1/5 做 eval——按 step 切会泄漏，bigram 就变成查答案。
+
+### 三个数决定了结论
+
+```text
+predictor（exact match，eligible 子集）    apigen    swe_agent
+trigram_prev2（training-free 最好）        0.2078       0.1129
+oracle_in_codebook_4096                   0.5813       0.2052
+oracle_in_train_vocabulary                0.6979       0.2355
+oracle_in_own_prefix                      0.0241       0.4513
+oracle_codebook_or_prefix                 0.5990       0.5361
+tool 粒度 trigram                          0.6446       0.5885
+```
+
+1. **没有任何免费预测器接近门槛**（要 0.485，最好 0.208/0.194，差 2.4x）。好消息：这条线不是"trivially true"。
+2. **固定码本在真实 coding trace 上结构性死亡**：oracle 天花板 0.205 vs 要求 0.478，差 2.3x。根因是 held-out action 只有 23.6% 在训练集里出现过——action 带仓库特有路径和作者手写内容，**枚举不出来**。加大码本没用：4096 码本 0.205，整个训练词表也才 0.236。
+3. **在结构化 tool call 上码本活着但没余量**：0.581 vs 0.485 只有 1.20x，意味着学出来的头要打到 oracle 的 84% 才刚回本。
+4. **tool 好猜、参数难猜**：tool 粒度 trigram 0.59~0.64、覆盖 0.99；exact 掉到 0.11~0.21。全部难度在参数上。
+
+### 参数能不能从上下文抄？
+
+```text
+                     apigen   swe_agent
+copyable / eligible  0.6342      0.5289
+
+按工具拆（swe）：scroll_down .999  goto .980  python .961  open .746
+                 search_dir .624  ls .619   create .303  edit .0001
+```
+
+`edit` 占 swe eligible 的 28.8%，可抄率 0.0001；apigen 的 `think`/`calculate` 同理。这类 action 的参数是**模型自己写的**（patch 内容、思维链、算式），既不能抄也不能枚举——它是这一族机制的共同上界，不是本设计的缺陷。
+
+把这类排除后：
+
+```text
+corpus      subset                   占 eligible   copy oracle   相对 0.478 余量
+apigen      去掉 think/calculate          0.9172        0.6914          1.45x
+swe_agent   去掉 edit/create/echo         0.6939        0.7558          1.58x
+```
+
+### 判决
+
+- **NO-GO**：固定 4096 码本预测 exact action（按 Stage 1a-bis 原样）。被证伪，不是样本不够。
+- **CONDITIONAL GO**：tool 分类器 + 参数指针 copy 头，且预测 tool 落在"参数可抄工具集"外时**拒绝投机**。拒绝很自然：tool 粒度免费预测就有 0.59~0.64，"要不要投机"比"投机什么"好判断得多，而 Stage 0 的 router 本来就是 fail-closed，拒绝=走基线路径。
+- 成本侧不受影响：换的是头的输出空间不是价格，压缩臂 tax 0.0166~0.0691、head 32µs 照旧。
+
+### 已按 Stage 1a-bis 的 NO_GO 条款执行
+
+原条款：4096 上 b=1 的 p 不达标就停线，**不许靠加宽 b 补**。已遵守——固定码本头停掉，没有加宽 branch。新的预注册：
+
+```text
+head          tool 分类器 + 512-token 压缩上下文上的参数 copy 指针
+只在          预测 tool ∈ 声明的"可抄工具集"时投机
+required p    不变：0.491@1024 / 0.485@4096 / 0.478@16384（只在投机步上算）
+required cov  投机步 >= eligible 步的 0.60（新增，防止只投 scroll_down 刷高 p）
+NO_GO         4096 上 p 不达标，或 coverage < 0.60
+```
+
+### 这次没证明的（威胁）
+
+1. **copy 是 oracle**：假设头知道该抄哪一段。真的 512-token 压缩上下文上，指针头肯定低于 0.69/0.76，而且压缩本身可能正好丢掉要抄的那段——这个交互没测，是下一步。
+2. 两个语料都不是目标 workload；APIGen 是合成的，SWE 分片来自较老 scaffold，且 6.7% action 落在 fail-closed 的 unknown 类。
+3. 首个 action 被排除（无前缀），这对假设有利。
+4. 子串判定严格，`#W123` vs `W123` 会被判不可抄——copy 率是下界。
+5. side-effect 分类是前缀规则声明的，fail-closed 但没逐工具核对语义。

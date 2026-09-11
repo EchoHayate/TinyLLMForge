@@ -1,0 +1,118 @@
+{
+  "copyable_fraction_of_eligible": 0.6342121291220743,
+  "corpus": "apigen",
+  "no_argument_fraction_of_eligible": 0.012877403636996432,
+  "payload_sha256": "61281efc40cd552c7d6e3517b6f69a6e9d75d8008ff1420914e50c0228226d45",
+  "per_tool": {
+    "calculate": {
+      "copyable": 1,
+      "rate": 0.00546448087431694,
+      "steps": 183
+    },
+    "find_item_by_product_and_options": {
+      "copyable": 29,
+      "rate": 1.0,
+      "steps": 29
+    },
+    "find_item_by_product_options": {
+      "copyable": 17,
+      "rate": 1.0,
+      "steps": 17
+    },
+    "find_item_id_by_product_and_options": {
+      "copyable": 12,
+      "rate": 0.8,
+      "steps": 15
+    },
+    "find_item_id_by_product_options": {
+      "copyable": 23,
+      "rate": 0.92,
+      "steps": 25
+    },
+    "find_order_by_id": {
+      "copyable": 18,
+      "rate": 1.0,
+      "steps": 18
+    },
+    "find_user_id_by_email": {
+      "copyable": 70,
+      "rate": 0.7692307692307693,
+      "steps": 91
+    },
+    "find_user_id_by_name_zip": {
+      "copyable": 139,
+      "rate": 0.7554347826086957,
+      "steps": 184
+    },
+    "get_flight_price": {
+      "copyable": 9,
+      "rate": 1.0,
+      "steps": 9
+    },
+    "get_item_details": {
+      "copyable": 42,
+      "rate": 0.9767441860465116,
+      "steps": 43
+    },
+    "get_order_details": {
+      "copyable": 2368,
+      "rate": 0.5819611698205948,
+      "steps": 4069
+    },
+    "get_order_status": {
+      "copyable": 45,
+      "rate": 1.0,
+      "steps": 45
+    },
+    "get_product_details": {
+      "copyable": 2283,
+      "rate": 0.7783839072621889,
+      "steps": 2933
+    },
+    "get_reservation_details": {
+      "copyable": 376,
+      "rate": 0.8227571115973742,
+      "steps": 457
+    },
+    "get_user_details": {
+      "copyable": 1190,
+      "rate": 0.7391304347826086,
+      "steps": 1610
+    },
+    "list_all_product_types": {
+      "copyable": 148,
+      "rate": 0.9866666666666667,
+      "steps": 150
+    },
+    "list_product_items": {
+      "copyable": 26,
+      "rate": 1.0,
+      "steps": 26
+    },
+    "search_direct_flight": {
+      "copyable": 264,
+      "rate": 0.559322033898305,
+      "steps": 472
+    },
+    "search_onestop_flight": {
+      "copyable": 95,
+      "rate": 0.46798029556650245,
+      "steps": 203
+    },
+    "think": {
+      "copyable": 0,
+      "rate": 0.0,
+      "steps": 769
+    }
+  },
+  "totals": {
+    "copyable": 7289,
+    "eligible": 11493,
+    "ineligible": 5485,
+    "missing_values": 4218,
+    "no_arguments": 148,
+    "not_copyable": 4204,
+    "steps": 16978
+  },
+  "worker": "agentspec_trace_copyability"
+}
