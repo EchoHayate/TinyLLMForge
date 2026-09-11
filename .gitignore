@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 profile_out/
 experiments/native_verifier/
+
+# agent scratch: evalsets embed third-party corpus text, never commit
+.agent_runtime/

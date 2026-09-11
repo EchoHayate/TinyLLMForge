@@ -1,0 +1,29 @@
+{
+  "context_tokens": 448,
+  "corpus": "swe_agent",
+  "coverage": 0.96875,
+  "cuda_device_name": "NVIDIA A100 80GB PCIe",
+  "evalset_rows_sha256": null,
+  "gold_within_cap_fraction": 0.6875,
+  "model": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B",
+  "p_among_gold_within_cap": 0.022727272727272728,
+  "p_effective": 0.015625,
+  "p_speculated": 0.016129032258064516,
+  "payload_sha256": "938140f027c8f847e8a67af46799f36ea48ef8538004f1ab18abe2aa4ad69a43",
+  "python_version": "3.11.15",
+  "token_cap": 11,
+  "tool_accuracy_speculated": 0.16129032258064516,
+  "torch_version": "2.4.1+cu121",
+  "totals": {
+    "digest_match": 1,
+    "digest_match_gold_within_cap": 1,
+    "eligible": 64,
+    "gold_within_cap": 44,
+    "parsed": 62,
+    "terminated_within_cap": 62,
+    "tool_match": 10
+  },
+  "transformers_version": "4.51.3",
+  "variant": "tail",
+  "worker": "agentspec_prompted_drafter_match"
+}
