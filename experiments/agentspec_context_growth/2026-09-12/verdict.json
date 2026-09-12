@@ -1,0 +1,67 @@
+{
+ "results": [
+  {
+   "corpus": "swe_agent",
+   "cost_inputs": {
+    "drafter_tax": 0.0,
+    "note": "drafter priced at zero, so this is the friendliest possible floor for any drafter whatsoever",
+    "rho": 0.6,
+    "rollback_seconds": 0.5,
+    "tool_seconds": 5.0
+   },
+   "demand_cold_mean": 1.6988430011498508,
+   "demand_threshold_seconds": 1.5714791851195749,
+   "demand_warm_mean": 0.5055142684602464,
+   "fraction_turns_clearing_cold": 0.4471931137724551,
+   "fraction_turns_clearing_warm": 7.48502994011976e-05,
+   "gate": "FAIL",
+   "growth_payload_sha256": "a956b6a5317b012fcdd8712fde225ffb9431ef462388b2f457ab3bf2f729d20a",
+   "minimum_p_at_cold_mean": 0.10532729661108861,
+   "minimum_p_at_warm_mean": 0.2834811554364323,
+   "observation_tokens_p50": 136.0,
+   "prefill_tokens_needed_estimate": 4000,
+   "prefill_tokens_per_turn": {
+    "max": 23023.0,
+    "mean": 560.2952844311377,
+    "p50": 295.0,
+    "p90": 1378.0,
+    "p99": 2162.0
+   },
+   "required_prefix_cache_miss_rate": 0.893270133751649,
+   "trigram_p": 0.1129,
+   "turns_scored": 53440
+  },
+  {
+   "corpus": "apigen",
+   "cost_inputs": {
+    "drafter_tax": 0.0,
+    "note": "drafter priced at zero, so this is the friendliest possible floor for any drafter whatsoever",
+    "rho": 0.6,
+    "rollback_seconds": 0.5,
+    "tool_seconds": 5.0
+   },
+   "demand_cold_mean": 0.8449089047216237,
+   "demand_threshold_seconds": 0.762463907603465,
+   "demand_warm_mean": 0.45427619635677036,
+   "fraction_turns_clearing_cold": 0.6822525348311328,
+   "fraction_turns_clearing_warm": 0.0002917791232037348,
+   "gate": "FAIL",
+   "growth_payload_sha256": "9707d15d58d8dad8f4e8c838404240947cb3e2f34d0b5659c9b60e4f6272d14b",
+   "minimum_p_at_cold_mean": 0.19140424499806746,
+   "minimum_p_at_warm_mean": 0.3056813026572986,
+   "observation_tokens_p50": 46.0,
+   "prefill_tokens_needed_estimate": 4000,
+   "prefill_tokens_per_turn": {
+    "max": 10308.0,
+    "mean": 346.21226931213073,
+    "p50": 239.0,
+    "p90": 718.0,
+    "p99": 1494.0
+   },
+   "required_prefix_cache_miss_rate": 0.7889449722137591,
+   "trigram_p": 0.2078,
+   "turns_scored": 41127
+  }
+ ],
+ "schema_version": 1
+}
