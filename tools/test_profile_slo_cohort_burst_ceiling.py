@@ -470,10 +470,21 @@ def test_run_inventory_writes_source_bound_five_file_bundle(
         "config_sha256": "d" * 64,
     }
     engines = []
+    timeline_events = []
 
     def engine_factory(_model, **_config):
         engine = SimpleNamespace(
             exit=lambda: None,
+            begin_command_timeline_repeat=(
+                lambda repeat_index, request_set_sha256: (
+                    timeline_events.append(
+                        ("begin", repeat_index, request_set_sha256)
+                    )
+                )
+            ),
+            end_command_timeline_repeat=(
+                lambda: timeline_events.append(("end",))
+            ),
             model_runner=SimpleNamespace(
                 config=SimpleNamespace(
                     hf_config=SimpleNamespace(
@@ -516,6 +527,10 @@ def test_run_inventory_writes_source_bound_five_file_bundle(
 
     assert receipt["classification"] == "CONTINUE_RUNTIME"
     assert len(engines) == 1
+    assert len(timeline_events) == len(cases) * 2
+    assert timeline_events[0][0:2] == ("begin", 0)
+    assert len(timeline_events[0][2]) == 64
+    assert timeline_events[-1] == ("end",)
     assert {
         path.name for path in tmp_path.iterdir()
     } == {

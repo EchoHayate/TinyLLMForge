@@ -289,6 +289,17 @@ def _prompt_tokens(case: CeilingProfileCase, request_index: int) -> list[int]:
     ]
 
 
+def _case_request_set_sha256(case: CeilingProfileCase) -> str:
+    payload = {
+        "case_id": case.case_id,
+        "prompts": [
+            _prompt_tokens(case, request_index)
+            for request_index in range(case.batch_size)
+        ],
+    }
+    return hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+
+
 def _memory_reserved_bytes(observation: Mapping[str, object]) -> int:
     memory = observation.get("memory")
     if not isinstance(memory, Mapping):
@@ -806,13 +817,34 @@ def run_profile_inventory(
             )
         bound_source_identity["dtype"] = runtime_dtype
         step_timer = step_timer_factory(engine)
-        for case in normalized_cases:
-            rows.extend(case_runner(
-                engine,
-                case,
-                sampling_params_factory=sampling_params_factory,
-                step_timer=step_timer,
-            ))
+        begin_repeat = getattr(
+            engine,
+            "begin_command_timeline_repeat",
+            None,
+        )
+        end_repeat = getattr(
+            engine,
+            "end_command_timeline_repeat",
+            None,
+        )
+        if not callable(begin_repeat) or not callable(end_repeat):
+            raise ValueError(
+                "engine command timeline repeat controls are unavailable"
+            )
+        for repeat_index, case in enumerate(normalized_cases):
+            begin_repeat(
+                repeat_index,
+                request_set_sha256=_case_request_set_sha256(case),
+            )
+            try:
+                rows.extend(case_runner(
+                    engine,
+                    case,
+                    sampling_params_factory=sampling_params_factory,
+                    step_timer=step_timer,
+                ))
+            finally:
+                end_repeat()
     finally:
         engine.exit()
     rows = validate_frozen_profile_inventory(
