@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 
 import pytest
 
@@ -119,4 +121,74 @@ def test_profile_row_rejects_overlapping_or_invalid_components() -> None:
             engine,
             FakeCase(),
             clock_ns=lambda: 101,
+        )
+
+
+def test_write_ceiling_bundle_emits_the_immutable_stage0_inventory(
+    tmp_path: Path,
+) -> None:
+    rows = [
+        _row("low", 100, 5),
+        _row("medium", 100, 20),
+        _row("high", 100, 25),
+    ]
+    source_identity = {
+        "source_commit": "a" * 40,
+        "source_patch_sha256": "b" * 64,
+        "model": "Qwen3-0.6B",
+        "checkpoint_sha256": "c" * 64,
+        "gpu_uuid": "GPU-a",
+        "gpu_name": "NVIDIA A100 80GB PCIe",
+        "tensor_parallel_size": 1,
+        "dtype": "float16",
+        "config_sha256": "d" * 64,
+    }
+    cost_rows = [
+        {
+            "schema_version": "slo-cohort-burst.cost-sample.v1",
+            "sample_id": f"{row['case_id']}-sample",
+            "batch_size": row["batch_size"],
+            "context_bucket": row["context_bucket"],
+            "burst_width": row["burst_width"],
+            "duration_ns": row["wall_ns"],
+        }
+        for row in rows
+    ]
+
+    receipt = profile.write_ceiling_bundle(
+        output_dir=tmp_path,
+        profile_rows=rows,
+        cost_rows=cost_rows,
+        source_identity=source_identity,
+    )
+
+    assert receipt["classification"] == "CONTINUE_RUNTIME"
+    assert {
+        path.name for path in tmp_path.iterdir()
+    } == {
+        "raw_rows.jsonl",
+        "cost_table.json",
+        "ceiling_summary.json",
+        "source_manifest.json",
+        "remote_verify.json",
+    }
+    assert len(
+        (tmp_path / "raw_rows.jsonl").read_text().splitlines()
+    ) == 3
+    verify = json.loads(
+        (tmp_path / "remote_verify.json").read_text()
+    )
+    assert verify["verified"] is True
+    assert verify["classification"] == "CONTINUE_RUNTIME"
+
+
+def test_write_ceiling_bundle_is_immutable(tmp_path: Path) -> None:
+    (tmp_path / "raw_rows.jsonl").write_text("{}\n")
+
+    with pytest.raises(ValueError, match="destination is not empty"):
+        profile.write_ceiling_bundle(
+            output_dir=tmp_path,
+            profile_rows=[],
+            cost_rows=[],
+            source_identity={},
         )

@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 import statistics
 from typing import Mapping, Sequence
 
@@ -213,3 +215,90 @@ def build_ceiling_summary(
     }
     summary["classification"] = ceiling.classify_ceiling(summary)
     return summary
+
+
+def _write_bytes_exclusive(path: Path, payload: bytes) -> None:
+    destination = Path(path)
+    try:
+        with destination.open("xb") as handle:
+            handle.write(payload)
+    except FileExistsError as error:
+        raise ValueError(
+            f"artifact already exists: {destination.name}"
+        ) from error
+
+
+def _canonical_json_bytes(payload: object) -> bytes:
+    return (
+        json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def write_ceiling_bundle(
+    *,
+    output_dir: Path,
+    profile_rows: Sequence[Mapping[str, object]],
+    cost_rows: Sequence[Mapping[str, object]],
+    source_identity: Mapping[str, object],
+) -> dict[str, object]:
+    destination = Path(output_dir)
+    if destination.exists():
+        if not destination.is_dir() or any(destination.iterdir()):
+            raise ValueError("artifact destination is not empty")
+    else:
+        destination.mkdir(parents=True)
+
+    normalized_rows = [
+        _validate_profile_row(row) for row in profile_rows
+    ]
+    summary = build_ceiling_summary(normalized_rows)
+    table = ceiling.build_frozen_cost_table(
+        cost_rows,
+        source_identity,
+    )
+    artifact = {
+        "schema_version": ceiling.ARTIFACT_SCHEMA_VERSION,
+        "source_identity": dict(source_identity),
+        "cost_rows": [dict(row) for row in cost_rows],
+        "cost_table": table,
+        "ceiling_summary": summary,
+    }
+    verification = ceiling.verify_ceiling_artifact(artifact)
+
+    _write_bytes_exclusive(
+        destination / "raw_rows.jsonl",
+        b"".join(
+            json.dumps(
+                row,
+                allow_nan=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+            + b"\n"
+            for row in normalized_rows
+        ),
+    )
+    _write_bytes_exclusive(
+        destination / "cost_table.json",
+        _canonical_json_bytes(table),
+    )
+    _write_bytes_exclusive(
+        destination / "ceiling_summary.json",
+        _canonical_json_bytes(summary),
+    )
+    _write_bytes_exclusive(
+        destination / "source_manifest.json",
+        _canonical_json_bytes(dict(source_identity)),
+    )
+    _write_bytes_exclusive(
+        destination / "remote_verify.json",
+        _canonical_json_bytes(verification),
+    )
+    return verification

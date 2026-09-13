@@ -5,6 +5,14 @@
 #   tools/run_kvcapacity_step_scaling_remote.sh preflight
 #   tools/run_kvcapacity_step_scaling_remote.sh smoke
 #   tools/run_kvcapacity_step_scaling_remote.sh measure
+#   tools/run_kvcapacity_step_scaling_remote.sh sweep
+#
+# The sweep mode holds the context length fixed and pushes concurrency until the
+# KV budget refuses. It exists because GATE A killed the latency axis but left the
+# capacity axis open: if throughput saturates before the KV wall, then holding
+# more sequences by compressing KV buys nothing and GATE B is pointless. A sweep
+# is analysed by kvcapacity_batch_sweep_analysis.py, never by the GATE A verdict,
+# because a sweep is not the pre-registered grid.
 #
 # Stage 0 of the latent KV capacity line assumes step_ms(L, B) = c0 + c1 * L * B.
 # Both constants were fit from batch-1 data, so the batch term is an
@@ -34,11 +42,11 @@ set -euo pipefail
 
 MODE="${1:-}"
 if [[ -z "${MODE}" ]]; then
-  echo "usage: $0 preflight|smoke|measure" >&2
+  echo "usage: $0 preflight|smoke|measure|sweep" >&2
   exit 2
 fi
 case "${MODE}" in
-  preflight|smoke|measure) ;;
+  preflight|smoke|measure|sweep) ;;
   *)
     echo "unsupported mode: ${MODE}" >&2
     exit 2
@@ -63,12 +71,20 @@ SEED="${SEED:-20260913}"
 # Deliberately small and deliberately not the pre-registered grid. The worker
 # records that fact and the verdict refuses to return PASS for it.
 SMOKE_GRID="${SMOKE_GRID:-1024:1,2,4;2048:1,2;4096:1}"
+# Fixed context, concurrency pushed to the KV wall. At 147456 bytes per token and
+# roughly 52 GiB of KV budget the box holds about 370k resident tokens, so
+# 2048x128 = 262144 and 8192x40 = 327680 both fit while 2048x176 would not. The
+# short context isolates the per-sequence term that GATE A measured at only
+# 0.176 ms/seq up to batch 32; the longer one repeats the question at a context
+# a real deployment would use.
+SWEEP_GRID="${SWEEP_GRID:-2048:1,2,4,8,16,32,64,96,128;8192:1,2,4,8,16,32,40}"
 REMOTE_USER_SITE="${REMOTE_USER_SITE:-/data00/home/sitian/.local/lib/python3.11/site-packages}"
 REMOTE_SITE_EXCLUDE="${REMOTE_SITE_EXCLUDE:-flash_attn torchvision}"
 REMOTE_LD_LIBRARY_PATH="${REMOTE_LD_LIBRARY_PATH:-/data00/home/sitian/tllm/miniforge/lib}"
 
 WORKER_LOCAL="${REPO_ROOT}/tools/kvcapacity_step_scaling_worker.py"
 VERDICT_LOCAL="${REPO_ROOT}/tools/kvcapacity_step_scaling_verdict.py"
+SWEEP_ANALYSIS_LOCAL="${REPO_ROOT}/tools/kvcapacity_batch_sweep_analysis.py"
 for required in "${WORKER_LOCAL}" "${VERDICT_LOCAL}"; do
   if [[ ! -f "${required}" ]]; then
     echo "missing tool: ${required}" >&2
@@ -240,6 +256,14 @@ if [[ "${MODE}" == smoke ]]; then
     [[ -n "${group}" ]] && GRID_GROUPS+=("${group}")
   done
   RUN_MEASURED_STEPS=12
+elif [[ "${MODE}" == sweep ]]; then
+  MODEL_FOR_RUN="${TARGET_MODEL}"
+  GRID_GROUPS=()
+  IFS=';' read -r -a SWEEP_GROUPS <<< "${SWEEP_GRID}"
+  for group in "${SWEEP_GROUPS[@]}"; do
+    [[ -n "${group}" ]] && GRID_GROUPS+=("${group}")
+  done
+  RUN_MEASURED_STEPS="${MEASURED_STEPS}"
 else
   MODEL_FOR_RUN="${TARGET_MODEL}"
   # Amended after the first full run: Qwen3-8B clamps max_model_len to its
@@ -313,6 +337,18 @@ REMOTE_RUN
   if [[ "${#PAYLOAD_ARGS[@]}" == 0 ]]; then
     echo "no artifact was produced under ${path_mode}" >&2
     VERDICT_STATUS=1
+    continue
+  fi
+
+  if [[ "${MODE}" == sweep ]]; then
+    # A sweep is analysed, not judged. It has no pre-registered thresholds and
+    # must never be able to report a GATE A result.
+    echo
+    echo "########## sweep analysis: ${path_mode} path ##########"
+    python3 "${SWEEP_ANALYSIS_LOCAL}" \
+      "${PAYLOAD_ARGS[@]}" \
+      --json-out "${LOCAL_OUT}/sweep-${path_mode}.json" \
+      | tee "${LOCAL_OUT}/sweep-${path_mode}.txt"
     continue
   fi
 
