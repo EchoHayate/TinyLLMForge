@@ -23,7 +23,6 @@ if __package__ in (None, ""):
 
 from tools import run_staged_inference_benchmark_remote as base
 from tools import profile_slo_cohort_burst_ceiling as profile
-from tools import slo_cohort_burst_ceiling as ceiling
 
 
 APPROVED_ROOT = base.APPROVED_ROOT
@@ -605,27 +604,7 @@ def download_compact_bundle(
 
 
 def verify_local_bundle(path: Path) -> dict[str, object]:
-    root = Path(path)
-    rows = profile._load_jsonl(root / "raw_rows.jsonl")
-    source_identity = profile._load_json(
-        root / "source_manifest.json"
-    )
-    cost_table = profile._load_json(root / "cost_table.json")
-    summary = profile._load_json(root / "ceiling_summary.json")
-    remote_verification = profile._load_json(
-        root / "remote_verify.json"
-    )
-    artifact = {
-        "schema_version": ceiling.ARTIFACT_SCHEMA_VERSION,
-        "source_identity": source_identity,
-        "cost_rows": profile.build_optimistic_cost_rows(rows),
-        "cost_table": cost_table,
-        "ceiling_summary": summary,
-    }
-    local_verification = ceiling.verify_ceiling_artifact(artifact)
-    if local_verification != remote_verification:
-        raise ValueError("local and remote verifier disagree")
-    return local_verification
+    return profile.verify_ceiling_bundle(Path(path))
 
 
 def validate_download_against_resume(

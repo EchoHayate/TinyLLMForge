@@ -33,7 +33,6 @@ _RAW_COMPONENT_FIELDS = (
 )
 _AMORTIZABLE_COMPONENTS = (
     "graph_launch_gap",
-    "scheduler",
     "token_d2h_publication",
     "batch_binding",
 )
@@ -587,6 +586,52 @@ def build_ceiling_summary(
     return summary
 
 
+def validate_frozen_profile_inventory(
+    rows: Sequence[Mapping[str, object]],
+    *,
+    source_commit: str,
+) -> list[dict[str, object]]:
+    commit = _source_commit(source_commit)
+    normalized = [_validate_profile_row(row) for row in rows]
+    cases = build_frozen_case_inventory(commit)
+    expected = {
+        (
+            case.load,
+            case.batch_size,
+            case.context_bucket,
+            case.burst_width,
+        ): case
+        for case in cases
+    }
+    observed: dict[tuple[str, int, int, int], list[dict[str, object]]] = {
+        key: [] for key in expected
+    }
+    for row in normalized:
+        key = (
+            row["load"],
+            row["batch_size"],
+            row["context_bucket"],
+            row["burst_width"],
+        )
+        case = expected.get(key)
+        if (
+            case is None
+            or row["source_commit"] != commit
+            or row["committed_tokens"] != case.batch_size
+            or row.get("offered_arrival_offsets_ns")
+            != list(case.arrival_offsets_ns)
+            or not row["case_id"].startswith(case.case_id + "-s")
+        ):
+            raise ValueError("frozen profile inventory is invalid")
+        observed[key].append(row)
+    if any(
+        len(observed[key]) != case.measured_steps
+        for key, case in expected.items()
+    ):
+        raise ValueError("frozen profile inventory is incomplete")
+    return normalized
+
+
 def build_optimistic_cost_rows(
     rows: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:
@@ -595,8 +640,13 @@ def build_optimistic_cost_rows(
     normalized = [_validate_profile_row(row) for row in rows]
     result = []
     for row in normalized:
-        target_cuda_ns = row["component_ns"]["target_cuda"]
-        amortized_once_ns = row["wall_ns"] - target_cuda_ns
+        components = row["component_ns"]
+        amortized_once_ns = sum(
+            components[name] for name in _AMORTIZABLE_COMPONENTS
+        )
+        irreducible_per_step_ns = (
+            row["wall_ns"] - amortized_once_ns
+        )
         for width in ceiling.SUPPORTED_BURST_WIDTHS:
             result.append({
                 "schema_version": ceiling.COST_SAMPLE_SCHEMA_VERSION,
@@ -605,7 +655,8 @@ def build_optimistic_cost_rows(
                 "context_bucket": row["context_bucket"],
                 "burst_width": width,
                 "duration_ns": (
-                    target_cuda_ns * width + amortized_once_ns
+                    irreducible_per_step_ns * width
+                    + amortized_once_ns
                 ),
             })
     return result
@@ -718,10 +769,11 @@ def run_profile_inventory(
         for case in normalized_cases
     ):
         raise ValueError("case inventory is invalid")
+    if not isinstance(source_identity, Mapping):
+        raise ValueError("source identity must be a mapping")
+    bound_source_identity = dict(source_identity)
     source_commit = _source_commit(
-        source_identity.get("source_commit")
-        if isinstance(source_identity, Mapping)
-        else None
+        bound_source_identity.get("source_commit")
     )
     if any(
         case.source_commit != source_commit
@@ -731,6 +783,28 @@ def run_profile_inventory(
     engine = engine_factory(model, **dict(_ENGINE_CONFIG))
     rows = []
     try:
+        hf_config = getattr(
+            getattr(
+                getattr(engine, "model_runner", None),
+                "config",
+                None,
+            ),
+            "hf_config",
+            None,
+        )
+        runtime_dtype = getattr(hf_config, "torch_dtype", None)
+        if runtime_dtype is None:
+            runtime_dtype = getattr(hf_config, "dtype", None)
+        runtime_dtype = _text(str(runtime_dtype), "runtime_dtype")
+        declared_dtype = bound_source_identity.get("dtype")
+        if (
+            declared_dtype is not None
+            and declared_dtype != runtime_dtype
+        ):
+            raise ValueError(
+                "source manifest dtype does not match runtime dtype"
+            )
+        bound_source_identity["dtype"] = runtime_dtype
         step_timer = step_timer_factory(engine)
         for case in normalized_cases:
             rows.extend(case_runner(
@@ -741,12 +815,16 @@ def run_profile_inventory(
             ))
     finally:
         engine.exit()
+    rows = validate_frozen_profile_inventory(
+        rows,
+        source_commit=source_commit,
+    )
     cost_rows = build_optimistic_cost_rows(rows)
     return write_ceiling_bundle(
         output_dir=Path(output_dir),
         profile_rows=rows,
         cost_rows=cost_rows,
-        source_identity=source_identity,
+        source_identity=bound_source_identity,
     )
 
 
@@ -868,6 +946,41 @@ def _load_jsonl(path: Path) -> list[dict]:
     return rows
 
 
+def verify_ceiling_bundle(artifact_dir: Path) -> dict[str, object]:
+    root = Path(artifact_dir)
+    rows = _load_jsonl(root / "raw_rows.jsonl")
+    source_identity = _load_json(root / "source_manifest.json")
+    if not isinstance(source_identity, Mapping):
+        raise ValueError("source manifest must be a mapping")
+    source_commit = _source_commit(source_identity.get("source_commit"))
+    normalized_rows = validate_frozen_profile_inventory(
+        rows,
+        source_commit=source_commit,
+    )
+    cost_rows = build_optimistic_cost_rows(normalized_rows)
+    cost_table = _load_json(root / "cost_table.json")
+    summary = _load_json(root / "ceiling_summary.json")
+    rebuilt_summary = build_ceiling_summary(normalized_rows)
+    if summary != rebuilt_summary:
+        raise ValueError(
+            "ceiling summary does not match raw profile rows"
+        )
+    artifact = {
+        "schema_version": ceiling.ARTIFACT_SCHEMA_VERSION,
+        "source_identity": source_identity,
+        "cost_rows": cost_rows,
+        "cost_table": cost_table,
+        "ceiling_summary": rebuilt_summary,
+    }
+    verification = ceiling.verify_ceiling_artifact(artifact)
+    recorded_verification = _load_json(root / "remote_verify.json")
+    if recorded_verification != verification:
+        raise ValueError(
+            "recorded verification does not reconstruct"
+        )
+    return verification
+
+
 def run_cli(args) -> int:
     cases = build_frozen_case_inventory(args.source_commit)
     gpu_uuid, gpu_name = _gpu_identity()
@@ -879,7 +992,6 @@ def run_cli(args) -> int:
         "gpu_uuid": gpu_uuid,
         "gpu_name": gpu_name,
         "tensor_parallel_size": 1,
-        "dtype": "float16",
         "config_sha256": _config_sha256(cases),
     }
     from tinyvllm.engine.llm_engine import LLMEngine
@@ -900,20 +1012,7 @@ def run_cli(args) -> int:
 
 def verify_cli(args) -> int:
     artifact_dir = Path(args.artifact_dir)
-    rows = _load_jsonl(artifact_dir / "raw_rows.jsonl")
-    source_identity = _load_json(
-        artifact_dir / "source_manifest.json"
-    )
-    cost_table = _load_json(artifact_dir / "cost_table.json")
-    summary = _load_json(artifact_dir / "ceiling_summary.json")
-    artifact = {
-        "schema_version": ceiling.ARTIFACT_SCHEMA_VERSION,
-        "source_identity": source_identity,
-        "cost_rows": build_optimistic_cost_rows(rows),
-        "cost_table": cost_table,
-        "ceiling_summary": summary,
-    }
-    verification = ceiling.verify_ceiling_artifact(artifact)
+    verification = verify_ceiling_bundle(artifact_dir)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     _write_bytes_exclusive(

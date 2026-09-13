@@ -269,10 +269,24 @@ def test_optimistic_cost_rows_cover_every_supported_width() -> None:
     assert [item["burst_width"] for item in cost_rows] == [1, 2, 4, 8]
     assert [item["duration_ns"] for item in cost_rows] == [
         100,
-        160,
-        280,
-        520,
+        179,
+        337,
+        653,
     ]
+
+
+def test_scheduler_and_unattributed_time_are_not_optimistically_removed() -> None:
+    row = _row("medium", 100, 20)
+    row["component_ns"] = {
+        "target_cuda": 50,
+        "graph_launch_gap": 10,
+        "scheduler": 20,
+        "token_d2h_publication": 5,
+        "batch_binding": 5,
+        "unattributed": 10,
+    }
+
+    assert profile._optimistic_headroom_ratio(row) == pytest.approx(0.25)
 
 
 def test_frozen_case_inventory_covers_loads_batches_and_arrivals() -> None:
@@ -429,29 +443,41 @@ def test_run_inventory_writes_source_bound_five_file_bundle(
         "gpu_uuid": "GPU-a",
         "gpu_name": "NVIDIA A100 80GB PCIe",
         "tensor_parallel_size": 1,
-        "dtype": "float16",
         "config_sha256": "d" * 64,
     }
     engines = []
 
     def engine_factory(_model, **_config):
-        engine = SimpleNamespace(exit=lambda: None)
+        engine = SimpleNamespace(
+            exit=lambda: None,
+            model_runner=SimpleNamespace(
+                config=SimpleNamespace(
+                    hf_config=SimpleNamespace(
+                        torch_dtype="torch.bfloat16",
+                    ),
+                ),
+            ),
+        )
         engines.append(engine)
         return engine
 
     def case_runner(_engine, case, **_kwargs):
         removable = {"low": 5, "medium": 20, "high": 25}[case.load]
-        row = _row(case.load, 100, removable)
-        row.update({
-            "case_id": case.case_id + "-s0",
-            "batch_size": case.batch_size,
-            "context_bucket": case.context_bucket,
-            "burst_width": case.burst_width,
-            "offered_arrival_offsets_ns": list(
-                case.arrival_offsets_ns
-            ),
-        })
-        return [row]
+        rows = []
+        for sample_index in range(case.measured_steps):
+            row = _row(case.load, 100, removable)
+            row.update({
+                "case_id": case.case_id + f"-s{sample_index}",
+                "batch_size": case.batch_size,
+                "context_bucket": case.context_bucket,
+                "burst_width": case.burst_width,
+                "committed_tokens": case.batch_size,
+                "offered_arrival_offsets_ns": list(
+                    case.arrival_offsets_ns
+                ),
+            })
+            rows.append(row)
+        return rows
 
     receipt = profile.run_profile_inventory(
         model="/models/qwen",
@@ -478,7 +504,81 @@ def test_run_inventory_writes_source_bound_five_file_bundle(
     manifest = json.loads(
         (tmp_path / "source_manifest.json").read_text()
     )
-    assert manifest == source_identity
+    assert manifest == {
+        **source_identity,
+        "dtype": "torch.bfloat16",
+    }
+
+
+def test_frozen_inventory_rejects_a_missing_sample() -> None:
+    cases = profile.build_frozen_case_inventory("a" * 40)
+    rows = []
+    for case in cases:
+        for sample_index in range(case.measured_steps):
+            row = _row(case.load, 100, 20)
+            row.update({
+                "case_id": case.case_id + f"-s{sample_index}",
+                "batch_size": case.batch_size,
+                "context_bucket": case.context_bucket,
+                "burst_width": case.burst_width,
+                "committed_tokens": case.batch_size,
+                "offered_arrival_offsets_ns": list(
+                    case.arrival_offsets_ns
+                ),
+            })
+            rows.append(row)
+
+    with pytest.raises(ValueError, match="frozen profile inventory"):
+        profile.validate_frozen_profile_inventory(
+            rows[:-1],
+            source_commit="a" * 40,
+        )
+
+
+def test_bundle_verifier_rebuilds_summary_and_binds_row_source(
+    tmp_path: Path,
+) -> None:
+    cases = profile.build_frozen_case_inventory("a" * 40)
+    rows = []
+    for case in cases:
+        for sample_index in range(case.measured_steps):
+            row = _row(case.load, 100, 20)
+            row.update({
+                "case_id": case.case_id + f"-s{sample_index}",
+                "batch_size": case.batch_size,
+                "context_bucket": case.context_bucket,
+                "burst_width": case.burst_width,
+                "committed_tokens": case.batch_size,
+                "offered_arrival_offsets_ns": list(
+                    case.arrival_offsets_ns
+                ),
+            })
+            rows.append(row)
+    source_identity = {
+        "source_commit": "a" * 40,
+        "source_patch_sha256": "b" * 64,
+        "model": "Qwen3-0.6B",
+        "checkpoint_sha256": "c" * 64,
+        "gpu_uuid": "GPU-a",
+        "gpu_name": "NVIDIA A100 80GB PCIe",
+        "tensor_parallel_size": 1,
+        "dtype": "torch.bfloat16",
+        "config_sha256": "d" * 64,
+    }
+    profile.write_ceiling_bundle(
+        output_dir=tmp_path,
+        profile_rows=rows,
+        cost_rows=profile.build_optimistic_cost_rows(rows),
+        source_identity=source_identity,
+    )
+    summary_path = tmp_path / "ceiling_summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["medium_headroom_ratio"] = 99.0
+    summary["classification"] = "CONTINUE_RUNTIME"
+    summary_path.write_text(json.dumps(summary))
+
+    with pytest.raises(ValueError, match="summary does not match"):
+        profile.verify_ceiling_bundle(tmp_path)
 
 
 def test_cli_supports_run_and_verify_modes(monkeypatch, tmp_path: Path) -> None:
