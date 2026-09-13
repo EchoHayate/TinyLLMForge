@@ -404,15 +404,19 @@ def test_add_requires_engine_clock_and_registers_before_enqueue() -> None:
     assert state.service_class == "interactive"
 
 
-def test_engine_passes_its_monotonic_clock_to_scheduler_admission() -> None:
+def test_engine_defaults_to_its_clock_but_accepts_frozen_arrival() -> None:
     source = (
         REPO_ROOT / "tinyvllm" / "engine" / "llm_engine.py"
     ).read_text(encoding="utf-8")
     assert (
-        "self.scheduler.add(\n"
-        "                seq,\n"
-        "                arrival_ns=self._clock_ns(),\n"
-        "            )"
+        "arrival_ns: int | None = None"
+    ) in source
+    assert (
+        "arrival_ns=(\n"
+        "                    self._clock_ns()\n"
+        "                    if arrival_ns is None\n"
+        "                    else arrival_ns\n"
+        "                )"
     ) in source
 
 

@@ -435,6 +435,7 @@ class SLOCohortCostTable:
     ) -> int | None:
         if not self.valid:
             return None
+        candidates = []
         for (
             entry_batch_size,
             entry_context_bucket,
@@ -443,11 +444,16 @@ class SLOCohortCostTable:
         ) in self._predicted_cost_entries:
             if (
                 entry_batch_size == batch_size
-                and entry_context_bucket == context_bucket
                 and entry_burst_width == burst_width
+                and entry_context_bucket >= context_bucket
             ):
-                return predicted_cost_ns
-        return None
+                candidates.append((
+                    entry_context_bucket,
+                    predicted_cost_ns,
+                ))
+        if not candidates:
+            return None
+        return min(candidates)[1]
 
 
 @dataclass(frozen=True)
@@ -496,7 +502,7 @@ class SLOCohortBurstDecisionTelemetry:
     batch_size: int
     ordered_cohort_sequence_ids: tuple[int, ...]
     queue_depths: tuple[tuple[str, int], ...]
-    context_buckets: tuple[tuple[int, int], ...]
+    context_buckets: tuple[tuple[int, int, int, int], ...]
     protected_requests: tuple[
         SLOCohortProtectedRequestTelemetry,
         ...,
@@ -522,8 +528,15 @@ class SLOCohortBurstDecisionTelemetry:
                 {
                     "sequence_id": sequence_id,
                     "context_bucket": context_bucket,
+                    "remaining_output_tokens": remaining_output_tokens,
+                    "writable_tokens": writable_tokens,
                 }
-                for sequence_id, context_bucket
+                for (
+                    sequence_id,
+                    context_bucket,
+                    remaining_output_tokens,
+                    writable_tokens,
+                )
                 in self.context_buckets
             ],
             "protected_requests": [
@@ -687,7 +700,12 @@ def build_slo_cohort_decision_telemetry(
             )),
         ),
         context_buckets=tuple(
-            (request.sequence_id, request.context_bucket)
+            (
+                request.sequence_id,
+                request.context_bucket,
+                request.remaining_output_tokens,
+                request.writable_tokens,
+            )
             for request in observation.cohort
         ),
         protected_requests=tuple(protected_rows),

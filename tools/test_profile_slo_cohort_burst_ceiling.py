@@ -316,7 +316,7 @@ def test_scheduler_and_unattributed_time_are_not_optimistically_removed() -> Non
 def test_frozen_case_inventory_covers_loads_batches_and_arrivals() -> None:
     cases = profile.build_frozen_case_inventory("a" * 40)
 
-    assert len(cases) == 12
+    assert len(cases) == 36
     assert {
         (case.load, case.batch_size)
         for case in cases
@@ -325,7 +325,9 @@ def test_frozen_case_inventory_covers_loads_batches_and_arrivals() -> None:
         for load in ("low", "medium", "high")
         for batch_size in (1, 2, 4, 8)
     }
-    assert all(case.context_bucket == 2048 for case in cases)
+    assert {
+        case.context_bucket for case in cases
+    } == {512, 4096, 16384}
     assert all(case.burst_width == 1 for case in cases)
     assert all(
         len(case.arrival_offsets_ns) == case.batch_size
@@ -470,7 +472,7 @@ def test_stage0_engine_config_can_prefill_the_largest_cohort_together() -> None:
     assert profile._ENGINE_CONFIG["max_num_prefill_tokens_per_step"] == 0
     assert (
         profile._ENGINE_CONFIG["max_num_batched_tokens"]
-        >= max(profile._BATCH_SIZES) * profile._DEFAULT_CONTEXT_BUCKET
+        >= max(profile._BATCH_SIZES) * max(profile._CONTEXT_BUCKETS)
     )
 
 

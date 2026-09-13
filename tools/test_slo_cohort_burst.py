@@ -258,6 +258,18 @@ def test_selector_uses_maximum_cost_across_cohort_context_buckets() -> None:
     assert decision.selected_width == 4
 
 
+def test_cost_table_uses_smallest_conservative_context_bucket() -> None:
+    table = _table(
+        context_buckets=(256, 2048, 8192),
+        costs={1: 5, 2: 9, 4: 18, 8: 30},
+    )
+
+    assert table.predicted_cost_ns(2, 256, 4) == 18
+    assert table.predicted_cost_ns(2, 257, 4) == 18
+    assert table.predicted_cost_ns(2, 2049, 4) == 18
+    assert table.predicted_cost_ns(2, 8193, 4) is None
+
+
 @pytest.mark.parametrize(
     ("changes", "expected_reason"),
     (
@@ -474,7 +486,24 @@ def test_decision_telemetry_closes_policy_inputs_and_is_immutable() -> None:
         ("prefilling", 0),
         ("running", 2),
     )
-    assert row.context_buckets == ((7, 2048), (9, 4096))
+    assert row.context_buckets == (
+        (7, 2048, 8, 8),
+        (9, 4096, 8, 8),
+    )
+    assert row.to_payload()["context_buckets"] == [
+        {
+            "sequence_id": 7,
+            "context_bucket": 2048,
+            "remaining_output_tokens": 8,
+            "writable_tokens": 8,
+        },
+        {
+            "sequence_id": 9,
+            "context_bucket": 4096,
+            "remaining_output_tokens": 8,
+            "writable_tokens": 8,
+        },
+    ]
     assert tuple(
         request.sequence_id for request in row.protected_requests
     ) == (7, 9, 11)

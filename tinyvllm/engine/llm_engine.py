@@ -3837,7 +3837,9 @@ class LLMEngine:
     def add_request(
         self,
         prompt: str | list[int],
-        sampling_params: SamplingParams
+        sampling_params: SamplingParams,
+        *,
+        arrival_ns: int | None = None,
     ):
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)
@@ -3863,7 +3865,11 @@ class LLMEngine:
             _try_qwen35_hybrid_prefix_restore(self, seq)
             self.scheduler.add(
                 seq,
-                arrival_ns=self._clock_ns(),
+                arrival_ns=(
+                    self._clock_ns()
+                    if arrival_ns is None
+                    else arrival_ns
+                ),
             )
         except BaseException:
             if registered:

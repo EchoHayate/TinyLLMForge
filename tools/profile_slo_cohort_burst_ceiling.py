@@ -67,15 +67,16 @@ _LOAD_ARRIVAL_GAP_NS = {
     "high": 0,
 }
 _BATCH_SIZES = (1, 2, 4, 8)
-_DEFAULT_CONTEXT_BUCKET = 2048
+_CONTEXT_BUCKETS = (512, 4096, 16384)
 _DEFAULT_REQUESTED_OUTPUT_TOKENS = 64
 _DEFAULT_WARMUP_STEPS = 4
 _DEFAULT_MEASURED_STEPS = 16
 _ENGINE_CONFIG = {
     "enforce_eager": False,
     "max_num_seqs": 8,
+    "max_model_len": 32768,
     "max_num_batched_tokens": (
-        max(_BATCH_SIZES) * _DEFAULT_CONTEXT_BUCKET
+        max(_BATCH_SIZES) * max(_CONTEXT_BUCKETS)
     ),
     "max_num_prefill_tokens_per_step": 0,
     "autoregressive_draft_command_timeline": True,
@@ -158,11 +159,11 @@ def build_frozen_case_inventory(
         CeilingProfileCase(
             case_id=(
                 f"{load}-b{batch_size}"
-                f"-c{_DEFAULT_CONTEXT_BUCKET}-r0"
+                f"-c{context_bucket}-r0"
             ),
             load=load,
             batch_size=batch_size,
-            context_bucket=_DEFAULT_CONTEXT_BUCKET,
+            context_bucket=context_bucket,
             burst_width=1,
             source_commit=commit,
             arrival_offsets_ns=tuple(
@@ -177,6 +178,7 @@ def build_frozen_case_inventory(
         )
         for load in FROZEN_LOADS
         for batch_size in _BATCH_SIZES
+        for context_bucket in _CONTEXT_BUCKETS
     )
 
 
