@@ -1,0 +1,73 @@
+GATE A: decode step scaling against the Stage 0 model
+========================================================================
+verdict INCONCLUSIVE
+  This run used a narrowed grid rather than the pre-registered one, so it can only demonstrate that the measurement works and cannot decide GATE A in either direction. The checks would have returned INCONCLUSIVE on this data, which is recorded as commentary only: 3 pre-registered cells produced no measurement, so the grid the thresholds were registered against was not actually covered. A missing cell is a gap in the measurement, not evidence against the Stage 0 model. Recover those cells or re-register the grid with the reason, then re-run.
+  grid used: 8192:1;8192:2;8192:4;8192:8;8192:16;8192:32;16384:1;16384:2;16384:4;16384:8;16384:16;32768:1;32768:2;32768:4;32768:8 (NOT pre-registered)
+  missing pre-registered cells: (40960,1), (40960,2), (40960,4)
+
+measured cells
+         L    B        L*B    step_ms    stdev    n
+      8192    1       8192     39.431    0.754   24
+      8192    2      16384     41.057    0.408   24
+      8192    4      32768     42.210    0.444   24
+      8192    8      65536     45.592    0.807   24
+      8192   16     131072     51.049    0.532   24
+      8192   32     262144     63.998    0.464   24
+     16384    1      16384     39.821    0.600   24
+     16384    2      32768     42.844    0.463   24
+     16384    4      65536     44.464    0.199   24
+     16384    8     131072     49.951    0.554   24
+     16384   16     262144     60.628  109.718   24
+     32768    1      32768     41.945    0.622   24
+     32768    2      65536     45.794    0.584   24
+     32768    4     131072     49.743    0.380   24
+     32768    8     262144     61.717    0.563   24
+
+cells excluded from the fit
+  L=40960 B=1: measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=40960, max_tokens=34, total_tokens=40994, max_model_len=40960
+  L=40960 B=2: measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=40960, max_tokens=34, total_tokens=40994, max_model_len=40960
+  L=40960 B=4: measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=40960, max_tokens=34, total_tokens=40994, max_model_len=40960
+
+batch 1 against batch 2, the CUDA graph regime boundary
+  L=8192: 39.431 ms at B=1 against 41.057 ms at B=2, ratio 1.04
+  L=16384: 39.821 ms at B=1 against 42.844 ms at B=2, ratio 1.08
+  L=32768: 41.945 ms at B=1 against 45.794 ms at B=2, ratio 1.09
+
+fitted on: all measured batches
+
+M1, the Stage 0 form
+  step_ms = c0 + c1 * L * B
+  c0 = 39.228 ms, c1 = 0.0870 us/token, R^2 = 0.9887
+
+M2, with a pure batch term
+  step_ms = c0 + a * B + c1 * L * B
+  c0 = 39.212 ms, a = 0.1066 ms/seq, c1 = 0.0795 us/token, R^2 = 0.9936
+  residual reduction against M1: 43.0%
+  at L=8192 B=32, the batch term is 3.411 ms of 63.457 ms, or 5.4%
+
+M3, allowing the step to bend with resident tokens
+  step_ms = c0 + c1 * L * B + c2 * (L * B)^2
+  c0 = 39.283 ms, c1 = 0.0854 us/token, c2 = 5.504e-12 ms/token^2, R^2 = 0.9887
+  at L*B=262144, the quadratic term is 0.378 ms of 62.059 ms, or 0.6%
+
+equal-product cells, which M1 requires to cost the same
+  L*B=16384: (8192,2), (16384,1) -> 41.057 ms, 39.821 ms  spread 3.1%  ok
+  L*B=32768: (8192,4), (16384,2), (32768,1) -> 42.210 ms, 42.844 ms, 41.945 ms  spread 2.1%  ok
+  L*B=65536: (8192,8), (16384,4), (32768,2) -> 45.592 ms, 44.464 ms, 45.794 ms  spread 2.9%  ok
+  L*B=131072: (8192,16), (16384,8), (32768,4) -> 51.049 ms, 49.951 ms, 49.743 ms  spread 2.6%  ok
+  L*B=262144: (8192,32), (16384,16), (32768,8) -> 63.998 ms, 60.628 ms, 61.717 ms  spread 5.4%  ok
+
+measured against the frozen Stage 0 inputs
+  c0: 39.228 ms measured against 13.05 ms assumed, ratio 3.006
+  c1: 0.0870 us/token measured against 0.151 us/token assumed, ratio 0.576
+
+pre-registered checks
+  [PASS] m1_r_squared: M1 R^2 0.9887 against threshold 0.98
+  [PASS] collision_consistency: 5/5 equal-product groups agree within 10%
+  [PASS] batch_term_share: the pure batch term explains 5.4% of the step at L=8192, B=32, against a tolerance of 20%
+  [PASS] curvature_share: the quadratic term explains 0.6% of the step at L=8192, B=32, against a tolerance of 10%
+  [PASS] window_stability: 15/15 cells held steady within 5% across their measured window
+  [FAIL] grid_coverage: 15/18 pre-registered cells produced a measurement; missing: (40960,1), (40960,2), (40960,4)
+  [PASS] batch_coverage: 6 distinct batches measured; at least 3 are needed to say anything about batch scaling
+
+report_sha256 5a4bbb07c93740a7bdb7adb48b551b9c47e162720ee8712fb355dd2325a18a4f

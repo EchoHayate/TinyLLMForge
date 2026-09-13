@@ -1,0 +1,48 @@
+GATE A: decode step scaling against the Stage 0 model
+========================================================================
+verdict FAIL
+  This run used a narrowed grid rather than the pre-registered one, so it can only demonstrate that the measurement works. It cannot decide GATE A. Consequence recorded from the checks: The Stage 0 decode-step model does not describe the serving path. The capacity numbers in the Stage 0 artifact must be refit with the measured form before the latent KV line continues. Do not proceed to GATE B on the old constants.
+  grid used: 1024:1;1024:2;1024:4;2048:1;2048:2;4096:1 (NOT pre-registered)
+  missing pre-registered cells: (16384,1), (16384,2), (16384,4), (16384,8), (16384,16), (32768,1), (32768,2), (32768,4), (32768,8), (65536,1) ...
+
+measured cells
+         L    B        L*B    step_ms    stdev    n
+      1024    1       1024     28.433    0.167   12
+      1024    2       2048     30.263    0.159   12
+      1024    4       4096     30.384    0.159   12
+      2048    1       2048     30.789    0.558   12
+      2048    2       4096     32.739    0.458   12
+      4096    1       4096     29.122    0.185   12
+
+M1, the Stage 0 form
+  step_ms = c0 + c1 * L * B
+  c0 = 28.808 ms, c1 = 0.5101 us/token, R^2 = 0.2178
+
+M2, with a pure batch term
+  step_ms = c0 + a * B + c1 * L * B
+  c0 = 28.725 ms, a = 0.1372 ms/seq, c1 = 0.4520 us/token, R^2 = 0.2265
+  residual reduction against M1: 1.1%
+  at L=1024 B=4, the batch term is 0.549 ms of 31.126 ms, or 1.8%
+
+M3, allowing the step to bend with resident tokens
+  step_ms = c0 + c1 * L * B + c2 * (L * B)^2
+  c0 = 25.018 ms, c1 = 3.9806 us/token, c2 = -6.302e-07 ms/token^2, R^2 = 0.3785
+  at L*B=4096, the quadratic term is -10.574 ms of 30.748 ms, or 34.4%
+
+equal-product cells, which M1 requires to cost the same
+  L*B=2048: (1024,2), (2048,1) -> 30.263 ms, 30.789 ms  spread 1.7%  ok
+  L*B=4096: (1024,4), (2048,2), (4096,1) -> 30.384 ms, 32.739 ms, 29.122 ms  spread 11.8%  MISMATCH
+
+measured against the frozen Stage 0 inputs
+  c0: 28.808 ms measured against 13.05 ms assumed, ratio 2.208
+  c1: 0.5101 us/token measured against 0.151 us/token assumed, ratio 3.378
+
+pre-registered checks
+  [FAIL] m1_r_squared: M1 R^2 0.2178 against threshold 0.98
+  [FAIL] collision_consistency: 1/2 equal-product groups agree within 10%
+  [PASS] batch_term_share: the pure batch term explains 1.8% of the step at L=1024, B=4, against a tolerance of 20%
+  [FAIL] curvature_share: the quadratic term explains 34.4% of the step at L=1024, B=4, against a tolerance of 10%
+  [PASS] window_stability: 6/6 cells held steady within 5% across their measured window
+  [PASS] batch_coverage: 3 distinct batches measured; at least 3 are needed to say anything about batch scaling
+
+report_sha256 02ca69d8b99730c123994e1aff77e5766493c2262c085ea655755f89258ff7b9

@@ -1,0 +1,40 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading CAPACITY OPEN
+  throughput was still rising usefully at the largest measured concurrency, so the capacity argument is not dead and GATE B remains worth building
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+L=2048
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+        2     43.142   0.351   46.36             -           -
+        4     44.843   0.396   89.20         0.851      21.421
+        8     45.217   1.180  176.92         0.093      21.931
+       16     44.136   0.634  362.51        -0.135      23.199
+       32     46.427   0.379  689.25         0.143      20.421
+       64     52.858   0.791 1210.78         0.201      16.298
+       96     59.260   0.890 1619.99         0.200      12.788
+      128     65.929   0.810 1941.48         0.208      10.047
+  excluded B=1: CUDA graph fast path, 12.980 ms against 43.142 ms at batch 2
+  peak throughput 1941.48 seq/s at B=128
+  the last sequences added 46.9% of what the first ones added
+  scaling efficiency across the sweep: 0.65 of proportional
+  step_ms = 42.585 + 0.175 * B                 R^2 = 0.9788
+  step_ms = 43.461 + 0.101 * B + 6.008e-04 * B^2    R^2 = 0.9905
+  at B=128 the B^2 term is 9.843 ms of 66.274 ms, or 14.9%
+
+L=8192
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+        2     42.085   0.418   47.52             -           -
+        4     43.708   0.553   91.52         0.812      21.997
+        8     45.761   0.361  174.82         0.513      20.826
+       16     53.461   1.390  299.28         0.963      15.557
+       32     65.260   0.789  490.34         0.737      11.941
+       40     72.014   0.826  555.45         0.844       8.138
+  excluded B=1: CUDA graph fast path, 13.945 ms against 42.085 ms at batch 2
+  peak throughput 555.45 seq/s at B=40
+  the last sequences added 37.0% of what the first ones added
+  scaling efficiency across the sweep: 0.58 of proportional
+  step_ms = 40.302 + 0.789 * B                 R^2 = 0.9984
+  step_ms = 40.381 + 0.773 * B + 3.730e-04 * B^2    R^2 = 0.9984
+  at B=40 the B^2 term is 0.597 ms of 71.918 ms, or 0.8%

@@ -1,0 +1,38 @@
+GATE A: decode step scaling against the Stage 0 model
+========================================================================
+verdict FAIL
+  This run used a narrowed grid rather than the pre-registered one, so it can only demonstrate that the measurement works. It cannot decide GATE A. Consequence recorded from the checks: The Stage 0 decode-step model does not describe the serving path. The capacity numbers in the Stage 0 artifact must be refit with the measured form before the latent KV line continues. Do not proceed to GATE B on the old constants.
+  grid used: 1024:1,2,4;2048:1,2;4096:1 (NOT pre-registered)
+
+measured cells
+         L    B        L*B    step_ms    stdev    n
+      1024    1       1024      3.456    0.158    8
+      1024    2       2048     31.326    0.397    8
+      1024    4       4096     31.281    0.676    8
+
+cells excluded from the fit
+  L=2048 B=1: engine construction failed: ValueError: trying to initialize the default process group twice!
+  L=2048 B=2: engine construction failed: ValueError: trying to initialize the default process group twice!
+  L=4096 B=1: engine construction failed: ValueError: trying to initialize the default process group twice!
+
+M1, the Stage 0 form
+  step_ms = c0 + c1 * L * B
+  c0 = 3.478 ms, c1 = 7.7606 us/token, R^2 = 0.5700
+
+M3, allowing the step to bend with resident tokens
+  step_ms = c0 + c1 * L * B + c2 * (L * B)^2
+  c0 = -43.009 ms, c1 = 54.4556 us/token, c2 = -8.867e-06 ms/token^2, R^2 = 1.0000
+  at L*B=4096, the quadratic term is -148.760 ms of 31.281 ms, or 475.6%
+
+measured against the frozen Stage 0 inputs
+  c0: 3.478 ms measured against 13.05 ms assumed, ratio 0.267
+  c1: 7.7606 us/token measured against 0.151 us/token assumed, ratio 51.395
+
+pre-registered checks
+  [FAIL] m1_r_squared: M1 R^2 0.5700 against threshold 0.98
+  [PASS (vacuous)] collision_consistency: no equal-product group was measured, so this check is vacuous
+  [PASS (vacuous)] batch_term_share: M2 could not be identified from the measured grid
+  [FAIL] curvature_share: the quadratic term explains 475.6% of the step at L=1024, B=4, against a tolerance of 10%
+  [PASS] batch_coverage: 3 distinct batches measured; at least 3 are needed to say anything about batch scaling
+
+report_sha256 b7490113664abd9cffc413de6ec44e20e6a0735da7d71ed6fbb7cebb0fc46997

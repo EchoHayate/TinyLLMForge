@@ -1,0 +1,58 @@
+GATE A: decode step scaling against the Stage 0 model
+========================================================================
+verdict PASS
+  The Stage 0 decode-step model survives on the serving path. Proceed to GATE B, the head-slicing phi probe.
+
+measured cells
+         L    B        L*B    step_ms    stdev    n
+     16384    1      16384     40.402    0.535   24
+     16384    2      32768     41.969    0.744   24
+     16384    4      65536     45.199    0.655   24
+     16384    8     131072     51.071    0.670   24
+     16384   16     262144     63.980    0.521   24
+     32768    1      32768     43.709    0.742   24
+     32768    2      65536     47.640    0.696   24
+     32768    4     131072     52.073    0.487   24
+     32768    8     262144     62.917    1.501   24
+
+cells excluded from the fit
+  L=65536 B=1: measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=65536, max_tokens=34, total_tokens=65570, max_model_len=40960
+  L=65536 B=2: measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=65536, max_tokens=34, total_tokens=65570, max_model_len=40960
+  L=65536 B=4: measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=65536, max_tokens=34, total_tokens=65570, max_model_len=40960
+  L=131072 B=1: measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=131072, max_tokens=34, total_tokens=131106, max_model_len=40960
+  L=131072 B=2: measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=131072, max_tokens=34, total_tokens=131106, max_model_len=40960
+
+M1, the Stage 0 form
+  step_ms = c0 + c1 * L * B
+  c0 = 39.861 ms, c1 = 0.0903 us/token, R^2 = 0.9877
+
+M2, with a pure batch term
+  step_ms = c0 + a * B + c1 * L * B
+  c0 = 39.863 ms, a = -0.0305 ms/seq, c1 = 0.0916 us/token, R^2 = 0.9877
+  residual reduction against M1: 0.5%
+  at L=16384 B=16, the batch term is -0.488 ms of 63.400 ms, or -0.8%
+
+M3, allowing the step to bend with resident tokens
+  step_ms = c0 + c1 * L * B + c2 * (L * B)^2
+  c0 = 39.500 ms, c1 = 0.0990 us/token, c2 = -3.023e-11 ms/token^2, R^2 = 0.9881
+  at L*B=262144, the quadratic term is -2.077 ms of 63.386 ms, or 3.3%
+
+equal-product cells, which M1 requires to cost the same
+  L*B=32768: (16384,2), (32768,1) -> 41.969 ms, 43.709 ms  spread 4.1%  ok
+  L*B=65536: (16384,4), (32768,2) -> 45.199 ms, 47.640 ms  spread 5.3%  ok
+  L*B=131072: (16384,8), (32768,4) -> 51.071 ms, 52.073 ms  spread 1.9%  ok
+  L*B=262144: (16384,16), (32768,8) -> 63.980 ms, 62.917 ms  spread 1.7%  ok
+
+measured against the frozen Stage 0 inputs
+  c0: 39.861 ms measured against 13.05 ms assumed, ratio 3.054
+  c1: 0.0903 us/token measured against 0.151 us/token assumed, ratio 0.598
+
+pre-registered checks
+  [PASS] m1_r_squared: M1 R^2 0.9877 against threshold 0.98
+  [PASS] collision_consistency: 4/4 equal-product groups agree within 10%
+  [PASS] batch_term_share: the pure batch term explains -0.8% of the step at L=16384, B=16, against a tolerance of 20%
+  [PASS] curvature_share: the quadratic term explains 3.3% of the step at L=16384, B=16, against a tolerance of 10%
+  [PASS] window_stability: 9/9 cells held steady within 5% across their measured window
+  [PASS] batch_coverage: 5 distinct batches measured; at least 3 are needed to say anything about batch scaling
+
+report_sha256 4b6ec60ab0332f548e45d1bbb6cc116f52abe6155d2865e1b9a41d5d750ef4f7

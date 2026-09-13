@@ -1,0 +1,260 @@
+{
+  "batch_fits": {
+    "2048": {
+      "linear": {
+        "a_ms_per_seq": 0.1746747262109379,
+        "c0_ms": 42.58470258268626,
+        "r_squared": 0.978812141229531
+      },
+      "max_batch": 128,
+      "quadratic": {
+        "a_ms_per_seq": 0.10132636337711917,
+        "b_ms_per_seq2": 0.0006007751689637542,
+        "c0_ms": 43.461183863164045,
+        "predicted_at_max_batch_ms": 66.27405874373744,
+        "r_squared": 0.9905364433938777,
+        "share_at_max_batch": 0.14852116431200574,
+        "term_at_max_batch_ms": 9.84310036830215
+      }
+    },
+    "8192": {
+      "linear": {
+        "a_ms_per_seq": 0.7889847208677628,
+        "c0_ms": 40.30215788852212,
+        "r_squared": 0.9984015908464322
+      },
+      "max_batch": 40,
+      "quadratic": {
+        "a_ms_per_seq": 0.7734991228235054,
+        "b_ms_per_seq2": 0.0003730373206901311,
+        "c0_ms": 40.38113261885357,
+        "predicted_at_max_batch_ms": 71.91795724489799,
+        "r_squared": 0.9984187657455562,
+        "share_at_max_batch": 0.008299175003980695,
+        "term_at_max_batch_ms": 0.5968597131042097
+      }
+    }
+  },
+  "capacity_reading": {
+    "detail": "throughput was still rising usefully at the largest measured concurrency, so the capacity argument is not dead and GATE B remains worth building",
+    "reading": "CAPACITY OPEN"
+  },
+  "contexts": {
+    "2048": [
+      {
+        "batch": 2,
+        "context_length": 2048,
+        "dispersion_ratio": 0.00813073930065953,
+        "drift_ratio": 1.0046322192296275,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 43.14243863336742,
+        "step_stdev_ms": 0.3507799213226125,
+        "throughput_seq_per_s": 46.35806559282328
+      },
+      {
+        "batch": 4,
+        "context_length": 2048,
+        "dispersion_ratio": 0.008823256728718502,
+        "drift_ratio": 1.0086025638018494,
+        "marginal_ms_per_seq": 0.8505141595378518,
+        "marginal_throughput_per_seq": 21.420551845895723,
+        "step_ms": 44.84346695244312,
+        "step_stdev_ms": 0.39566542152720957,
+        "throughput_seq_per_s": 89.19916928461473
+      },
+      {
+        "batch": 8,
+        "context_length": 2048,
+        "dispersion_ratio": 0.026091758727829043,
+        "drift_ratio": 0.9953897043127777,
+        "marginal_ms_per_seq": 0.09338743984699249,
+        "marginal_throughput_per_seq": 21.93134333173643,
+        "step_ms": 45.21701671183109,
+        "step_stdev_ms": 1.1797914904373106,
+        "throughput_seq_per_s": 176.92454261156044
+      },
+      {
+        "batch": 16,
+        "context_length": 2048,
+        "dispersion_ratio": 0.014363850461611661,
+        "drift_ratio": 1.0081799160091354,
+        "marginal_ms_per_seq": -0.13507914263755083,
+        "marginal_throughput_per_seq": 23.198520873072052,
+        "step_ms": 44.136383570730686,
+        "step_stdev_ms": 0.6339684135263093,
+        "throughput_seq_per_s": 362.51270959613686
+      },
+      {
+        "batch": 32,
+        "context_length": 2048,
+        "dispersion_ratio": 0.008156896194355867,
+        "drift_ratio": 1.0049307832539598,
+        "marginal_ms_per_seq": 0.14317863679025322,
+        "marginal_throughput_per_seq": 20.42111244373982,
+        "step_ms": 46.42724175937474,
+        "step_stdev_ms": 0.3787021916214836,
+        "throughput_seq_per_s": 689.250508695974
+      },
+      {
+        "batch": 64,
+        "context_length": 2048,
+        "dispersion_ratio": 0.014970308675841284,
+        "drift_ratio": 1.0275006136394897,
+        "marginal_ms_per_seq": 0.20097607193747535,
+        "marginal_throughput_per_seq": 16.29780508959652,
+        "step_ms": 52.85847606137395,
+        "step_stdev_ms": 0.7913077027733353,
+        "throughput_seq_per_s": 1210.7802715630626
+      },
+      {
+        "batch": 96,
+        "context_length": 2048,
+        "dispersion_ratio": 0.015022688376715769,
+        "drift_ratio": 1.0031081036440699,
+        "marginal_ms_per_seq": 0.20003636018373072,
+        "marginal_throughput_per_seq": 12.78779160272277,
+        "step_ms": 59.25963958725333,
+        "step_stdev_ms": 0.8902390988357963,
+        "throughput_seq_per_s": 1619.9896028501912
+      },
+      {
+        "batch": 128,
+        "context_length": 2048,
+        "dispersion_ratio": 0.012289299061555632,
+        "drift_ratio": 1.0217508362223253,
+        "marginal_ms_per_seq": 0.20842099911533296,
+        "marginal_throughput_per_seq": 10.046550495759803,
+        "step_ms": 65.92911155894399,
+        "step_stdev_ms": 0.8102225688105269,
+        "throughput_seq_per_s": 1941.479218714505
+      }
+    ],
+    "8192": [
+      {
+        "batch": 2,
+        "context_length": 8192,
+        "dispersion_ratio": 0.009927661040719637,
+        "drift_ratio": 1.0025292000308053,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 42.08461567759514,
+        "step_stdev_ms": 0.4178017994761201,
+        "throughput_seq_per_s": 47.523304366653704
+      },
+      {
+        "batch": 4,
+        "context_length": 8192,
+        "dispersion_ratio": 0.012648257422218373,
+        "drift_ratio": 0.9985931307843815,
+        "marginal_ms_per_seq": 0.8116256212815642,
+        "marginal_throughput_per_seq": 21.99670073866374,
+        "step_ms": 43.70786692015827,
+        "step_stdev_ms": 0.5528283521822247,
+        "throughput_seq_per_s": 91.51670584398119
+      },
+      {
+        "batch": 8,
+        "context_length": 8192,
+        "dispersion_ratio": 0.007884253260015017,
+        "drift_ratio": 1.0072941979352799,
+        "marginal_ms_per_seq": 0.5132553051225841,
+        "marginal_throughput_per_seq": 20.826268980817154,
+        "step_ms": 45.7608881406486,
+        "step_stdev_ms": 0.3607904315040913,
+        "throughput_seq_per_s": 174.8217817672498
+      },
+      {
+        "batch": 16,
+        "context_length": 8192,
+        "dispersion_ratio": 0.02600819485567555,
+        "drift_ratio": 0.9566596081034004,
+        "marginal_ms_per_seq": 0.9625685052014887,
+        "marginal_throughput_per_seq": 15.557420792290987,
+        "step_ms": 53.46143618226051,
+        "step_stdev_ms": 1.3904354494924946,
+        "throughput_seq_per_s": 299.2811481055777
+      },
+      {
+        "batch": 32,
+        "context_length": 8192,
+        "dispersion_ratio": 0.012084809630579223,
+        "drift_ratio": 0.9847066971456891,
+        "marginal_ms_per_seq": 0.7374355773208663,
+        "marginal_throughput_per_seq": 11.941382048691903,
+        "step_ms": 65.26040541939437,
+        "step_stdev_ms": 0.7886595759078017,
+        "throughput_seq_per_s": 490.34326088464815
+      },
+      {
+        "batch": 40,
+        "context_length": 8192,
+        "dispersion_ratio": 0.011472794533754785,
+        "drift_ratio": 0.9955513738408575,
+        "marginal_ms_per_seq": 0.8442213875241578,
+        "marginal_throughput_per_seq": 8.137866184909306,
+        "step_ms": 72.01417651958764,
+        "step_stdev_ms": 0.8262038507267772,
+        "throughput_seq_per_s": 555.4461903639226
+      }
+    ]
+  },
+  "excluded_cells": {
+    "2048": [
+      {
+        "batch": 1,
+        "reason": "CUDA graph fast path, 12.980 ms against 43.142 ms at batch 2"
+      }
+    ],
+    "8192": [
+      {
+        "batch": 1,
+        "reason": "CUDA graph fast path, 13.945 ms against 42.085 ms at batch 2"
+      }
+    ]
+  },
+  "grid_is_preregistered": false,
+  "grid_spec": "2048:1;2048:2;2048:4;2048:8;2048:16;2048:32;2048:64;2048:96;2048:128;8192:1;8192:2;8192:4;8192:8;8192:16;8192:32;8192:40",
+  "kind": "kvcapacity_batch_sweep_analysis",
+  "note": "This is an exploratory sweep, not GATE A. It cannot pass or fail the pre-registered GATE A grid.",
+  "regime_boundary": {
+    "2048": {
+      "batch1_step_ms": 12.980229454115033,
+      "batch2_step_ms": 43.14243863336742,
+      "note": "batch 1 runs a different execution path, so the sweep is read from batch 2 upwards",
+      "ratio": 3.323703851759744
+    },
+    "8192": {
+      "batch1_step_ms": 13.94486054778099,
+      "batch2_step_ms": 42.08461567759514,
+      "note": "batch 1 runs a different execution path, so the sweep is read from batch 2 upwards",
+      "ratio": 3.0179301925175546
+    }
+  },
+  "rejected_cells": [],
+  "saturation": {
+    "2048": {
+      "first_marginal_throughput_per_seq": 21.420551845895723,
+      "last_marginal_throughput_per_seq": 10.046550495759803,
+      "peak_batch": 128,
+      "peak_is_largest_batch": true,
+      "peak_throughput_seq_per_s": 1941.479218714505,
+      "retained_fraction": 0.46901455051377533,
+      "saturating": false,
+      "scaling_efficiency": 0.6543761566511613,
+      "throughput_still_rising": true
+    },
+    "8192": {
+      "first_marginal_throughput_per_seq": 21.99670073866374,
+      "last_marginal_throughput_per_seq": 8.137866184909306,
+      "peak_batch": 40,
+      "peak_is_largest_batch": true,
+      "peak_throughput_seq_per_s": 555.4461903639226,
+      "retained_fraction": 0.36995848975684464,
+      "saturating": false,
+      "scaling_efficiency": 0.5843934862762508,
+      "throughput_still_rising": true
+    }
+  },
+  "source_payload_sha256": "c059d1183a1026f7d9569a99bb4fe9f6ee8130d468a7f90c41c83fb20501953e,2be2020040d396e9b7830196c277a5fa7f3be022abb5b3de206e3063a99eda6b"
+}

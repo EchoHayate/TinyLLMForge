@@ -1,0 +1,704 @@
+{
+  "attempted_but_unmeasured_cells": [
+    [
+      40960,
+      1
+    ],
+    [
+      40960,
+      2
+    ],
+    [
+      40960,
+      4
+    ]
+  ],
+  "batch_term_at_largest_batch": {
+    "batch": 32,
+    "batch_term_ms": 3.411313294231176,
+    "context_length": 8192,
+    "predicted_step_ms": 63.45741387621105,
+    "share": 0.053757521554309844
+  },
+  "checks": [
+    {
+      "detail": "M1 R^2 0.9887 against threshold 0.98",
+      "name": "m1_r_squared",
+      "passed": true
+    },
+    {
+      "detail": "5/5 equal-product groups agree within 10%",
+      "name": "collision_consistency",
+      "passed": true,
+      "vacuous": false
+    },
+    {
+      "detail": "the pure batch term explains 5.4% of the step at L=8192, B=32, against a tolerance of 20%",
+      "name": "batch_term_share",
+      "passed": true
+    },
+    {
+      "detail": "the quadratic term explains 0.6% of the step at L=8192, B=32, against a tolerance of 10%",
+      "name": "curvature_share",
+      "passed": true
+    },
+    {
+      "detail": "15/15 cells held steady within 5% across their measured window",
+      "name": "window_stability",
+      "passed": true,
+      "vacuous": false
+    },
+    {
+      "detail": "15/18 pre-registered cells produced a measurement; missing: (40960,1), (40960,2), (40960,4)",
+      "name": "grid_coverage",
+      "passed": false
+    },
+    {
+      "detail": "6 distinct batches measured; at least 3 are needed to say anything about batch scaling",
+      "name": "batch_coverage",
+      "passed": true
+    }
+  ],
+  "collision_groups": [
+    {
+      "kv_tokens": 16384,
+      "mean_ms": 40.43859394732863,
+      "relative_spread": 0.030563556372453855,
+      "shapes": [
+        [
+          8192,
+          2
+        ],
+        [
+          16384,
+          1
+        ]
+      ],
+      "step_ms": [
+        41.0565675701946,
+        39.82062032446265
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 32768,
+      "mean_ms": 42.33286902308464,
+      "relative_spread": 0.021237346597389586,
+      "shapes": [
+        [
+          8192,
+          4
+        ],
+        [
+          16384,
+          2
+        ],
+        [
+          32768,
+          1
+        ]
+      ],
+      "step_ms": [
+        42.21022501587868,
+        42.843709932640195,
+        41.94467212073505
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 65536,
+      "mean_ms": 45.283198511848845,
+      "relative_spread": 0.02938357350838365,
+      "shapes": [
+        [
+          8192,
+          8
+        ],
+        [
+          16384,
+          4
+        ],
+        [
+          32768,
+          2
+        ]
+      ],
+      "step_ms": [
+        45.591620495542884,
+        44.46369642391801,
+        45.79427861608565
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 131072,
+      "mean_ms": 50.247615203261375,
+      "relative_spread": 0.025996717214768136,
+      "shapes": [
+        [
+          8192,
+          16
+        ],
+        [
+          16384,
+          8
+        ],
+        [
+          32768,
+          4
+        ]
+      ],
+      "step_ms": [
+        51.049272529780865,
+        49.95057359337807,
+        49.742999486625195
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 262144,
+      "mean_ms": 62.114648055285215,
+      "relative_spread": 0.05425691683731077,
+      "shapes": [
+        [
+          8192,
+          32
+        ],
+        [
+          16384,
+          16
+        ],
+        [
+          32768,
+          8
+        ]
+      ],
+      "step_ms": [
+        63.99831478483975,
+        60.62816549092531,
+        61.717463890090585
+      ],
+      "within_threshold": true
+    }
+  ],
+  "consequence": "This run used a narrowed grid rather than the pre-registered one, so it can only demonstrate that the measurement works and cannot decide GATE A in either direction. The checks would have returned INCONCLUSIVE on this data, which is recorded as commentary only: 3 pre-registered cells produced no measurement, so the grid the thresholds were registered against was not actually covered. A missing cell is a gap in the measurement, not evidence against the Stage 0 model. Recover those cells or re-register the grid with the reason, then re-run.",
+  "curvature_at_largest_product": {
+    "batch": 32,
+    "context_length": 8192,
+    "curvature_term_ms": 0.37823359942756607,
+    "kv_tokens": 262144,
+    "predicted_step_ms": 62.05898702043479,
+    "share": 0.006094743365743648
+  },
+  "fit_scope": "all measured batches",
+  "fitted_points": [
+    {
+      "batch": 1,
+      "context_length": 8192,
+      "drift_ratio": 0.9641418539344915,
+      "kv_tokens": 8192,
+      "sample_count": 24,
+      "step_ms": 39.43129163235426,
+      "step_stdev_ms": 0.7538511433839858
+    },
+    {
+      "batch": 2,
+      "context_length": 8192,
+      "drift_ratio": 0.9952730768867214,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 41.0565675701946,
+      "step_stdev_ms": 0.40840332887215036
+    },
+    {
+      "batch": 4,
+      "context_length": 8192,
+      "drift_ratio": 1.0104428860095211,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 42.21022501587868,
+      "step_stdev_ms": 0.4441143552439104
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "drift_ratio": 1.0376646988257867,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.591620495542884,
+      "step_stdev_ms": 0.806822967516648
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "drift_ratio": 0.9987903544205698,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 51.049272529780865,
+      "step_stdev_ms": 0.5321103440056739
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "drift_ratio": 1.0077107529705989,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 63.99831478483975,
+      "step_stdev_ms": 0.46436286126867843
+    },
+    {
+      "batch": 1,
+      "context_length": 16384,
+      "drift_ratio": 0.9816550015982499,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 39.82062032446265,
+      "step_stdev_ms": 0.6004378401407515
+    },
+    {
+      "batch": 2,
+      "context_length": 16384,
+      "drift_ratio": 0.9931366006372903,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 42.843709932640195,
+      "step_stdev_ms": 0.46285890744923097
+    },
+    {
+      "batch": 4,
+      "context_length": 16384,
+      "drift_ratio": 1.0018812629965448,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 44.46369642391801,
+      "step_stdev_ms": 0.19912650354712377
+    },
+    {
+      "batch": 8,
+      "context_length": 16384,
+      "drift_ratio": 0.9949280480403981,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.95057359337807,
+      "step_stdev_ms": 0.5538809741112296
+    },
+    {
+      "batch": 16,
+      "context_length": 16384,
+      "drift_ratio": 0.9991621642922642,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 60.62816549092531,
+      "step_stdev_ms": 109.71806913934033
+    },
+    {
+      "batch": 1,
+      "context_length": 32768,
+      "drift_ratio": 1.0032010996226801,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 41.94467212073505,
+      "step_stdev_ms": 0.622360425251077
+    },
+    {
+      "batch": 2,
+      "context_length": 32768,
+      "drift_ratio": 0.9905149759695541,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.79427861608565,
+      "step_stdev_ms": 0.5838555242661055
+    },
+    {
+      "batch": 4,
+      "context_length": 32768,
+      "drift_ratio": 0.9919915833237514,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.742999486625195,
+      "step_stdev_ms": 0.3800287180038283
+    },
+    {
+      "batch": 8,
+      "context_length": 32768,
+      "drift_ratio": 0.9815922940426546,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 61.717463890090585,
+      "step_stdev_ms": 0.5628051156210494
+    }
+  ],
+  "grid_is_preregistered": false,
+  "grid_spec": "8192:1;8192:2;8192:4;8192:8;8192:16;8192:32;16384:1;16384:2;16384:4;16384:8;16384:16;32768:1;32768:2;32768:4;32768:8",
+  "measured_points": [
+    {
+      "batch": 1,
+      "context_length": 8192,
+      "drift_ratio": 0.9641418539344915,
+      "kv_tokens": 8192,
+      "sample_count": 24,
+      "step_ms": 39.43129163235426,
+      "step_stdev_ms": 0.7538511433839858
+    },
+    {
+      "batch": 2,
+      "context_length": 8192,
+      "drift_ratio": 0.9952730768867214,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 41.0565675701946,
+      "step_stdev_ms": 0.40840332887215036
+    },
+    {
+      "batch": 4,
+      "context_length": 8192,
+      "drift_ratio": 1.0104428860095211,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 42.21022501587868,
+      "step_stdev_ms": 0.4441143552439104
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "drift_ratio": 1.0376646988257867,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.591620495542884,
+      "step_stdev_ms": 0.806822967516648
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "drift_ratio": 0.9987903544205698,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 51.049272529780865,
+      "step_stdev_ms": 0.5321103440056739
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "drift_ratio": 1.0077107529705989,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 63.99831478483975,
+      "step_stdev_ms": 0.46436286126867843
+    },
+    {
+      "batch": 1,
+      "context_length": 16384,
+      "drift_ratio": 0.9816550015982499,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 39.82062032446265,
+      "step_stdev_ms": 0.6004378401407515
+    },
+    {
+      "batch": 2,
+      "context_length": 16384,
+      "drift_ratio": 0.9931366006372903,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 42.843709932640195,
+      "step_stdev_ms": 0.46285890744923097
+    },
+    {
+      "batch": 4,
+      "context_length": 16384,
+      "drift_ratio": 1.0018812629965448,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 44.46369642391801,
+      "step_stdev_ms": 0.19912650354712377
+    },
+    {
+      "batch": 8,
+      "context_length": 16384,
+      "drift_ratio": 0.9949280480403981,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.95057359337807,
+      "step_stdev_ms": 0.5538809741112296
+    },
+    {
+      "batch": 16,
+      "context_length": 16384,
+      "drift_ratio": 0.9991621642922642,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 60.62816549092531,
+      "step_stdev_ms": 109.71806913934033
+    },
+    {
+      "batch": 1,
+      "context_length": 32768,
+      "drift_ratio": 1.0032010996226801,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 41.94467212073505,
+      "step_stdev_ms": 0.622360425251077
+    },
+    {
+      "batch": 2,
+      "context_length": 32768,
+      "drift_ratio": 0.9905149759695541,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.79427861608565,
+      "step_stdev_ms": 0.5838555242661055
+    },
+    {
+      "batch": 4,
+      "context_length": 32768,
+      "drift_ratio": 0.9919915833237514,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.742999486625195,
+      "step_stdev_ms": 0.3800287180038283
+    },
+    {
+      "batch": 8,
+      "context_length": 32768,
+      "drift_ratio": 0.9815922940426546,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 61.717463890090585,
+      "step_stdev_ms": 0.5628051156210494
+    }
+  ],
+  "missing_preregistered_cells": [
+    [
+      40960,
+      1
+    ],
+    [
+      40960,
+      2
+    ],
+    [
+      40960,
+      4
+    ]
+  ],
+  "model_m1": {
+    "c0_ms": 39.22777075123122,
+    "c1_us_per_token": 0.08698460636546101,
+    "form": "step_ms = c0 + c1 * L * B",
+    "parameters": 2,
+    "r_squared": 0.988687105374648,
+    "residual_sum_squares": 10.500689639628948
+  },
+  "model_m2": {
+    "a_ms_per_sequence": 0.10660354044472425,
+    "c0_ms": 39.211624895935536,
+    "c1_us_per_token": 0.07947721743028387,
+    "form": "step_ms = c0 + a * B + c1 * L * B",
+    "parameters": 3,
+    "r_squared": 0.9935527187914891,
+    "residual_reduction_vs_m1": 0.43009446989255795,
+    "residual_sum_squares": 5.984401095566461
+  },
+  "model_m3": {
+    "c0_ms": 39.28312052889921,
+    "c1_us_per_token": 0.085440188949997,
+    "c2_ms_per_token_squared": 5.5040232753900064e-12,
+    "form": "step_ms = c0 + c1 * L * B + c2 * (L * B)^2",
+    "parameters": 3,
+    "r_squared": 0.9887047903793937,
+    "regressor_scale": 100000.0,
+    "residual_sum_squares": 10.484274323102051
+  },
+  "preregistered_cells": [
+    [
+      8192,
+      1
+    ],
+    [
+      8192,
+      2
+    ],
+    [
+      8192,
+      4
+    ],
+    [
+      8192,
+      8
+    ],
+    [
+      8192,
+      16
+    ],
+    [
+      8192,
+      32
+    ],
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      40960,
+      1
+    ],
+    [
+      40960,
+      2
+    ],
+    [
+      40960,
+      4
+    ]
+  ],
+  "preregistered_cells_v1": [
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      65536,
+      1
+    ],
+    [
+      65536,
+      2
+    ],
+    [
+      65536,
+      4
+    ],
+    [
+      131072,
+      1
+    ],
+    [
+      131072,
+      2
+    ]
+  ],
+  "regime_discontinuity": {
+    "comparisons": [
+      {
+        "batch_one_ms": 39.43129163235426,
+        "batch_two_ms": 41.0565675701946,
+        "context_length": 8192,
+        "ratio": 1.0412179228870801
+      },
+      {
+        "batch_one_ms": 39.82062032446265,
+        "batch_two_ms": 42.843709932640195,
+        "context_length": 16384,
+        "ratio": 1.0759176924805562
+      },
+      {
+        "batch_one_ms": 41.94467212073505,
+        "batch_two_ms": 45.79427861608565,
+        "context_length": 32768,
+        "ratio": 1.0917781997262908
+      }
+    ],
+    "max_ratio": 1.0917781997262908,
+    "regimes_differ": false
+  },
+  "rejected_cells": [
+    {
+      "batch": 1,
+      "context_length": 40960,
+      "reason": "measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=40960, max_tokens=34, total_tokens=40994, max_model_len=40960"
+    },
+    {
+      "batch": 2,
+      "context_length": 40960,
+      "reason": "measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=40960, max_tokens=34, total_tokens=40994, max_model_len=40960"
+    },
+    {
+      "batch": 4,
+      "context_length": 40960,
+      "reason": "measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=40960, max_tokens=34, total_tokens=40994, max_model_len=40960"
+    }
+  ],
+  "report_sha256": "5a4bbb07c93740a7bdb7adb48b551b9c47e162720ee8712fb355dd2325a18a4f",
+  "schema": "kvcapacity-gate-a-verdict/1",
+  "source_payload_sha256": "a846b952a2255a1cafad05346c28d90c7f563856684f3212986a555b8c482b8c,62bf9004a613e27f573afc1535ba11f6c278e599126b429ba5d9711d658cedde,0bb8d3f960a1463bf2787ab1df35967cea18cec685f0f45d0bd1f7a7e06bbb87,8779c6467631e30c751c3b5c2fe7fbeafd66460841af29d188fb6a6794d8c53a",
+  "stage0_comparison": {
+    "c0_ratio": 3.0059594445387905,
+    "c1_ratio": 0.576056995797755,
+    "measured_c0_ms": 39.22777075123122,
+    "measured_c1_us_per_token": 0.08698460636546101,
+    "stage0_c0_ms": 13.05,
+    "stage0_c1_us_per_token": 0.151
+  },
+  "thresholds": {
+    "max_batch_term_share": 0.2,
+    "max_collision_spread": 0.1,
+    "max_curvature_share": 0.1,
+    "max_drift_deviation": 0.05,
+    "min_r_squared": 0.98
+  },
+  "verdict": "INCONCLUSIVE"
+}

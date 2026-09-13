@@ -1,0 +1,40 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading CAPACITY OPEN
+  throughput was still rising usefully at the largest measured concurrency, so the capacity argument is not dead and GATE B remains worth building
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+L=2048
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+        1     39.111   0.511   25.57             -           -
+        2     40.120   0.738   49.85         1.008      24.283
+        4     40.537   0.484   98.67         0.209      24.412
+        8     41.461   0.776  192.95         0.231      23.570
+       16     43.541   0.858  367.47         0.260      21.815
+       32     48.319   0.533  662.26         0.299      18.424
+       64     53.372   0.423 1199.13         0.158      16.777
+      128     67.074   2.097 1908.35         0.214      11.082
+  excluded B=96: spread 191% of the median, not steady decoding
+  peak throughput 1908.35 seq/s at B=128
+  the last sequences added 45.6% of what the first ones added
+  scaling efficiency across the sweep: 0.58 of proportional
+  step_ms = 39.835 + 0.215 * B                 R^2 = 0.9942
+  step_ms = 39.518 + 0.247 * B + -2.594e-04 * B^2    R^2 = 0.9959
+  at B=128 the B^2 term is -4.250 ms of 66.920 ms, or 6.4%
+
+L=8192
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+        1     39.374   0.337   25.40             -           -
+        2     41.473   0.683   48.22         2.100      22.826
+        4     44.820   0.542   89.25         1.673      20.511
+        8     46.091   0.496  173.57         0.318      21.081
+       16     49.415   0.321  323.79         0.415      18.778
+       32     63.827   0.587  501.36         0.901      11.098
+       40     71.686   2.191  557.99         0.982       7.078
+  peak throughput 557.99 seq/s at B=40
+  the last sequences added 31.0% of what the first ones added
+  scaling efficiency across the sweep: 0.55 of proportional
+  step_ms = 39.560 + 0.774 * B                 R^2 = 0.9843
+  step_ms = 40.572 + 0.527 * B + 6.193e-03 * B^2    R^2 = 0.9893
+  at B=40 the B^2 term is 9.909 ms of 71.576 ms, or 13.8%

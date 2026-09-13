@@ -1,0 +1,263 @@
+{
+  "batch_term_at_largest_batch": {
+    "batch": 4,
+    "batch_term_ms": 0.5489179565415094,
+    "context_length": 1024,
+    "predicted_step_ms": 31.125519893737177,
+    "share": 0.01763562370734756
+  },
+  "checks": [
+    {
+      "detail": "M1 R^2 0.2178 against threshold 0.98",
+      "name": "m1_r_squared",
+      "passed": false
+    },
+    {
+      "detail": "1/2 equal-product groups agree within 10%",
+      "name": "collision_consistency",
+      "passed": false,
+      "vacuous": false
+    },
+    {
+      "detail": "the pure batch term explains 1.8% of the step at L=1024, B=4, against a tolerance of 20%",
+      "name": "batch_term_share",
+      "passed": true
+    },
+    {
+      "detail": "the quadratic term explains 34.4% of the step at L=1024, B=4, against a tolerance of 10%",
+      "name": "curvature_share",
+      "passed": false
+    },
+    {
+      "detail": "6/6 cells held steady within 5% across their measured window",
+      "name": "window_stability",
+      "passed": true,
+      "vacuous": false
+    },
+    {
+      "detail": "3 distinct batches measured; at least 3 are needed to say anything about batch scaling",
+      "name": "batch_coverage",
+      "passed": true
+    }
+  ],
+  "collision_groups": [
+    {
+      "kv_tokens": 2048,
+      "mean_ms": 30.526226037181914,
+      "relative_spread": 0.017234488433939685,
+      "shapes": [
+        [
+          1024,
+          2
+        ],
+        [
+          2048,
+          1
+        ]
+      ],
+      "step_ms": [
+        30.263174092397094,
+        30.789277981966734
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 4096,
+      "mean_ms": 30.748037698989112,
+      "relative_spread": 0.1176388560398643,
+      "shapes": [
+        [
+          1024,
+          4
+        ],
+        [
+          2048,
+          2
+        ],
+        [
+          4096,
+          1
+        ]
+      ],
+      "step_ms": [
+        30.383680015802383,
+        32.73879853077233,
+        29.121634550392628
+      ],
+      "within_threshold": false
+    }
+  ],
+  "consequence": "This run used a narrowed grid rather than the pre-registered one, so it can only demonstrate that the measurement works. It cannot decide GATE A. Consequence recorded from the checks: The Stage 0 decode-step model does not describe the serving path. The capacity numbers in the Stage 0 artifact must be refit with the measured form before the latent KV line continues. Do not proceed to GATE B on the old constants.",
+  "curvature_at_largest_product": {
+    "batch": 4,
+    "context_length": 1024,
+    "curvature_term_ms": -10.573815036978273,
+    "kv_tokens": 4096,
+    "predicted_step_ms": 30.748037698989123,
+    "share": 0.34388584860249144
+  },
+  "grid_is_preregistered": false,
+  "grid_spec": "1024:1;1024:2;1024:4;2048:1;2048:2;4096:1",
+  "measured_points": [
+    {
+      "batch": 1,
+      "context_length": 1024,
+      "drift_ratio": 0.9973161221084209,
+      "kv_tokens": 1024,
+      "sample_count": 12,
+      "step_ms": 28.432729886844754,
+      "step_stdev_ms": 0.16701904946787097
+    },
+    {
+      "batch": 2,
+      "context_length": 1024,
+      "drift_ratio": 0.9989578113192955,
+      "kv_tokens": 2048,
+      "sample_count": 12,
+      "step_ms": 30.263174092397094,
+      "step_stdev_ms": 0.15940290931587345
+    },
+    {
+      "batch": 4,
+      "context_length": 1024,
+      "drift_ratio": 1.0018085715315623,
+      "kv_tokens": 4096,
+      "sample_count": 12,
+      "step_ms": 30.383680015802383,
+      "step_stdev_ms": 0.15878035756265885
+    },
+    {
+      "batch": 1,
+      "context_length": 2048,
+      "drift_ratio": 0.9967908172639411,
+      "kv_tokens": 2048,
+      "sample_count": 12,
+      "step_ms": 30.789277981966734,
+      "step_stdev_ms": 0.5575748233872347
+    },
+    {
+      "batch": 2,
+      "context_length": 2048,
+      "drift_ratio": 1.010401219776339,
+      "kv_tokens": 4096,
+      "sample_count": 12,
+      "step_ms": 32.73879853077233,
+      "step_stdev_ms": 0.45812866402166585
+    },
+    {
+      "batch": 1,
+      "context_length": 4096,
+      "drift_ratio": 1.0025681409551794,
+      "kv_tokens": 4096,
+      "sample_count": 12,
+      "step_ms": 29.121634550392628,
+      "step_stdev_ms": 0.18492401713311793
+    }
+  ],
+  "missing_preregistered_cells": [
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      65536,
+      1
+    ],
+    [
+      65536,
+      2
+    ],
+    [
+      65536,
+      4
+    ],
+    [
+      131072,
+      1
+    ],
+    [
+      131072,
+      2
+    ]
+  ],
+  "model_m1": {
+    "c0_ms": 28.80811979467014,
+    "c1_us_per_token": 0.5101433990208564,
+    "form": "step_ms = c0 + c1 * L * B",
+    "parameters": 2,
+    "r_squared": 0.21775363046866014,
+    "residual_sum_squares": 8.659388554169588
+  },
+  "model_m2": {
+    "a_ms_per_sequence": 0.13722948913537736,
+    "c0_ms": 28.725264254060104,
+    "c1_us_per_token": 0.4519867390467688,
+    "form": "step_ms = c0 + a * B + c1 * L * B",
+    "parameters": 3,
+    "r_squared": 0.22654842940850228,
+    "residual_reduction_vs_m1": 0.011243003844314758,
+    "residual_sum_squares": 8.562031015365644
+  },
+  "model_m3": {
+    "c0_ms": 25.017506856885493,
+    "c1_us_per_token": 3.9805531931352305,
+    "c2_ms_per_token_squared": -6.302484891997738e-07,
+    "form": "step_ms = c0 + c1 * L * B + c2 * (L * B)^2",
+    "parameters": 3,
+    "r_squared": 0.378543122674351,
+    "regressor_scale": 100000.0,
+    "residual_sum_squares": 6.879465063734115
+  },
+  "rejected_cells": [],
+  "report_sha256": "02ca69d8b99730c123994e1aff77e5766493c2262c085ea655755f89258ff7b9",
+  "schema": "kvcapacity-gate-a-verdict/1",
+  "source_payload_sha256": "1afa92090da1c39ccdbf03d9a7742335587f59c384bf090211c40b3aa93642ee,35d0ac18ff5e3786e42b64360c59c6bf4d6db1363a7629033c393d375b6b7d54,bfa2687a39842dd88dabdf3ce48b3cdcb1f70cfae3297712cf4977dc1322c4d9",
+  "stage0_comparison": {
+    "c0_ratio": 2.207518758212271,
+    "c1_ratio": 3.3784331060983868,
+    "measured_c0_ms": 28.80811979467014,
+    "measured_c1_us_per_token": 0.5101433990208564,
+    "stage0_c0_ms": 13.05,
+    "stage0_c1_us_per_token": 0.151
+  },
+  "thresholds": {
+    "max_batch_term_share": 0.2,
+    "max_collision_spread": 0.1,
+    "max_curvature_share": 0.1,
+    "max_drift_deviation": 0.05,
+    "min_r_squared": 0.98
+  },
+  "verdict": "FAIL"
+}

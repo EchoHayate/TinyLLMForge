@@ -3,10 +3,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import subprocess
+import sys
+from types import SimpleNamespace
 
 import pytest
 
 from tools import profile_slo_cohort_burst_ceiling as profile
+
+
+def test_direct_script_entrypoint_can_import_tools() -> None:
+    result = subprocess.run(
+        [sys.executable, str(Path(profile.__file__)), "--help"],
+        cwd=Path(profile.__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @dataclass(frozen=True)
@@ -192,3 +207,314 @@ def test_write_ceiling_bundle_is_immutable(tmp_path: Path) -> None:
             cost_rows=[],
             source_identity={},
         )
+
+
+def _timeline_step(*, wall_ns: int = 100) -> dict:
+    names = (
+        "scheduler_schedule",
+        "partition_and_step_setup",
+        "ordinary_or_first_target_dispatch",
+        "speculative_prepare",
+        "scheduler_prepare_postprocess",
+        "proposal_kv_prepare_commit",
+        "proposal_lifecycle_finalize_prepare",
+        "scheduler_commit_postprocess",
+        "proposal_lifecycle_finalize_commit",
+        "side_state_seal",
+        "residency_precommit_or_seal",
+        "ordinary_scheduler_postprocess",
+    )
+    durations = {
+        "scheduler_schedule": 10,
+        "partition_and_step_setup": 5,
+        "ordinary_or_first_target_dispatch": 60,
+        "scheduler_prepare_postprocess": 4,
+        "scheduler_commit_postprocess": 3,
+        "ordinary_scheduler_postprocess": 2,
+    }
+    return {
+        "step_wall_ns": wall_ns,
+        "phases": {
+            name: {"duration_ns": durations.get(name, 0)}
+            for name in names
+        },
+    }
+
+
+def test_timeline_components_leave_only_target_cuda_irreducible() -> None:
+    components = profile.components_from_timeline_step(
+        _timeline_step(),
+    )
+
+    assert components == {
+        "target_cuda": 60,
+        "graph_launch_gap": 16,
+        "scheduler": 19,
+        "token_d2h_publication": 0,
+        "batch_binding": 5,
+        "unattributed": 0,
+    }
+    assert sum(components.values()) == 100
+
+
+def test_optimistic_cost_rows_cover_every_supported_width() -> None:
+    row = _row("medium", 100, 20)
+    row["case_id"] = "medium-b4-c2048-r0"
+    row["component_ns"] = profile.components_from_timeline_step(
+        _timeline_step(),
+    )
+
+    cost_rows = profile.build_optimistic_cost_rows([row])
+
+    assert [item["burst_width"] for item in cost_rows] == [1, 2, 4, 8]
+    assert [item["duration_ns"] for item in cost_rows] == [
+        100,
+        160,
+        280,
+        520,
+    ]
+
+
+def test_frozen_case_inventory_covers_loads_batches_and_arrivals() -> None:
+    cases = profile.build_frozen_case_inventory("a" * 40)
+
+    assert len(cases) == 12
+    assert {
+        (case.load, case.batch_size)
+        for case in cases
+    } == {
+        (load, batch_size)
+        for load in ("low", "medium", "high")
+        for batch_size in (1, 2, 4, 8)
+    }
+    assert all(case.context_bucket == 2048 for case in cases)
+    assert all(case.burst_width == 1 for case in cases)
+    assert all(
+        len(case.arrival_offsets_ns) == case.batch_size
+        for case in cases
+    )
+    assert all(
+        tuple(sorted(case.arrival_offsets_ns))
+        == case.arrival_offsets_ns
+        for case in cases
+    )
+    assert {
+        case.arrival_offsets_ns
+        for case in cases
+        if case.batch_size == 4
+    } == {
+        (0, 4_000_000, 8_000_000, 12_000_000),
+        (0, 1_000_000, 2_000_000, 3_000_000),
+        (0, 0, 0, 0),
+    }
+
+
+def test_timeline_components_do_not_double_count_async_cuda() -> None:
+    components = profile.components_from_timeline_step(
+        _timeline_step(wall_ns=150),
+        target_cuda_ns=120,
+    )
+
+    assert components == {
+        "target_cuda": 120,
+        "graph_launch_gap": 6,
+        "scheduler": 19,
+        "token_d2h_publication": 0,
+        "batch_binding": 5,
+        "unattributed": 0,
+    }
+    assert sum(components.values()) == 150
+
+
+class _FakeStepTimer:
+    def __init__(self, values):
+        self._values = iter(values)
+
+    def measure(self, operation):
+        result = operation()
+        return result, next(self._values)
+
+
+class _FakeProfileEngine:
+    def __init__(self):
+        self._step = 0
+        self._finished = False
+        self.added = []
+        self.last_step_observation = None
+
+    def add_request(self, prompt, sampling_params):
+        self.added.append((list(prompt), sampling_params))
+
+    def is_finished(self):
+        return self._finished
+
+    def step(self):
+        self._step += 1
+        self._finished = self._step == 5
+        self.last_step_observation = {
+            "command_timeline_step": _timeline_step(wall_ns=100),
+            "memory": {"cuda_reserved_bytes": 4096},
+        }
+        return [], (-1 if self._step == 1 else -2)
+
+
+def test_real_case_profiler_uses_timeline_cuda_and_offered_arrivals() -> None:
+    case = profile.CeilingProfileCase(
+        case_id="medium-b2-c2048-r0",
+        load="medium",
+        batch_size=2,
+        context_bucket=2048,
+        burst_width=1,
+        source_commit="a" * 40,
+        arrival_offsets_ns=(0, 1_000_000),
+        requested_output_tokens=8,
+        warmup_steps=1,
+        measured_steps=2,
+    )
+    engine = _FakeProfileEngine()
+    clock_values = iter((
+        0,
+        0,
+        100,
+        200,
+        1_000_000,
+        1_000_100,
+        1_000_200,
+        1_000_300,
+        1_000_400,
+        1_000_500,
+        1_000_600,
+        1_000_700,
+        1_000_800,
+        1_000_900,
+        1_001_000,
+        1_001_100,
+    ))
+    sleeps = []
+
+    rows = profile.run_profile_case(
+        engine,
+        case,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        step_timer=_FakeStepTimer((60, 61, 62, 63, 64)),
+        clock_ns=lambda: next(clock_values),
+        sleep=lambda seconds: sleeps.append(seconds),
+    )
+
+    assert sleeps == []
+    assert len(engine.added) == 2
+    assert engine.is_finished() is True
+    assert len(rows) == 2
+    assert [row["component_ns"]["target_cuda"] for row in rows] == [
+        62,
+        63,
+    ]
+    assert all(
+        row["offered_arrival_offsets_ns"] == [0, 1_000_000]
+        for row in rows
+    )
+    assert all(row["committed_tokens"] == 2 for row in rows)
+    assert all(row["cuda_reserved_bytes"] == 4096 for row in rows)
+
+
+def test_run_inventory_writes_source_bound_five_file_bundle(
+    tmp_path: Path,
+) -> None:
+    cases = profile.build_frozen_case_inventory("a" * 40)
+    source_identity = {
+        "source_commit": "a" * 40,
+        "source_patch_sha256": "b" * 64,
+        "model": "Qwen3-0.6B",
+        "checkpoint_sha256": "c" * 64,
+        "gpu_uuid": "GPU-a",
+        "gpu_name": "NVIDIA A100 80GB PCIe",
+        "tensor_parallel_size": 1,
+        "dtype": "float16",
+        "config_sha256": "d" * 64,
+    }
+    engines = []
+
+    def engine_factory(_model, **_config):
+        engine = SimpleNamespace(exit=lambda: None)
+        engines.append(engine)
+        return engine
+
+    def case_runner(_engine, case, **_kwargs):
+        removable = {"low": 5, "medium": 20, "high": 25}[case.load]
+        row = _row(case.load, 100, removable)
+        row.update({
+            "case_id": case.case_id + "-s0",
+            "batch_size": case.batch_size,
+            "context_bucket": case.context_bucket,
+            "burst_width": case.burst_width,
+            "offered_arrival_offsets_ns": list(
+                case.arrival_offsets_ns
+            ),
+        })
+        return [row]
+
+    receipt = profile.run_profile_inventory(
+        model="/models/qwen",
+        cases=cases,
+        output_dir=tmp_path,
+        source_identity=source_identity,
+        engine_factory=engine_factory,
+        case_runner=case_runner,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        step_timer_factory=lambda _engine: object(),
+    )
+
+    assert receipt["classification"] == "CONTINUE_RUNTIME"
+    assert len(engines) == 1
+    assert {
+        path.name for path in tmp_path.iterdir()
+    } == {
+        "raw_rows.jsonl",
+        "cost_table.json",
+        "ceiling_summary.json",
+        "source_manifest.json",
+        "remote_verify.json",
+    }
+    manifest = json.loads(
+        (tmp_path / "source_manifest.json").read_text()
+    )
+    assert manifest == source_identity
+
+
+def test_cli_supports_run_and_verify_modes(monkeypatch, tmp_path: Path) -> None:
+    calls = []
+    monkeypatch.setattr(
+        profile,
+        "run_cli",
+        lambda args: calls.append(("run", args.run_tag)) or 0,
+    )
+    monkeypatch.setattr(
+        profile,
+        "verify_cli",
+        lambda args: calls.append(("verify", args.artifact_dir)) or 0,
+    )
+
+    assert profile.main([
+        "--mode",
+        "run",
+        "--model",
+        "/models/qwen",
+        "--run-tag",
+        "stage0-r1",
+        "--source-commit",
+        "a" * 40,
+        "--output-dir",
+        str(tmp_path / "run"),
+    ]) == 0
+    assert profile.main([
+        "--mode",
+        "verify",
+        "--artifact-dir",
+        str(tmp_path / "run"),
+        "--output",
+        str(tmp_path / "verify.json"),
+    ]) == 0
+    assert calls == [
+        ("run", "stage0-r1"),
+        ("verify", str(tmp_path / "run")),
+    ]

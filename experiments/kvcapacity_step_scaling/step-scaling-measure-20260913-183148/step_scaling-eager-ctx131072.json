@@ -1,0 +1,77 @@
+{
+  "configuration": {
+    "enforce_eager": true,
+    "gpu_memory_utilization": 0.85,
+    "kv_bytes_per_token": 147456,
+    "measured_steps": 24,
+    "model_path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+    "seed": 20260913,
+    "warmup_steps": 8
+  },
+  "engines": [
+    {
+      "context_length": 131072,
+      "identity": {
+        "captured_graph_batches": null,
+        "cpu_offload": null,
+        "enforce_eager": null,
+        "gpu_memory_utilization": null,
+        "head_dim": null,
+        "kv_capacity_bytes": null,
+        "kv_capacity_tokens": null,
+        "kv_quant_bits": null,
+        "kvcache_block_size": null,
+        "max_model_len": null,
+        "max_num_batched_tokens": null,
+        "max_num_seqs": null,
+        "multi_sequence_cuda_graphs": null,
+        "num_hidden_layers": null,
+        "num_key_value_heads": null,
+        "num_kvcache_blocks": null,
+        "vocab_size": null
+      }
+    }
+  ],
+  "environment": {
+    "hostname": "n232-195-203",
+    "platform": "Linux-5.15.120.bsk.6-amd64-x86_64-with-glibc2.28",
+    "python": "3.11.15"
+  },
+  "grid": [
+    [
+      131072,
+      1
+    ],
+    [
+      131072,
+      2
+    ]
+  ],
+  "grid_is_preregistered": false,
+  "grid_spec": "131072:1,2",
+  "payload_sha256": "3c53df188c5562f715e139cb43e5a8c3bf86d42cfa647fbbffcc015c42f052e8",
+  "preregistered_grid_spec": "16384:1,2,4,8,16;32768:1,2,4,8;65536:1,2,4;131072:1,2",
+  "product_collision_groups": {},
+  "purpose": "Validate the batch term of the Stage 0 decode-step model step_ms(L, B) = c0 + c1 * L * B on the tinyvllm serving path.",
+  "rows": [
+    {
+      "batch": 1,
+      "context_length": 131072,
+      "kv_bytes": 19327352832,
+      "kv_tokens": 131072,
+      "measured": false,
+      "skipped_reason": "measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=131072, max_tokens=34, total_tokens=131106, max_model_len=40960",
+      "step": null
+    },
+    {
+      "batch": 2,
+      "context_length": 131072,
+      "kv_bytes": 38654705664,
+      "kv_tokens": 262144,
+      "measured": false,
+      "skipped_reason": "measurement failed: ValueError: request length exceeds max_model_len: prompt_tokens=131072, max_tokens=34, total_tokens=131106, max_model_len=40960",
+      "step": null
+    }
+  ],
+  "schema": "kvcapacity-gate-a-step-scaling/1"
+}

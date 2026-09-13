@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tarfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -233,3 +234,260 @@ def test_resume_receipt_requires_exact_source_and_terminal_hashes() -> None:
             source_commit="a" * 40,
             paths=paths,
         )
+
+
+def test_wait_for_clean_a100_retries_transient_remote_failure(
+    monkeypatch,
+) -> None:
+    calls = []
+    selected = _gpu(3)
+    monkeypatch.setattr(
+        remote,
+        "validate_kerberos",
+        lambda **_kwargs: calls.append("kerberos"),
+    )
+
+    def query():
+        calls.append("query")
+        if calls.count("query") == 1:
+            raise RuntimeError("transient SSH failure")
+        return [selected]
+
+    monkeypatch.setattr(remote.base, "query_remote_gpu_rows", query)
+    monkeypatch.setattr(remote.time, "sleep", lambda _seconds: None)
+    monotonic = iter((0.0, 0.0, 0.0)).__next__
+    monkeypatch.setattr(remote.time, "monotonic", monotonic)
+
+    inventory, gpu = remote.wait_for_clean_a100(
+        timeout_seconds=60,
+        poll_interval_seconds=1,
+    )
+
+    assert inventory == [selected]
+    assert gpu == selected
+    assert calls == ["kerberos", "query", "kerberos", "query"]
+
+
+def test_worker_plan_seals_terminal_hashes_for_immutable_resume() -> None:
+    paths = remote.build_remote_paths("20260913-stage0-seal-r1")
+    plan = remote.build_worker_plan(
+        paths=paths,
+        run_tag="20260913-stage0-seal-r1",
+        source_commit="a" * 40,
+        gpu=_gpu(1),
+    )
+    joined = "\n".join(plan["commands"])
+
+    assert paths["controller"] in joined
+    assert "resume.json" in joined
+    assert "slo-cohort-burst.remote-resume.v1" in joined
+    assert all(name in joined for name in remote.REQUIRED_TERMINAL_FILES)
+
+
+def _write_compact_bundle(path: Path) -> dict[str, str]:
+    path.mkdir(parents=True)
+    for name in remote.REQUIRED_TERMINAL_FILES:
+        (path / name).write_text("{}\n", encoding="utf-8")
+    (path / "runner.log").write_text("complete\n", encoding="utf-8")
+    return {
+        name: __import__("hashlib").sha256(
+            (path / name).read_bytes()
+        ).hexdigest()
+        for name in remote.REQUIRED_TERMINAL_FILES
+    }
+
+
+def test_controller_fresh_run_executes_source_exact_flow(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls = []
+    paths = remote.build_remote_paths("20260913-stage0-fresh-r1")
+    selected = _gpu(2)
+    receipt = {
+        "schema_version": "slo-cohort-burst.remote-resume.v1",
+        "status": "COMPLETE",
+        "run_tag": "20260913-stage0-fresh-r1",
+        "source_commit": "a" * 40,
+        "remote_paths": paths,
+        "artifact_sha256": {},
+    }
+    monkeypatch.setattr(
+        remote,
+        "require_pushed_head",
+        lambda _root: calls.append("head") or "a" * 40,
+    )
+    monkeypatch.setattr(
+        remote,
+        "validate_kerberos",
+        lambda **_kwargs: calls.append("kerberos") or {"status": "PASS"},
+    )
+    resume_results = iter((None, receipt))
+
+    def probe_resume(**_kwargs):
+        calls.append("resume")
+        return next(resume_results)
+
+    monkeypatch.setattr(remote, "probe_resume_receipt", probe_resume)
+    monkeypatch.setattr(
+        remote,
+        "committed_source_archive",
+        lambda *_args: calls.append("archive") or b"tar",
+    )
+    monkeypatch.setattr(
+        remote,
+        "upload_source_archive",
+        lambda **_kwargs: calls.append("upload") or paths["staging"] + "/source",
+    )
+    monkeypatch.setattr(
+        remote,
+        "wait_for_clean_a100",
+        lambda **_kwargs: calls.append("wait") or ([selected], selected),
+    )
+    monkeypatch.setattr(
+        remote,
+        "validate_selected_gpu_still_clean",
+        lambda gpu: calls.append("recheck") or gpu,
+    )
+    monkeypatch.setattr(
+        remote,
+        "run_worker_plan",
+        lambda _plan: calls.append("worker") or {"status": "COMPLETE"},
+    )
+
+    def download(**_kwargs):
+        calls.append("download")
+        destination = tmp_path / "20260913-stage0-fresh-r1"
+        receipt["artifact_sha256"] = _write_compact_bundle(
+            destination
+        )
+        return destination
+
+    monkeypatch.setattr(remote, "download_compact_bundle", download)
+    monkeypatch.setattr(
+        remote,
+        "verify_local_bundle",
+        lambda _path: calls.append("verify") or {
+            "verified": True,
+            "classification": "CONTINUE_RUNTIME",
+        },
+    )
+    monkeypatch.setattr(
+        remote,
+        "write_local_controller_receipt",
+        lambda **_kwargs: calls.append("receipt") or (
+            tmp_path / "controller.json"
+        ),
+    )
+    args = SimpleNamespace(
+        stage="ceiling",
+        tag="20260913-stage0-fresh-r1",
+        source_commit=None,
+        local_artifact_root=str(tmp_path),
+        gpu_timeout_seconds=60,
+        poll_interval_seconds=1,
+    )
+
+    result = remote.run_controller(args)
+
+    assert result["status"] == "COMPLETE"
+    assert result["resumed"] is False
+    assert result["classification"] == "CONTINUE_RUNTIME"
+    assert calls == [
+        "head",
+        "kerberos",
+        "resume",
+        "archive",
+        "upload",
+        "wait",
+        "kerberos",
+        "recheck",
+        "worker",
+        "resume",
+        "download",
+        "verify",
+        "receipt",
+    ]
+
+
+def test_controller_valid_resume_skips_upload_gpu_and_worker(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls = []
+    tag = "20260913-stage0-resume-r2"
+    paths = remote.build_remote_paths(tag)
+    receipt = {
+        "schema_version": "slo-cohort-burst.remote-resume.v1",
+        "status": "COMPLETE",
+        "run_tag": tag,
+        "source_commit": "a" * 40,
+        "remote_paths": paths,
+        "artifact_sha256": {},
+    }
+    monkeypatch.setattr(
+        remote,
+        "require_pushed_head",
+        lambda _root: "a" * 40,
+    )
+    monkeypatch.setattr(
+        remote,
+        "validate_kerberos",
+        lambda **_kwargs: {"status": "PASS"},
+    )
+    monkeypatch.setattr(
+        remote,
+        "probe_resume_receipt",
+        lambda **_kwargs: calls.append("resume") or receipt,
+    )
+    monkeypatch.setattr(
+        remote,
+        "committed_source_archive",
+        lambda *_args: pytest.fail("archive must be skipped"),
+    )
+    monkeypatch.setattr(
+        remote,
+        "wait_for_clean_a100",
+        lambda **_kwargs: pytest.fail("GPU wait must be skipped"),
+    )
+    monkeypatch.setattr(
+        remote,
+        "run_worker_plan",
+        lambda _plan: pytest.fail("worker must be skipped"),
+    )
+
+    def download(**_kwargs):
+        calls.append("download")
+        destination = tmp_path / tag
+        receipt["artifact_sha256"] = _write_compact_bundle(
+            destination
+        )
+        return destination
+
+    monkeypatch.setattr(remote, "download_compact_bundle", download)
+    monkeypatch.setattr(
+        remote,
+        "verify_local_bundle",
+        lambda _path: calls.append("verify") or {
+            "verified": True,
+            "classification": "NO_GO_CEILING",
+        },
+    )
+    monkeypatch.setattr(
+        remote,
+        "write_local_controller_receipt",
+        lambda **_kwargs: tmp_path / "controller.json",
+    )
+
+    result = remote.run_controller(SimpleNamespace(
+        stage="ceiling",
+        tag=tag,
+        source_commit=None,
+        local_artifact_root=str(tmp_path),
+        gpu_timeout_seconds=60,
+        poll_interval_seconds=1,
+    ))
+
+    assert result["resumed"] is True
+    assert result["classification"] == "NO_GO_CEILING"
+    assert calls == ["resume", "download", "verify"]

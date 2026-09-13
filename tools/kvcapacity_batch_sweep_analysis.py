@@ -50,9 +50,17 @@ from kvcapacity_step_scaling_verdict import (  # noqa: E402
 # here rather than chosen after looking at the numbers.
 SATURATION_MARGINAL_FRACTION = 0.25
 
-# Throughput is called flat once an extra sequence adds less than this fraction
-# of a proportional gain, i.e. doubling B yields less than this much more work.
-MIN_USEFUL_THROUGHPUT_GAIN = 0.10
+# Batch 1 runs a CUDA graph fast path on the default execution path: GATE A
+# measured 15-18 ms at B=1 against 43-50 ms at B=2. Comparing across that boundary
+# produces a fake collapse in marginal throughput, so a sweep whose B=1 cell is
+# this much cheaper than its B=2 cell is analysed from B=2 upwards and reports
+# B=1 separately. Same threshold as the GATE A verdict, deliberately.
+REGIME_STEP_RATIO = 1.30
+
+# Cells whose spread exceeds this fraction of their median are not steady
+# decoding. GATE A rejects them; a sweep flags them and keeps them out of the fits
+# rather than letting one contaminated cell set the shape of the curve.
+MAX_DISPERSION_RATIO = 0.25
 
 
 def load_payload(paths):
@@ -75,6 +83,63 @@ def group_by_context(points):
         context: sorted(rows, key=lambda row: row["batch"])
         for context, rows in sorted(grouped.items())
     }
+
+
+def regime_boundary(rows):
+    """Detect the batch-1 CUDA graph fast path at one context length."""
+
+    by_batch = {row["batch"]: row for row in rows}
+    first, second = by_batch.get(1), by_batch.get(2)
+    if not first or not second:
+        return None
+    ratio = second["step_ms"] / first["step_ms"] if first["step_ms"] else None
+    if ratio is None or ratio < REGIME_STEP_RATIO:
+        return None
+    return {
+        "batch1_step_ms": first["step_ms"],
+        "batch2_step_ms": second["step_ms"],
+        "ratio": ratio,
+        "note": (
+            "batch 1 runs a different execution path, so the sweep is read from "
+            "batch 2 upwards"
+        ),
+    }
+
+
+def analysable_rows(rows):
+    """Drop cells that cannot carry an argument, and say which and why."""
+
+    kept, dropped = [], []
+    for row in rows:
+        ratio = row.get("dispersion_ratio")
+        if ratio is not None and ratio > MAX_DISPERSION_RATIO:
+            dropped.append(
+                {
+                    "batch": row["batch"],
+                    "reason": (
+                        "spread %.0f%% of the median, not steady decoding"
+                        % (ratio * 100.0)
+                    ),
+                }
+            )
+            continue
+        kept.append(row)
+    boundary = regime_boundary(kept)
+    if boundary is not None:
+        for row in list(kept):
+            if row["batch"] == 1:
+                kept.remove(row)
+                dropped.append(
+                    {
+                        "batch": 1,
+                        "reason": (
+                            "CUDA graph fast path, %.3f ms against %.3f ms at "
+                            "batch 2" % (boundary["batch1_step_ms"],
+                                         boundary["batch2_step_ms"])
+                        ),
+                    }
+                )
+    return kept, dropped, boundary
 
 
 def throughput_rows(rows):
@@ -240,10 +305,27 @@ def capacity_reading(contexts):
 
 def build_report(payload):
     points, rejected = extract_points(payload)
-    contexts = {
-        context: throughput_rows(rows)
-        for context, rows in group_by_context(points).items()
-    }
+    contexts = {}
+    excluded = {}
+    boundaries = {}
+    for context, rows in group_by_context(points).items():
+        priced = throughput_rows(rows)
+        kept, dropped, boundary = analysable_rows(priced)
+        contexts[context] = throughput_rows(
+            [
+                {
+                    "context_length": row["context_length"],
+                    "batch": row["batch"],
+                    "step_ms": row["step_ms"],
+                    "step_stdev_ms": row["step_stdev_ms"],
+                    "drift_ratio": row["drift_ratio"],
+                    "dispersion_ratio": row["dispersion_ratio"],
+                }
+                for row in kept
+            ]
+        )
+        excluded[context] = dropped
+        boundaries[context] = boundary
     fits = {
         context: fit_batch_terms(rows) for context, rows in contexts.items()
     }
@@ -258,6 +340,8 @@ def build_report(payload):
         "grid_spec": payload.get("grid_spec"),
         "grid_is_preregistered": payload.get("grid_is_preregistered"),
         "contexts": contexts,
+        "excluded_cells": excluded,
+        "regime_boundary": boundaries,
         "batch_fits": fits,
         "saturation": sats,
         "capacity_reading": capacity_reading(contexts),
@@ -298,6 +382,10 @@ def render(report):
                     "-" if marginal_ms is None else f"{marginal_ms:.3f}",
                     "-" if marginal_tp is None else f"{marginal_tp:.3f}",
                 )
+            )
+        for dropped in (report.get("excluded_cells") or {}).get(context, []):
+            lines.append(
+                "  excluded B=%s: %s" % (dropped["batch"], dropped["reason"])
             )
         sat = report["saturation"].get(context)
         if sat:

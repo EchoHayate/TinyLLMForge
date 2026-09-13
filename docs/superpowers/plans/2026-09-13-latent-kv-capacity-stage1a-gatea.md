@@ -67,3 +67,69 @@ measurably different amounts depending on how it is split between L and B.
 
 The second reading is the more likely one and should be checked first, because it decides
 whether GATE B is worth building at all.
+
+---
+
+# 附录：高并发 sweep（2026-09-13 20:20）——容量轴没有死
+
+GATE A 只杀掉了延迟轴。容量轴的唯一真闸门是：**并发继续加上去，吞吐还涨不涨？**
+如果吞吐在撞到 KV 墙之前就饱和，那么"压缩 KV 以装下更多序列"这件事本身无收益，
+GATE B 不值得建。
+
+Run: `experiments/kvcapacity_step_scaling/step-scaling-sweep-20260913-202001`
+Grid（固定 L，把 B 推到 KV 预算边缘）：`2048: 1..128`、`8192: 1..40`，eager 与 graph 双路径。
+工具：`tools/kvcapacity_batch_sweep_analysis.py`（不是 GATE A 判定器；sweep 不是预注册网格，
+不能给出 GATE A 的 PASS/FAIL）。
+
+## 读数：CAPACITY OPEN（两条路径一致）
+
+| L | 最大 B | 该点单步 | 吞吐 | 全程扩展效率 | 每序列成本 a |
+|---|---|---|---|---|---|
+| 2048 | 128 | 67.07 ms | 1908 seq/s | 0.58 of proportional | 0.215 ms/seq (eager) |
+| 8192 | 40 | 71.69 ms | 558 seq/s | 0.55 of proportional | 0.774 ms/seq (eager) |
+
+吞吐在最大并发处**仍在上升**，峰值就落在最大 B 上，没有出现拐头。
+
+## 两个污染源必须先剔掉，否则读数是假的
+
+第一次 sweep 的 graph 路径读出 CAPACITY WEAK，纯属假象：
+
+- **B=1 是 CUDA graph 快路径**（2048 下 12.980 ms 对 B=2 的 43.142 ms）。跨这条边界算边际吞吐
+  会得到负值，把后面每一步都染成"崩塌"。分析工具现在沿用 GATE A 的 1.30 阈值检出该边界，
+  从 B=2 起读，B=1 单独报告。剔除后 graph 路径同样是 CAPACITY OPEN，扩展效率 0.65。
+- **L=2048 B=96 是污染格**（stdev 111.623 ms 对 median 58.402 ms，离散度 191%）。已按
+  GATE A 的 25% 阈值排除在拟合之外。
+
+两者都写成回归测试（`tools/test_kvcapacity_batch_sweep_contaminants.py`），用的是本次跑出的真实数值。
+
+## 每序列成本的结构，与 GATE A 自洽
+
+`a(L) ≈ c1 * L + a_pure`：
+
+```
+L=2048: 0.215 ms/seq   ≈ 0.0837us * 2048  (0.171) + ~0.04
+L=8192: 0.774 ms/seq   ≈ 0.0837us * 8192  (0.686) + ~0.09
+```
+
+即高并发下的主导项仍是 KV 常驻，而不是与 KV 无关的固定 per-seq 开销——这对容量论证是利好。
+曲率没有定论：eager 在 L=8192 B=40 处 B² 项占 13.8%，graph 在同点只占 0.8%，两条路径不一致，
+这个量级还不能当成事实。
+
+## 对 GATE B 的意义：天花板约 3.4×，而且是实测而非外推
+
+L=8192 当前的墙在 B=40（KV 预算 ~52 GiB）。**L=2048 的那条曲线在物理上就是"8192 被压 4× 后"
+的类比**：同样的 KV 字节数，序列数 4 倍。它实测给出 B=128 时 1908 seq/s、单步 67 ms，
+对比 8192 现在的 558 seq/s，即 **约 3.4× 吞吐**，代价是单步从 71.7 ms 降到 67.1 ms（不升反降）。
+
+必须承认这个类比高估：MLA 式压缩省的是 KV 字节，但会加回上投影计算，且逻辑上下文仍是 8192，
+注意力的计算量不会跟着字节一起降。所以 3.4× 是上界，不是预期值。
+
+## 结论与下一步
+
+- 延迟轴：死。最好情况 -26%（最大负载）/ -9%（常见负载），不值得。
+- 容量轴：**活**。吞吐在 KV 墙处仍在涨，主导项是 KV 常驻，压缩换并发有约 3.4× 的上界。
+- 因此 GATE B（`phi_probe` / head slicing）值得建，但必须换目标函数：
+  **考核吞吐（seq/s，固定 KV 字节预算），不再考核单步延迟**。Stage 0 那套按单步延迟算 break-even
+  的框架应当废弃重写，`c0=13.05ms / c1=0.151us` 两个常数一并作废。
+- 建 GATE B 前还欠一件事：把 sweep 推到真正的 KV 墙（2048 的墙约在 B≈176，本次网格只到 128
+  就停了，是设计停的不是被拒绝停的），确认吞吐在墙上仍未拐头。

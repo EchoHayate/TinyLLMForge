@@ -1,0 +1,227 @@
+{
+  "configuration": {
+    "enforce_eager": false,
+    "gpu_memory_utilization": 0.85,
+    "kv_bytes_per_token": 147456,
+    "measured_steps": 8,
+    "model_path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-0___6B",
+    "seed": 20260913,
+    "warmup_steps": 8
+  },
+  "engines": [
+    {
+      "context_length": 1024,
+      "identity": {
+        "enforce_eager": null,
+        "gpu_memory_utilization": null,
+        "head_dim": null,
+        "kv_capacity_bytes": null,
+        "kv_capacity_tokens": null,
+        "kvcache_block_size": null,
+        "max_model_len": null,
+        "max_num_batched_tokens": null,
+        "max_num_seqs": null,
+        "num_hidden_layers": null,
+        "num_key_value_heads": null,
+        "num_kvcache_blocks": null,
+        "vocab_size": null
+      }
+    },
+    {
+      "context_length": 2048,
+      "error": "engine construction failed: ValueError: trying to initialize the default process group twice!",
+      "identity": null
+    },
+    {
+      "context_length": 4096,
+      "error": "engine construction failed: ValueError: trying to initialize the default process group twice!",
+      "identity": null
+    }
+  ],
+  "environment": {
+    "hostname": "n232-195-203",
+    "platform": "Linux-5.15.120.bsk.6-amd64-x86_64-with-glibc2.28",
+    "python": "3.11.15"
+  },
+  "grid": [
+    [
+      1024,
+      1
+    ],
+    [
+      1024,
+      2
+    ],
+    [
+      1024,
+      4
+    ],
+    [
+      2048,
+      1
+    ],
+    [
+      2048,
+      2
+    ],
+    [
+      4096,
+      1
+    ]
+  ],
+  "grid_is_preregistered": false,
+  "grid_spec": "1024:1,2,4;2048:1,2;4096:1",
+  "payload_sha256": "28f98c822c626ab08b633194a431619a6becd153a15e576f84c7d64419db539d",
+  "preregistered_grid_spec": "16384:1,2,4,8,16;32768:1,2,4,8;65536:1,2,4;131072:1,2",
+  "product_collision_groups": {
+    "2048": [
+      [
+        1024,
+        2
+      ],
+      [
+        2048,
+        1
+      ]
+    ],
+    "4096": [
+      [
+        1024,
+        4
+      ],
+      [
+        2048,
+        2
+      ],
+      [
+        4096,
+        1
+      ]
+    ]
+  },
+  "purpose": "Validate the batch term of the Stage 0 decode-step model step_ms(L, B) = c0 + c1 * L * B on the tinyvllm serving path.",
+  "rows": [
+    {
+      "batch": 1,
+      "context_length": 1024,
+      "decode_steps_by_observed_batch": {
+        "1": 17
+      },
+      "kv_bytes": 150994944,
+      "kv_tokens": 1024,
+      "measured": true,
+      "observed_batch_is_stable": true,
+      "prefill_steps": 1,
+      "prefill_tokens_expected": 1024,
+      "prefill_tokens_match": true,
+      "prefill_tokens_total": 1024,
+      "prompt_digests": [
+        "3dadfc95e79d99550ceb1304a4e10a343449abcc4a784b16ad999c8541cd73e4"
+      ],
+      "skipped_reason": null,
+      "step": {
+        "count": 8,
+        "max_ms": 3.835586830973625,
+        "mean_ms": 3.5333300475031137,
+        "median_ms": 3.455701982602477,
+        "min_ms": 3.420391120016575,
+        "p10_ms": 3.420391120016575,
+        "p90_ms": 3.775026649236679,
+        "stdev_ms": 0.1583456763616744
+      },
+      "target_batch_step_count": 17
+    },
+    {
+      "batch": 2,
+      "context_length": 1024,
+      "decode_steps_by_observed_batch": {
+        "2": 17
+      },
+      "kv_bytes": 301989888,
+      "kv_tokens": 2048,
+      "measured": true,
+      "observed_batch_is_stable": true,
+      "prefill_steps": 1,
+      "prefill_tokens_expected": 2048,
+      "prefill_tokens_match": true,
+      "prefill_tokens_total": 2048,
+      "prompt_digests": [
+        "8138ed6583c84f376f4e8f14c151df6c481a3734cd7e6d4b7f1c761a898645ea",
+        "afe371651ab65449b34daff7fd7f6798afc7c3d0ae0576e4ed8ed1af212c7d7d"
+      ],
+      "skipped_reason": null,
+      "step": {
+        "count": 8,
+        "max_ms": 32.17877959832549,
+        "mean_ms": 31.38492035213858,
+        "median_ms": 31.3257675152272,
+        "min_ms": 30.949721112847328,
+        "p10_ms": 30.949721112847328,
+        "p90_ms": 31.735386233776808,
+        "stdev_ms": 0.39745435148756203
+      },
+      "target_batch_step_count": 17
+    },
+    {
+      "batch": 4,
+      "context_length": 1024,
+      "decode_steps_by_observed_batch": {
+        "4": 17
+      },
+      "kv_bytes": 603979776,
+      "kv_tokens": 4096,
+      "measured": true,
+      "observed_batch_is_stable": true,
+      "prefill_steps": 1,
+      "prefill_tokens_expected": 4096,
+      "prefill_tokens_match": true,
+      "prefill_tokens_total": 4096,
+      "prompt_digests": [
+        "8ff60b890519622e1ca13acf69ea2427d1b6ce7db969654d92501ec245e2a345",
+        "612eaf02741fe7607aeaa5b63efaae132ab269ca4ca5535def6fe694e0a7a753",
+        "6d7416fd325c79ef2ce75e5d833d5ca5da908c559c6ef9706df9b5e890805364",
+        "d5c7eb8e6f46d50e7ea498d1f08cce96c12d9995ec37b68c1205f2711ea95169"
+      ],
+      "skipped_reason": null,
+      "step": {
+        "count": 8,
+        "max_ms": 33.28474285081029,
+        "mean_ms": 31.579496688209474,
+        "median_ms": 31.28089616075158,
+        "min_ms": 31.080964021384716,
+        "p10_ms": 31.080964021384716,
+        "p90_ms": 31.759446021169424,
+        "stdev_ms": 0.6762465078118521
+      },
+      "target_batch_step_count": 17
+    },
+    {
+      "batch": 1,
+      "context_length": 2048,
+      "kv_bytes": 301989888,
+      "kv_tokens": 2048,
+      "measured": false,
+      "skipped_reason": "engine construction failed: ValueError: trying to initialize the default process group twice!",
+      "step": null
+    },
+    {
+      "batch": 2,
+      "context_length": 2048,
+      "kv_bytes": 603979776,
+      "kv_tokens": 4096,
+      "measured": false,
+      "skipped_reason": "engine construction failed: ValueError: trying to initialize the default process group twice!",
+      "step": null
+    },
+    {
+      "batch": 1,
+      "context_length": 4096,
+      "kv_bytes": 603979776,
+      "kv_tokens": 4096,
+      "measured": false,
+      "skipped_reason": "engine construction failed: ValueError: trying to initialize the default process group twice!",
+      "step": null
+    }
+  ],
+  "schema": "kvcapacity-gate-a-step-scaling/1"
+}

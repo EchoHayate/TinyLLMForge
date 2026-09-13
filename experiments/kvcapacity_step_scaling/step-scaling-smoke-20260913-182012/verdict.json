@@ -1,0 +1,126 @@
+{
+  "batch_term_at_largest_batch": null,
+  "checks": [
+    {
+      "detail": "M1 R^2 0.5700 against threshold 0.98",
+      "name": "m1_r_squared",
+      "passed": false
+    },
+    {
+      "detail": "no equal-product group was measured, so this check is vacuous",
+      "name": "collision_consistency",
+      "passed": true,
+      "vacuous": true
+    },
+    {
+      "detail": "M2 could not be identified from the measured grid",
+      "name": "batch_term_share",
+      "passed": true,
+      "vacuous": true
+    },
+    {
+      "detail": "the quadratic term explains 475.6% of the step at L=1024, B=4, against a tolerance of 10%",
+      "name": "curvature_share",
+      "passed": false
+    },
+    {
+      "detail": "3 distinct batches measured; at least 3 are needed to say anything about batch scaling",
+      "name": "batch_coverage",
+      "passed": true
+    }
+  ],
+  "collision_groups": [],
+  "consequence": "This run used a narrowed grid rather than the pre-registered one, so it can only demonstrate that the measurement works. It cannot decide GATE A. Consequence recorded from the checks: The Stage 0 decode-step model does not describe the serving path. The capacity numbers in the Stage 0 artifact must be refit with the measured form before the latent KV line continues. Do not proceed to GATE B on the old constants.",
+  "curvature_at_largest_product": {
+    "batch": 4,
+    "context_length": 1024,
+    "curvature_term_ms": -148.76000645259413,
+    "kv_tokens": 4096,
+    "predicted_step_ms": 31.280896160751666,
+    "share": 4.755618435230261
+  },
+  "grid_is_preregistered": false,
+  "grid_spec": "1024:1,2,4;2048:1,2;4096:1",
+  "measured_points": [
+    {
+      "batch": 1,
+      "context_length": 1024,
+      "kv_tokens": 1024,
+      "sample_count": 8,
+      "step_ms": 3.455701982602477,
+      "step_stdev_ms": 0.1583456763616744
+    },
+    {
+      "batch": 2,
+      "context_length": 1024,
+      "kv_tokens": 2048,
+      "sample_count": 8,
+      "step_ms": 31.3257675152272,
+      "step_stdev_ms": 0.39745435148756203
+    },
+    {
+      "batch": 4,
+      "context_length": 1024,
+      "kv_tokens": 4096,
+      "sample_count": 8,
+      "step_ms": 31.28089616075158,
+      "step_stdev_ms": 0.6762465078118521
+    }
+  ],
+  "model_m1": {
+    "c0_ms": 3.478137659840286,
+    "c1_us_per_token": 7.760596076877846,
+    "form": "step_ms = c0 + c1 * L * B",
+    "parameters": 2,
+    "r_squared": 0.5700471672333256,
+    "residual_sum_squares": 222.28332106919507
+  },
+  "model_m2": {
+    "error": "design matrix is singular; the grid cannot identify this model"
+  },
+  "model_m3": {
+    "c0_ms": -43.00936435659527,
+    "c1_us_per_token": 54.455631584458274,
+    "c2_ms_per_token_squared": -8.86678734139169e-06,
+    "form": "step_ms = c0 + c1 * L * B + c2 * (L * B)^2",
+    "parameters": 3,
+    "r_squared": 1.0,
+    "regressor_scale": 100000.0,
+    "residual_sum_squares": 3.731122755078133e-25
+  },
+  "rejected_cells": [
+    {
+      "batch": 1,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: trying to initialize the default process group twice!"
+    },
+    {
+      "batch": 2,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: trying to initialize the default process group twice!"
+    },
+    {
+      "batch": 1,
+      "context_length": 4096,
+      "reason": "engine construction failed: ValueError: trying to initialize the default process group twice!"
+    }
+  ],
+  "report_sha256": "b7490113664abd9cffc413de6ec44e20e6a0735da7d71ed6fbb7cebb0fc46997",
+  "schema": "kvcapacity-gate-a-verdict/1",
+  "source_payload_sha256": "28f98c822c626ab08b633194a431619a6becd153a15e576f84c7d64419db539d",
+  "stage0_comparison": {
+    "c0_ratio": 0.266523958608451,
+    "c1_ratio": 51.39467600581355,
+    "measured_c0_ms": 3.478137659840286,
+    "measured_c1_us_per_token": 7.760596076877846,
+    "stage0_c0_ms": 13.05,
+    "stage0_c1_us_per_token": 0.151
+  },
+  "thresholds": {
+    "max_batch_term_share": 0.2,
+    "max_collision_spread": 0.1,
+    "max_curvature_share": 0.1,
+    "min_r_squared": 0.98
+  },
+  "verdict": "FAIL"
+}
