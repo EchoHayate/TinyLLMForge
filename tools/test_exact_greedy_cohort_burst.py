@@ -168,6 +168,14 @@ def test_cohort_identity_binds_order_and_every_write_authority() -> None:
     rebuilt = _lease(rows=(changed, lease.rows[1]))
     assert rebuilt.identity_sha256 != lease.identity_sha256
 
+    forged = replace(lease, rows=(changed, lease.rows[1]))
+    with pytest.raises(ValueError, match="lease identity"):
+        validate_exact_greedy_cohort_burst_result(
+            forged,
+            _result(forged),
+            eos_token_id=99,
+        )
+
 
 def test_eos_prefix_is_committed_and_suffix_is_counted_as_waste() -> None:
     lease = _lease()
@@ -261,10 +269,13 @@ def test_transaction_allows_only_declared_state_transitions() -> None:
     lease = _lease()
     result = _result(lease)
     transaction = ExactGreedyCohortBurstTransaction(lease)
+    assert transaction.pending is True
     transaction.dispatch()
+    assert transaction.pending is True
     publication = transaction.validate(result, eos_token_id=99)
     transaction.commit()
     assert transaction.state == "committed"
+    assert transaction.pending is False
     assert transaction.publication is publication
     with pytest.raises(RuntimeError, match="committed"):
         transaction.commit()
@@ -274,6 +285,7 @@ def test_transaction_allows_only_declared_state_transitions() -> None:
         ExactGreedyCohortBurstFallback("graph_unavailable")
     )
     assert cancelled.state == "cancelled"
+    assert cancelled.pending is False
     with pytest.raises(RuntimeError, match="cancelled"):
         cancelled.dispatch()
 
@@ -287,6 +299,7 @@ def test_post_replay_failure_quarantines_before_terminal_failure() -> None:
     )
     assert transaction.state == "failed"
     assert transaction.quarantined is True
+    assert transaction.pending is False
     assert transaction.completed_replays == 1
     with pytest.raises(RuntimeError, match="failed"):
         transaction.cancel(
