@@ -4665,6 +4665,27 @@ def test_exact_burst_capacity_adds_one_scheduler_invisible_block():
     assert burst_ids[0] > max(decode_ids + spec_verify_ids)
 
 
+def test_cohort_burst_capacity_reserves_one_private_block_per_row():
+    config = SimpleNamespace(
+        exact_greedy_cohort_burst=True,
+        exact_greedy_cohort_burst_max_batch_size=8,
+        exact_greedy_decode_burst=True,
+    )
+    assert (
+        model_runner.required_exact_greedy_burst_scratch_blocks(
+            config
+        )
+        == 8
+    )
+    config.exact_greedy_cohort_burst = False
+    assert (
+        model_runner.required_exact_greedy_burst_scratch_blocks(
+            config
+        )
+        == 1
+    )
+
+
 def test_exact_burst_scratch_is_reported_by_capacity_snapshot():
     runner = make_runner(exact_greedy_decode_burst=True)
     runner.config.num_kvcache_blocks = 92
@@ -6414,6 +6435,161 @@ def test_capture_cudagraph_initializes_exact_burst_after_generation():
     runner.capture_cudagraph()
 
     assert observed == [1]
+
+
+def test_capture_cudagraph_initializes_all_cohort_batch_graphs():
+    runner = _make_capture_runner(feature_enabled=False)
+    runner.config.exact_greedy_decode_burst = False
+    runner.config.exact_greedy_cohort_burst = True
+    runner.config.exact_greedy_cohort_burst_max_batch_size = 4
+    observed = []
+    runner._capture_exact_greedy_decode_burst = lambda: None
+    runner.capture_exact_greedy_cohort_burst_graph = (
+        lambda batch_size: observed.append(
+            (
+                batch_size,
+                runner._ordinary_graph_generation,
+            )
+        )
+    )
+
+    runner.capture_cudagraph()
+
+    assert observed == [
+        (1, 1),
+        (2, 1),
+        (3, 1),
+        (4, 1),
+    ]
+
+
+def test_cohort_capture_failure_is_recorded_without_blocking_other_shapes():
+    runner = _make_capture_runner(feature_enabled=False)
+    runner.config.exact_greedy_decode_burst = False
+    runner.config.exact_greedy_cohort_burst = True
+    runner.config.exact_greedy_cohort_burst_max_batch_size = 4
+    observed = []
+    runner._capture_exact_greedy_decode_burst = lambda: None
+
+    def capture(batch_size):
+        observed.append(batch_size)
+        if batch_size == 2:
+            raise RuntimeError("capture failed")
+
+    runner.capture_exact_greedy_cohort_burst_graph = capture
+
+    runner.capture_cudagraph()
+
+    assert observed == [1, 2, 3, 4]
+    assert runner.exact_greedy_cohort_burst_capture_failures == {
+        2: "RuntimeError",
+    }
+
+
+def test_cohort_capture_uses_one_packed_result_d2h_reader():
+    tree = ast.parse(
+        open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
+    )
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    capture_method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "capture_exact_greedy_cohort_burst_graph"
+    )
+    source = ast.get_source_segment(
+        open(_MODEL_RUNNER_PATH, encoding="utf-8").read(),
+        capture_method,
+    )
+
+    assert '"result_bundle"' in source
+    assert "read_result_bundle=" in source
+    assert "read_token_history=" not in source
+    assert "read_eos_observations=" not in source
+
+
+def test_cohort_capture_resets_attention_context_in_finally():
+    source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
+    tree = ast.parse(source)
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    capture_method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "capture_exact_greedy_cohort_burst_graph"
+    )
+    finally_calls = [
+        node
+        for candidate in ast.walk(capture_method)
+        if isinstance(candidate, ast.Try)
+        for node in candidate.finalbody
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "reset_context"
+    ]
+
+    assert finally_calls
+
+
+def test_cohort_result_bundle_is_allocated_only_in_cohort_capture():
+    source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
+    tree = ast.parse(source)
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    methods = {
+        node.name: ast.get_source_segment(source, node)
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name in {
+            "_capture_spec_verify_graph",
+            "capture_exact_greedy_cohort_burst_graph",
+        }
+    }
+
+    assert "result_bundle = torch.full(" not in methods[
+        "_capture_spec_verify_graph"
+    ]
+    assert "result_bundle = torch.full(" in methods[
+        "capture_exact_greedy_cohort_burst_graph"
+    ]
+
+
+def test_cohort_run_entrypoint_matches_frozen_lease_first_contract():
+    source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
+    tree = ast.parse(source)
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    run_method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_exact_greedy_cohort_burst"
+    )
+
+    assert [
+        argument.arg for argument in run_method.args.args[:3]
+    ] == ["self", "lease", "seqs"]
 
 
 def _graph_tail_decode_runner(*, temperature=0.0):

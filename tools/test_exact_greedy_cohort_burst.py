@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
 import pytest
@@ -25,6 +26,10 @@ SPEC.loader.exec_module(module)
 
 CohortWriteAuthority = module.CohortWriteAuthority
 ExactGreedyCohortBurstFallback = module.ExactGreedyCohortBurstFallback
+ExactGreedyCohortBurstGraph = module.ExactGreedyCohortBurstGraph
+ExactGreedyCohortBurstTerminalError = (
+    module.ExactGreedyCohortBurstTerminalError
+)
 ExactGreedyCohortBurstResult = module.ExactGreedyCohortBurstResult
 ExactGreedyCohortBurstRowResult = module.ExactGreedyCohortBurstRowResult
 ExactGreedyCohortBurstTransaction = (
@@ -305,3 +310,258 @@ def test_post_replay_failure_quarantines_before_terminal_failure() -> None:
         transaction.cancel(
             ExactGreedyCohortBurstFallback("retry")
         )
+
+
+def _graph_tensors(batch_size: int, block_table_width: int):
+    return {
+        "input_tokens": SimpleNamespace(shape=(batch_size,)),
+        "positions": SimpleNamespace(shape=(batch_size,)),
+        "context_lengths": SimpleNamespace(shape=(batch_size,)),
+        "slot_mappings": SimpleNamespace(shape=(batch_size,)),
+        "block_tables": SimpleNamespace(
+            shape=(batch_size, block_table_width)
+        ),
+        "active_row_masks": SimpleNamespace(shape=(batch_size,)),
+        "result_bundle": SimpleNamespace(
+            shape=(batch_size, 8, 2)
+        ),
+        "token_history": SimpleNamespace(shape=(batch_size, 8)),
+        "history_indices": SimpleNamespace(shape=(batch_size,)),
+        "eos_observations": SimpleNamespace(shape=(batch_size, 8)),
+    }
+
+
+def _captured_graph(
+    *,
+    batch_size: int = 2,
+    replay=None,
+    history=None,
+    eos=None,
+):
+    replay = replay or (lambda: None)
+    history = history or (
+        lambda: (
+            (11, 12, 13, 14),
+            (21, 22, 23, 24),
+        )
+    )
+    eos = eos or (
+        lambda: tuple(
+            tuple(False for _ in row)
+            for row in history()
+        )
+    )
+    return ExactGreedyCohortBurstGraph.capture(
+        tensors=_graph_tensors(batch_size, 8),
+        graph_generation=7,
+        batch_size=batch_size,
+        block_table_width=8,
+        dtype="torch.bfloat16",
+        device_identity="GPU-test",
+        tensor_parallel_size=1,
+        correctness_trace=False,
+        scratch_block_ids=tuple(range(100, 100 + batch_size)),
+        capture_live_kv_mutations=(),
+        bind_rows=lambda lease, rows: None,
+        graph_replay=replay,
+        read_result_bundle=lambda: (history(), eos()),
+    )
+
+
+def test_cohort_capture_uses_private_scratch_and_row_indexed_tensors() -> None:
+    graph = _captured_graph(batch_size=4)
+    assert graph.tensors["input_tokens"].shape == (4,)
+    assert graph.tensors["context_lengths"].shape == (4,)
+    assert graph.tensors["token_history"].shape == (4, 8)
+    assert graph.receipt.capture_live_kv_mutations == ()
+    assert graph.receipt.scratch_block_ids == (100, 101, 102, 103)
+
+
+def test_cohort_capture_requires_packed_result_bundle_shape() -> None:
+    tensors = _graph_tensors(2, 8)
+    del tensors["result_bundle"]
+    with pytest.raises(
+        ValueError,
+        match="missing cohort graph tensor: result_bundle",
+    ):
+        ExactGreedyCohortBurstGraph.capture(
+            tensors=tensors,
+            graph_generation=7,
+            batch_size=2,
+            block_table_width=8,
+            dtype="torch.bfloat16",
+            device_identity="GPU-test",
+            tensor_parallel_size=1,
+            correctness_trace=False,
+            scratch_block_ids=(100, 101),
+            capture_live_kv_mutations=(),
+            bind_rows=lambda lease, rows: None,
+            graph_replay=lambda: None,
+            read_result_bundle=lambda: ((), ()),
+        )
+
+
+def test_cohort_replay_runs_k_steps_then_one_token_history_d2h() -> None:
+    calls = {"replay": 0, "result_bundle": 0}
+
+    def replay():
+        calls["replay"] += 1
+
+    def result_bundle():
+        calls["result_bundle"] += 1
+        return (
+            (
+                (11, 12, 13, 14),
+                (21, 22, 23, 24),
+            ),
+            (
+                (False, False, False, False),
+                (False, False, False, False),
+            ),
+        )
+
+    graph = ExactGreedyCohortBurstGraph.capture(
+        tensors=_graph_tensors(2, 8),
+        graph_generation=7,
+        batch_size=2,
+        block_table_width=8,
+        dtype="torch.bfloat16",
+        device_identity="GPU-test",
+        tensor_parallel_size=1,
+        correctness_trace=False,
+        scratch_block_ids=(100, 101),
+        capture_live_kv_mutations=(),
+        bind_rows=lambda lease, rows: None,
+        graph_replay=replay,
+        read_result_bundle=result_bundle,
+    )
+    lease = _lease()
+    lease = replace(
+        lease,
+        graph_identity_sha256=graph.receipt.graph_identity_sha256,
+    )
+    lease = build_exact_greedy_cohort_burst_lease(
+        schedule_generation=lease.schedule_generation,
+        graph_generation=lease.graph_generation,
+        graph_identity_sha256=lease.graph_identity_sha256,
+        requested_width=lease.requested_width,
+        authorized_width=lease.authorized_width,
+        decision_now_ns=lease.decision_now_ns,
+        cost_table_sha256=lease.cost_table_sha256,
+        predicted_duration_ns=lease.predicted_duration_ns,
+        global_slack_ns=lease.global_slack_ns,
+        rows=lease.rows,
+    )
+    result = graph.replay(lease, row_bindings=({}, {}))
+    assert calls == {"replay": 4, "result_bundle": 1}
+    assert result.token_d2h_calls == 1
+    assert tuple(len(row.tokens) for row in result.rows) == (4, 4)
+
+
+def test_correctness_logits_are_clipped_to_authorized_width() -> None:
+    graph = ExactGreedyCohortBurstGraph.capture(
+        tensors=_graph_tensors(2, 8),
+        graph_generation=7,
+        batch_size=2,
+        block_table_width=8,
+        dtype="torch.bfloat16",
+        device_identity="GPU-test",
+        tensor_parallel_size=1,
+        correctness_trace=True,
+        scratch_block_ids=(100, 101),
+        capture_live_kv_mutations=(),
+        bind_rows=lambda lease, rows: None,
+        graph_replay=lambda: None,
+        read_result_bundle=lambda: (
+            (
+                (0, 1, 2, 0, -1, -1, -1, -1),
+                (1, 2, 0, 1, -1, -1, -1, -1),
+            ),
+            (
+                (False,) * 8,
+                (False,) * 8,
+            ),
+        ),
+        read_sampled_logits=lambda: tuple(
+            tuple(
+                tuple(
+                    1.0 if token == index else 0.0
+                    for index in range(3)
+                )
+                for token in row
+            )
+            for row in (
+                (0, 1, 2, 0, 0, 0, 0, 0),
+                (1, 2, 0, 1, 0, 0, 0, 0),
+            )
+        ),
+    )
+    lease = _lease()
+    lease = build_exact_greedy_cohort_burst_lease(
+        schedule_generation=lease.schedule_generation,
+        graph_generation=lease.graph_generation,
+        graph_identity_sha256=graph.receipt.graph_identity_sha256,
+        requested_width=lease.requested_width,
+        authorized_width=lease.authorized_width,
+        decision_now_ns=lease.decision_now_ns,
+        cost_table_sha256=lease.cost_table_sha256,
+        predicted_duration_ns=lease.predicted_duration_ns,
+        global_slack_ns=lease.global_slack_ns,
+        rows=lease.rows,
+    )
+
+    result = graph.replay(lease, row_bindings=({}, {}))
+
+    assert tuple(
+        len(row.sampled_logits) for row in result.rows
+    ) == (4, 4)
+    validate_exact_greedy_cohort_burst_result(
+        lease,
+        result,
+        eos_token_id=99,
+        correctness_trace=True,
+    )
+
+
+def test_post_launch_graph_failure_is_terminal_and_quarantines() -> None:
+    calls = {"count": 0}
+
+    def fail_second_replay():
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise RuntimeError("boom")
+
+    graph = _captured_graph(replay=fail_second_replay)
+    lease = _lease()
+    lease = build_exact_greedy_cohort_burst_lease(
+        schedule_generation=lease.schedule_generation,
+        graph_generation=lease.graph_generation,
+        graph_identity_sha256=graph.receipt.graph_identity_sha256,
+        requested_width=lease.requested_width,
+        authorized_width=lease.authorized_width,
+        decision_now_ns=lease.decision_now_ns,
+        cost_table_sha256=lease.cost_table_sha256,
+        predicted_duration_ns=lease.predicted_duration_ns,
+        global_slack_ns=lease.global_slack_ns,
+        rows=lease.rows,
+    )
+    with pytest.raises(
+        ExactGreedyCohortBurstTerminalError,
+        match="graph replay failed",
+    ) as error:
+        graph.replay(lease, row_bindings=({}, {}))
+    assert error.value.completed_replays == 1
+    assert graph.capability()["quarantined"] is True
+
+
+def test_model_runner_declares_cohort_runtime_entrypoints() -> None:
+    source = (
+        REPO_ROOT / "tinyvllm" / "engine" / "model_runner.py"
+    ).read_text(encoding="utf-8")
+    for method in (
+        "exact_greedy_cohort_burst_capability",
+        "capture_exact_greedy_cohort_burst_graph",
+        "run_exact_greedy_cohort_burst",
+        "quarantine_exact_greedy_cohort_burst_graph",
+    ):
+        assert f"def {method}(" in source

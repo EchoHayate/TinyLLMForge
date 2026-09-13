@@ -367,6 +367,368 @@ class ExactGreedyCohortBurstFallback:
             )
 
 
+@dataclass(frozen=True)
+class ExactGreedyCohortBurstGraphReceipt:
+    graph_identity_sha256: str
+    graph_generation: int
+    batch_size: int
+    block_table_width: int
+    dtype: str
+    device_identity: str
+    tensor_parallel_size: int
+    correctness_trace: bool
+    scratch_block_ids: tuple[int, ...]
+    capture_live_kv_mutations: tuple[object, ...]
+
+
+class ExactGreedyCohortBurstTerminalError(RuntimeError):
+    def __init__(self, reason: str, completed_replays: int):
+        super().__init__(reason)
+        self.reason = reason
+        self.completed_replays = completed_replays
+
+
+class ExactGreedyCohortBurstGraph:
+    _REQUIRED_SHAPES = {
+        "input_tokens": lambda batch, width: (batch,),
+        "positions": lambda batch, width: (batch,),
+        "context_lengths": lambda batch, width: (batch,),
+        "slot_mappings": lambda batch, width: (batch,),
+        "block_tables": lambda batch, width: (batch, width),
+        "active_row_masks": lambda batch, width: (batch,),
+        "result_bundle": lambda batch, width: (batch, 8, 2),
+        "token_history": lambda batch, width: (batch, 8),
+        "history_indices": lambda batch, width: (batch,),
+        "eos_observations": lambda batch, width: (batch, 8),
+    }
+
+    def __init__(
+        self,
+        *,
+        tensors: dict[str, object],
+        receipt: ExactGreedyCohortBurstGraphReceipt,
+        bind_rows,
+        graph_replay,
+        read_result_bundle,
+        read_sampled_logits,
+    ):
+        self.tensors = tensors
+        self.receipt = receipt
+        self._bind_rows = bind_rows
+        self._graph_replay = graph_replay
+        self._read_result_bundle = read_result_bundle
+        self._read_sampled_logits = read_sampled_logits
+        self.quarantine_reason = None
+
+    @staticmethod
+    def _shape(value: object, name: str) -> tuple[int, ...]:
+        try:
+            shape = tuple(int(size) for size in value.shape)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise ValueError(
+                f"{name} must expose an integer shape"
+            ) from error
+        return shape
+
+    @classmethod
+    def capture(
+        cls,
+        *,
+        tensors: dict[str, object],
+        graph_generation: int,
+        batch_size: int,
+        block_table_width: int,
+        dtype: str,
+        device_identity: str,
+        tensor_parallel_size: int,
+        correctness_trace: bool,
+        scratch_block_ids: tuple[int, ...],
+        capture_live_kv_mutations: tuple[object, ...],
+        bind_rows,
+        graph_replay,
+        read_result_bundle,
+        read_sampled_logits=None,
+    ) -> "ExactGreedyCohortBurstGraph":
+        _require_int(
+            graph_generation,
+            "graph_generation",
+            minimum=1,
+        )
+        _require_int(batch_size, "batch_size", minimum=1)
+        _require_int(
+            block_table_width,
+            "block_table_width",
+            minimum=1,
+        )
+        _require_int(
+            tensor_parallel_size,
+            "tensor_parallel_size",
+            minimum=1,
+        )
+        if tensor_parallel_size != 1:
+            raise ValueError("cohort graph currently requires TP1")
+        _require_reason(dtype, "dtype")
+        _require_reason(device_identity, "device_identity")
+        if not isinstance(correctness_trace, bool):
+            raise ValueError("correctness_trace must be a bool")
+        if not isinstance(tensors, dict):
+            raise ValueError("cohort graph tensors must be a dict")
+        shape_payload = {}
+        for name, expected_shape in cls._REQUIRED_SHAPES.items():
+            if name not in tensors:
+                raise ValueError(
+                    f"missing cohort graph tensor: {name}"
+                )
+            shape = cls._shape(tensors[name], name)
+            expected = expected_shape(
+                batch_size,
+                block_table_width,
+            )
+            if shape != expected:
+                raise ValueError(
+                    f"{name} shape mismatch: {shape} != {expected}"
+                )
+            shape_payload[name] = list(shape)
+        if not isinstance(scratch_block_ids, tuple):
+            raise ValueError("scratch_block_ids must be a tuple")
+        for block_id in scratch_block_ids:
+            _require_int(block_id, "scratch block ID")
+        if (
+            len(scratch_block_ids) != batch_size
+            or len(set(scratch_block_ids)) != batch_size
+        ):
+            raise ValueError(
+                "cohort graph requires one private scratch block per row"
+            )
+        if capture_live_kv_mutations != ():
+            raise RuntimeError(
+                "cohort graph capture mutated live KV"
+            )
+        for callback, name in (
+            (bind_rows, "bind_rows"),
+            (graph_replay, "graph_replay"),
+            (read_result_bundle, "read_result_bundle"),
+        ):
+            if not callable(callback):
+                raise ValueError(f"{name} must be callable")
+        if correctness_trace and not callable(read_sampled_logits):
+            raise ValueError(
+                "correctness graph requires sampled-logit reader"
+            )
+        identity_payload = {
+            "schema_version": (
+                "exact-greedy-cohort-burst.graph.v1"
+            ),
+            "graph_generation": graph_generation,
+            "batch_size": batch_size,
+            "block_table_width": block_table_width,
+            "dtype": dtype,
+            "device_identity": device_identity,
+            "tensor_parallel_size": tensor_parallel_size,
+            "correctness_trace": correctness_trace,
+            "scratch_block_ids": list(scratch_block_ids),
+            "tensor_shapes": shape_payload,
+        }
+        identity_sha256 = hashlib.sha256(
+            _canonical_json_bytes(identity_payload)
+        ).hexdigest()
+        receipt = ExactGreedyCohortBurstGraphReceipt(
+            graph_identity_sha256=identity_sha256,
+            graph_generation=graph_generation,
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            dtype=dtype,
+            device_identity=device_identity,
+            tensor_parallel_size=tensor_parallel_size,
+            correctness_trace=correctness_trace,
+            scratch_block_ids=scratch_block_ids,
+            capture_live_kv_mutations=(),
+        )
+        return cls(
+            tensors=tensors,
+            receipt=receipt,
+            bind_rows=bind_rows,
+            graph_replay=graph_replay,
+            read_result_bundle=read_result_bundle,
+            read_sampled_logits=read_sampled_logits,
+        )
+
+    def capability(self) -> dict[str, object]:
+        return {
+            "available": self.quarantine_reason is None,
+            "quarantined": self.quarantine_reason is not None,
+            "quarantine_reason": self.quarantine_reason,
+            "graph_identity_sha256": (
+                self.receipt.graph_identity_sha256
+            ),
+            "graph_generation": self.receipt.graph_generation,
+            "batch_size": self.receipt.batch_size,
+            "block_table_width": self.receipt.block_table_width,
+            "correctness_trace": self.receipt.correctness_trace,
+        }
+
+    def quarantine(self, reason: str) -> None:
+        reason = _require_reason(reason, "quarantine reason")
+        if self.quarantine_reason is None:
+            self.quarantine_reason = reason
+
+    def _terminal(
+        self,
+        reason: str,
+        completed_replays: int,
+    ) -> None:
+        self.quarantine(reason)
+        raise ExactGreedyCohortBurstTerminalError(
+            reason,
+            completed_replays,
+        )
+
+    def replay(
+        self,
+        lease: ExactGreedyCohortBurstLease,
+        *,
+        row_bindings: tuple[object, ...],
+    ) -> (
+        ExactGreedyCohortBurstResult
+        | ExactGreedyCohortBurstFallback
+    ):
+        if self.quarantine_reason is not None:
+            return ExactGreedyCohortBurstFallback(
+                "graph_quarantined"
+            )
+        try:
+            _validate_lease_identity(lease)
+        except (TypeError, ValueError):
+            return ExactGreedyCohortBurstFallback(
+                "lease_identity_invalid"
+            )
+        if (
+            lease.graph_identity_sha256
+            != self.receipt.graph_identity_sha256
+        ):
+            return ExactGreedyCohortBurstFallback(
+                "graph_identity_drift"
+            )
+        if lease.graph_generation != self.receipt.graph_generation:
+            return ExactGreedyCohortBurstFallback(
+                "graph_generation_drift"
+            )
+        if len(lease.rows) != self.receipt.batch_size:
+            return ExactGreedyCohortBurstFallback(
+                "batch_size_drift"
+            )
+        if (
+            not isinstance(row_bindings, tuple)
+            or len(row_bindings) != len(lease.rows)
+        ):
+            return ExactGreedyCohortBurstFallback(
+                "row_binding_count_mismatch"
+            )
+        try:
+            self._bind_rows(lease, row_bindings)
+        except Exception:
+            return ExactGreedyCohortBurstFallback(
+                "row_bind_failure"
+            )
+
+        completed_replays = 0
+        for _ in range(lease.authorized_width):
+            try:
+                self._graph_replay()
+            except Exception as error:
+                self._terminal(
+                    "graph replay failed: "
+                    f"{type(error).__name__}",
+                    completed_replays,
+                )
+            completed_replays += 1
+        try:
+            raw_history, raw_eos_observations = (
+                self._read_result_bundle()
+            )
+            history = tuple(
+                tuple(int(token) for token in row)
+                for row in raw_history
+            )
+            eos_observations = tuple(
+                tuple(bool(value) for value in row)
+                for row in raw_eos_observations
+            )
+            sampled_logits = (
+                tuple(
+                    tuple(
+                        tuple(float(value) for value in values)
+                        for values in row
+                    )
+                    for row in self._read_sampled_logits()
+                )
+                if self.receipt.correctness_trace
+                else tuple(() for _ in lease.rows)
+            )
+        except Exception as error:
+            self._terminal(
+                "cohort result D2H failed: "
+                f"{type(error).__name__}",
+                completed_replays,
+            )
+        if (
+            len(history) != len(lease.rows)
+            or len(eos_observations) != len(lease.rows)
+            or any(
+                len(row) < lease.authorized_width
+                for row in history
+            )
+            or any(
+                len(row) < lease.authorized_width
+                for row in eos_observations
+            )
+            or len(sampled_logits) != len(lease.rows)
+        ):
+            self._terminal(
+                "cohort result shape mismatch",
+                completed_replays,
+            )
+        result_rows = tuple(
+            ExactGreedyCohortBurstRowResult(
+                sequence_id=authority.sequence_id,
+                sequence_generation=(
+                    authority.sequence_generation
+                ),
+                tokens=history[index][
+                    :lease.authorized_width
+                ],
+                final_position=(
+                    authority.first_write_position
+                    + lease.authorized_width
+                ),
+                final_context_length=(
+                    authority.initial_sequence_length
+                    + lease.authorized_width
+                ),
+                final_physical_slot=(
+                    authority.last_physical_slot + 1
+                ),
+                sampled_logits=sampled_logits[index][
+                    :lease.authorized_width
+                ],
+            )
+            for index, authority in enumerate(lease.rows)
+        )
+        return ExactGreedyCohortBurstResult(
+            lease_identity_sha256=lease.identity_sha256,
+            graph_identity_sha256=(
+                self.receipt.graph_identity_sha256
+            ),
+            graph_generation=self.receipt.graph_generation,
+            replay_count=completed_replays,
+            rows=result_rows,
+            token_d2h_calls=1,
+            sampled_logit_d2h_calls=int(
+                self.receipt.correctness_trace
+            ),
+        )
+
+
 def _validate_tokens(
     tokens: object,
     replay_count: int,

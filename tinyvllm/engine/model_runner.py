@@ -101,6 +101,11 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     ExactGreedyDecodeBurstStats,
     exact_greedy_decode_burst_flash_attn_num_splits,
 )
+from tinyvllm.engine.exact_greedy_cohort_burst import (
+    ExactGreedyCohortBurstFallback,
+    ExactGreedyCohortBurstGraph,
+    ExactGreedyCohortBurstLease,
+)
 from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
     ExactBurstSplitPhaseMailboxBackend,
 )
@@ -1229,6 +1234,14 @@ def partition_exact_graph_scratch_block_ids(
         tuple(
             range(spec_verify_end, exact_greedy_burst_end)
         ),
+    )
+
+
+def required_exact_greedy_burst_scratch_blocks(config) -> int:
+    if getattr(config, "exact_greedy_cohort_burst", False):
+        return int(config.exact_greedy_cohort_burst_max_batch_size)
+    return int(
+        getattr(config, "exact_greedy_decode_burst", False)
     )
 
 
@@ -2523,6 +2536,8 @@ class ModelRunner:
         self.exact_greedy_decode_burst_stats = (
             ExactGreedyDecodeBurstStats()
         )
+        self.exact_greedy_cohort_burst_graphs = {}
+        self.exact_greedy_cohort_burst_capture_failures = {}
         self.phase_stitch_mailbox_backend = None
         self._phase_stitch_stats = None
         self._phase_stitch_quarantined_joint_identities = set()
@@ -5732,11 +5747,9 @@ class ModelRunner:
                 if config.spec_verify_cuda_graphs
                 else 0
             )
-            exact_greedy_burst_scratch_blocks = int(
-                getattr(
-                    config,
-                    "exact_greedy_decode_burst",
-                    False,
+            exact_greedy_burst_scratch_blocks = (
+                required_exact_greedy_burst_scratch_blocks(
+                    config
                 )
             )
             total_scratch_blocks = (
@@ -10905,6 +10918,428 @@ class ModelRunner:
         stats.record_fallback(reason)
         return ExactGreedyDecodeBurstFallback(reason)
 
+    def _cohort_graph_key(
+        self,
+        *,
+        batch_size: int,
+        block_table_width: int,
+        correctness_trace: bool,
+    ) -> tuple:
+        return (
+            int(batch_size),
+            int(block_table_width),
+            str(self.config.hf_config.torch_dtype),
+            str(self.kv_cache.device),
+            int(self.world_size),
+            bool(correctness_trace),
+        )
+
+    def exact_greedy_cohort_burst_capability(
+        self,
+        *,
+        batch_size: int,
+        block_table_width: int,
+        correctness_trace: bool = False,
+    ) -> dict[str, object]:
+        reason = None
+        if not getattr(
+            self.config,
+            "exact_greedy_cohort_burst",
+            False,
+        ):
+            reason = "disabled"
+        elif self.enforce_eager:
+            reason = "enforce_eager"
+        elif self.world_size != 1 or self.rank != 0:
+            reason = "tensor_parallel_unsupported"
+        elif any((
+            self.config.kv_offload_mvp0,
+            self.config.cpu_offload,
+            self.config.kv_quant_bits == 4,
+            self.config.quest_top_k_blocks > 0,
+            self.config.am_compact_blocks > 0,
+        )):
+            reason = "mixed_mode_unsupported"
+        key = self._cohort_graph_key(
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            correctness_trace=correctness_trace,
+        )
+        graph = self.exact_greedy_cohort_burst_graphs.get(key)
+        if reason is None and graph is None:
+            reason = "graph_unavailable"
+        capability = (
+            {}
+            if graph is None
+            else graph.capability()
+        )
+        if (
+            reason is None
+            and capability.get("quarantined") is True
+        ):
+            reason = "graph_quarantined"
+        return {
+            "available": reason is None,
+            "quarantined": (
+                capability.get("quarantined") is True
+            ),
+            "fallback_reason": reason,
+            "shape_supported": graph is not None,
+            "graph_identity_sha256": capability.get(
+                "graph_identity_sha256"
+            ),
+            "graph_generation": capability.get(
+                "graph_generation",
+                int(self._ordinary_graph_generation),
+            ),
+            "batch_size": batch_size,
+            "block_table_width": block_table_width,
+            "correctness_trace": correctness_trace,
+        }
+
+    def quarantine_exact_greedy_cohort_burst_graph(
+        self,
+        graph_identity_sha256: str,
+        reason: str,
+    ) -> None:
+        matched = False
+        for graph in self.exact_greedy_cohort_burst_graphs.values():
+            if (
+                graph.receipt.graph_identity_sha256
+                == graph_identity_sha256
+            ):
+                graph.quarantine(reason)
+                matched = True
+        if not matched:
+            raise ValueError(
+                "cohort graph identity is not registered"
+            )
+
+    def capture_exact_greedy_cohort_burst_graph(
+        self,
+        batch_size: int,
+        *,
+        correctness_trace: bool = False,
+    ):
+        if not getattr(
+            self.config,
+            "exact_greedy_cohort_burst",
+            False,
+        ):
+            return None
+        if (
+            self.world_size != 1
+            or self.rank != 0
+            or self.enforce_eager
+        ):
+            return None
+        if (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or batch_size <= 0
+            or batch_size
+            > self.config.exact_greedy_cohort_burst_max_batch_size
+        ):
+            raise ValueError("cohort graph batch size is invalid")
+        scratch_ids = tuple(
+            int(block_id)
+            for block_id in self._exact_greedy_burst_scratch_block_ids[
+                :batch_size
+            ]
+        )
+        if len(scratch_ids) != batch_size:
+            return None
+        block_table_width = (
+            self.config.max_model_len
+            + self.block_size
+            - 1
+        ) // self.block_size
+        device = self.kv_cache.device
+        result_bundle = torch.full(
+            (batch_size, 8, 2),
+            -1,
+            dtype=torch.int64,
+            device=device,
+        )
+        tensors = {
+            "input_tokens": torch.zeros(
+                batch_size,
+                dtype=torch.int64,
+                device=device,
+            ),
+            "positions": torch.zeros(
+                batch_size,
+                dtype=torch.int64,
+                device=device,
+            ),
+            "context_lengths": torch.ones(
+                batch_size,
+                dtype=torch.int32,
+                device=device,
+            ),
+            "slot_mappings": torch.tensor(
+                [
+                    block_id * self.block_size
+                    for block_id in scratch_ids
+                ],
+                dtype=torch.int32,
+                device=device,
+            ),
+            "block_tables": torch.full(
+                (batch_size, block_table_width),
+                -1,
+                dtype=torch.int32,
+                device=device,
+            ),
+            "active_row_masks": torch.ones(
+                batch_size,
+                dtype=torch.bool,
+                device=device,
+            ),
+            "result_bundle": result_bundle,
+            "token_history": result_bundle[:, :, 0],
+            "history_indices": torch.zeros(
+                batch_size,
+                dtype=torch.int64,
+                device=device,
+            ),
+            "eos_observations": result_bundle[:, :, 1],
+        }
+        for row, block_id in enumerate(scratch_ids):
+            tensors["block_tables"][row, 0] = block_id
+        if correctness_trace:
+            tensors["sampled_logits"] = torch.zeros(
+                (
+                    batch_size,
+                    8,
+                    int(self.config.hf_config.vocab_size),
+                ),
+                dtype=torch.float32,
+                device=device,
+            )
+
+        def reset_static() -> None:
+            tensors["input_tokens"].zero_()
+            tensors["positions"].zero_()
+            tensors["context_lengths"].fill_(1)
+            tensors["slot_mappings"].copy_(torch.tensor(
+                [
+                    block_id * self.block_size
+                    for block_id in scratch_ids
+                ],
+                dtype=torch.int32,
+                device=device,
+            ))
+            tensors["block_tables"].fill_(-1)
+            for row, block_id in enumerate(scratch_ids):
+                tensors["block_tables"][row, 0] = block_id
+            tensors["active_row_masks"].fill_(True)
+            tensors["token_history"].fill_(-1)
+            tensors["history_indices"].zero_()
+            tensors["eos_observations"].zero_()
+            if correctness_trace:
+                tensors["sampled_logits"].zero_()
+
+        def complete_step():
+            hidden = self.model(
+                tensors["input_tokens"],
+                tensors["positions"],
+            )
+            logits = self.model.compute_logits(hidden).float()
+            next_tokens = logits.argmax(dim=-1)
+            history_index = tensors["history_indices"].view(-1, 1)
+            tensors["token_history"].scatter_(
+                1,
+                history_index,
+                next_tokens.view(-1, 1),
+            )
+            tensors["eos_observations"].scatter_(
+                1,
+                history_index,
+                next_tokens.eq(self.config.eos).to(
+                    dtype=torch.int64
+                ).view(-1, 1),
+            )
+            if correctness_trace:
+                tensors["sampled_logits"].scatter_(
+                    1,
+                    history_index.view(-1, 1, 1).expand(
+                        -1,
+                        1,
+                        logits.shape[-1],
+                    ),
+                    logits.view(batch_size, 1, -1),
+                )
+            tensors["input_tokens"].copy_(next_tokens)
+            tensors["positions"].add_(1)
+            tensors["context_lengths"].add_(1)
+            tensors["slot_mappings"].add_(1)
+            tensors["history_indices"].add_(1)
+            return hidden, logits, next_tokens
+
+        try:
+            reset_static()
+            set_context(
+                False,
+                slot_mapping=tensors["slot_mappings"],
+                context_lens=tensors["context_lengths"],
+                block_tables=tensors["block_tables"],
+            )
+            complete_step()
+            torch.cuda.synchronize()
+            reset_context()
+            reset_static()
+            set_context(
+                False,
+                slot_mapping=tensors["slot_mappings"],
+                context_lens=tensors["context_lengths"],
+                block_tables=tensors["block_tables"],
+            )
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph, self.graph_pool):
+                retained_outputs = complete_step()
+            torch.cuda.synchronize()
+        finally:
+            reset_context()
+            reset_static()
+
+        def bind_rows(lease, row_bindings):
+            padded_tables = []
+            for index, binding in enumerate(row_bindings):
+                table = list(binding["block_table"])
+                if len(table) > block_table_width:
+                    raise ValueError(
+                        "cohort block table width is unsupported"
+                    )
+                padded_tables.append(
+                    table + [-1] * (block_table_width - len(table))
+                )
+                tensors["input_tokens"][index] = binding[
+                    "input_token"
+                ]
+                tensors["positions"][index] = binding["position"]
+                tensors["context_lengths"][index] = binding[
+                    "context_length"
+                ]
+                tensors["slot_mappings"][index] = binding[
+                    "slot_mapping"
+                ]
+            tensors["block_tables"].copy_(
+                self.prepare_block_tables_from_rows(
+                    padded_tables,
+                    "exact_greedy_cohort_burst_block_table",
+                )
+            )
+            tensors["token_history"].fill_(-1)
+            tensors["history_indices"].zero_()
+            tensors["eos_observations"].zero_()
+            if correctness_trace:
+                tensors["sampled_logits"].zero_()
+
+        cohort_graph = ExactGreedyCohortBurstGraph.capture(
+            tensors=tensors,
+            graph_generation=self._ordinary_graph_generation,
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            dtype=str(self.config.hf_config.torch_dtype),
+            device_identity=str(device),
+            tensor_parallel_size=self.world_size,
+            correctness_trace=correctness_trace,
+            scratch_block_ids=scratch_ids,
+            capture_live_kv_mutations=(),
+            bind_rows=bind_rows,
+            graph_replay=graph.replay,
+            read_result_bundle=lambda: (
+                lambda rows: (
+                    tuple(
+                        tuple(step[0] for step in row)
+                        for row in rows
+                    ),
+                    tuple(
+                        tuple(step[1] for step in row)
+                        for row in rows
+                    ),
+                )
+            )(
+                tensors["result_bundle"]
+                .detach()
+                .cpu()
+                .tolist()
+            ),
+            read_sampled_logits=(
+                (
+                    lambda: tensors[
+                        "sampled_logits"
+                    ].detach().cpu().tolist()
+                )
+                if correctness_trace
+                else None
+            ),
+        )
+        cohort_graph.retained_outputs = retained_outputs
+        key = self._cohort_graph_key(
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            correctness_trace=correctness_trace,
+        )
+        self.exact_greedy_cohort_burst_graphs[key] = cohort_graph
+        return cohort_graph
+
+    @torch.inference_mode()
+    def run_exact_greedy_cohort_burst(
+        self,
+        lease: ExactGreedyCohortBurstLease,
+        seqs: tuple[Sequence, ...],
+        correctness_trace: bool = False,
+    ):
+        if not isinstance(seqs, tuple):
+            return ExactGreedyCohortBurstFallback(
+                "sequence_container_invalid"
+            )
+        matching_graph = None
+        for graph in self.exact_greedy_cohort_burst_graphs.values():
+            receipt = graph.receipt
+            if (
+                receipt.graph_identity_sha256
+                == lease.graph_identity_sha256
+                and receipt.correctness_trace == correctness_trace
+            ):
+                matching_graph = graph
+                break
+        if matching_graph is None:
+            return ExactGreedyCohortBurstFallback(
+                "graph_unavailable"
+            )
+        if tuple(seq.seq_id for seq in seqs) != (
+            lease.ordered_sequence_ids
+        ):
+            return ExactGreedyCohortBurstFallback(
+                "sequence_identity_drift"
+            )
+        row_bindings = []
+        for seq, authority in zip(seqs, lease.rows):
+            block_ids = tuple(int(value) for value in seq.block_table)
+            expected_ids = tuple(
+                block_id
+                for block_id, _generation
+                in authority.block_table_identity
+            )
+            if block_ids != expected_ids:
+                return ExactGreedyCohortBurstFallback(
+                    "block_table_identity_drift"
+                )
+            row_bindings.append({
+                "input_token": int(seq.last_token),
+                "position": authority.first_write_position,
+                "context_length": authority.initial_sequence_length,
+                "slot_mapping": authority.first_physical_slot,
+                "block_table": block_ids,
+            })
+        return matching_graph.replay(
+            lease,
+            row_bindings=tuple(row_bindings),
+        )
+
     def exact_greedy_decode_burst_capability(
         self,
         *,
@@ -11522,7 +11957,7 @@ class ModelRunner:
                 "capture_non_root_rank"
             )
             return None
-        if len(self._exact_greedy_burst_scratch_block_ids) != 1:
+        if len(self._exact_greedy_burst_scratch_block_ids) < 1:
             self.exact_greedy_decode_burst_stats.record_fallback(
                 "capture_scratch_unavailable"
             )
@@ -12892,6 +13327,32 @@ class ModelRunner:
         self._ordinary_graph_generation += 1
         self._capture_graph_resident_greedy_tail()
         self._capture_exact_greedy_decode_burst()
+        if getattr(
+            self.config,
+            "exact_greedy_cohort_burst",
+            False,
+        ):
+            self.exact_greedy_cohort_burst_graphs = {}
+            self.exact_greedy_cohort_burst_capture_failures = {}
+            for batch_size in range(
+                1,
+                (
+                    self.config
+                    .exact_greedy_cohort_burst_max_batch_size
+                    + 1
+                ),
+            ):
+                try:
+                    self.capture_exact_greedy_cohort_burst_graph(
+                        batch_size
+                    )
+                except Exception as error:
+                    (
+                        self
+                        .exact_greedy_cohort_burst_capture_failures[
+                            batch_size
+                        ]
+                    ) = type(error).__name__
         if (
             getattr(
                 self.config,
