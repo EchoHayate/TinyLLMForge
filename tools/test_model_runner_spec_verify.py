@@ -8315,6 +8315,182 @@ def test_exact_greedy_decode_burst_config_is_strict_and_default_off():
     assert enabled.exact_greedy_decode_burst_tokens == 8
 
 
+def test_slo_cohort_burst_config_is_strict_and_default_off():
+    Config = _load_real_config_class()
+    fields = Config.__dataclass_fields__
+    assert fields["exact_greedy_cohort_burst"].default is False
+    assert fields["exact_greedy_cohort_burst_widths"].default == (
+        1,
+        2,
+        4,
+        8,
+    )
+    assert fields["exact_greedy_cohort_burst_max_batch_size"].default == 8
+    assert fields["exact_greedy_cohort_burst_target_itl_ns"].default == 0
+    assert fields["exact_greedy_cohort_burst_target_ttft_ns"].default == 0
+    assert fields["exact_greedy_cohort_burst_reserve_ns"].default == 0
+    assert (
+        fields["exact_greedy_cohort_burst_cost_table_path"].default
+        is None
+    )
+
+    with tempfile.TemporaryDirectory() as model:
+        enabled = Config(
+            model=model,
+            exact_greedy_decode_burst=True,
+            exact_greedy_cohort_burst=True,
+            exact_greedy_cohort_burst_widths=[1, 2, 4, 8],
+            exact_greedy_cohort_burst_max_batch_size=8,
+            exact_greedy_cohort_burst_target_itl_ns=100,
+            exact_greedy_cohort_burst_target_ttft_ns=200,
+            exact_greedy_cohort_burst_reserve_ns=50,
+            exact_greedy_cohort_burst_cost_table_path="/cost/table.json",
+        )
+
+    assert enabled.exact_greedy_cohort_burst_widths == (1, 2, 4, 8)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    (
+        (
+            {"exact_greedy_cohort_burst": 1},
+            "exact_greedy_cohort_burst must be a bool",
+        ),
+        (
+            {"exact_greedy_cohort_burst_widths": (1, True)},
+            "exact_greedy_cohort_burst_widths must contain positive "
+            "non-boolean integers",
+        ),
+        (
+            {"exact_greedy_cohort_burst_widths": (2, 1)},
+            "exact_greedy_cohort_burst_widths must be strictly increasing",
+        ),
+        (
+            {"exact_greedy_cohort_burst_widths": (1, 2, 2)},
+            "exact_greedy_cohort_burst_widths must be strictly increasing",
+        ),
+        (
+            {"exact_greedy_cohort_burst_widths": (1, 4)},
+            "exact_greedy_cohort_burst_widths must be a supported prefix",
+        ),
+        (
+            {"exact_greedy_cohort_burst_widths": (2,)},
+            "exact_greedy_cohort_burst_widths must be a supported prefix",
+        ),
+        (
+            {"exact_greedy_cohort_burst_widths": (1, 2, 4, 16)},
+            "exact_greedy_cohort_burst_widths must be a supported prefix",
+        ),
+        (
+            {"exact_greedy_cohort_burst_max_batch_size": True},
+            "exact_greedy_cohort_burst_max_batch_size must be an integer "
+            "in [1, 8]",
+        ),
+        (
+            {"exact_greedy_cohort_burst_max_batch_size": 0},
+            "exact_greedy_cohort_burst_max_batch_size must be an integer "
+            "in [1, 8]",
+        ),
+        (
+            {"exact_greedy_cohort_burst_max_batch_size": 9},
+            "exact_greedy_cohort_burst_max_batch_size must be an integer "
+            "in [1, 8]",
+        ),
+        (
+            {"exact_greedy_cohort_burst_target_itl_ns": True},
+            "exact_greedy_cohort_burst_target_itl_ns must be a "
+            "nonnegative integer",
+        ),
+        (
+            {"exact_greedy_cohort_burst_target_ttft_ns": -1},
+            "exact_greedy_cohort_burst_target_ttft_ns must be a "
+            "nonnegative integer",
+        ),
+        (
+            {"exact_greedy_cohort_burst_reserve_ns": True},
+            "exact_greedy_cohort_burst_reserve_ns must be a "
+            "nonnegative integer",
+        ),
+        (
+            {"exact_greedy_cohort_burst_cost_table_path": 1},
+            "exact_greedy_cohort_burst_cost_table_path must be a "
+            "string or None",
+        ),
+    ),
+)
+def test_slo_cohort_burst_config_rejects_invalid_field_values(
+    kwargs,
+    message,
+):
+    Config = _load_real_config_class()
+    with tempfile.TemporaryDirectory() as model:
+        with pytest.raises(
+            ValueError,
+            match=f"^{re.escape(message)}$",
+        ):
+            Config(model=model, **kwargs)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    (
+        (
+            {},
+            "SLO cohort burst requires exact_greedy_decode_burst",
+        ),
+        (
+            {"exact_greedy_decode_burst": True},
+            "SLO cohort burst requires positive ITL and TTFT targets",
+        ),
+        (
+            {
+                "exact_greedy_decode_burst": True,
+                "exact_greedy_cohort_burst_target_itl_ns": 100,
+                "exact_greedy_cohort_burst_target_ttft_ns": 200,
+            },
+            "SLO cohort burst requires a non-empty cost-table path",
+        ),
+        (
+            {
+                "exact_greedy_decode_burst": True,
+                "exact_greedy_cohort_burst_target_itl_ns": 100,
+                "exact_greedy_cohort_burst_target_ttft_ns": 200,
+                "exact_greedy_cohort_burst_reserve_ns": 100,
+                "exact_greedy_cohort_burst_cost_table_path": "/cost.json",
+            },
+            "SLO cohort burst reserve must be below both targets",
+        ),
+        (
+            {
+                "exact_greedy_decode_burst": True,
+                "exact_greedy_cohort_burst_target_itl_ns": 100,
+                "exact_greedy_cohort_burst_target_ttft_ns": 200,
+                "exact_greedy_cohort_burst_reserve_ns": 50,
+                "exact_greedy_cohort_burst_cost_table_path": "/cost.json",
+                "tensor_parallel_size": 2,
+            },
+            "SLO cohort burst requires tensor_parallel_size 1",
+        ),
+    ),
+)
+def test_enabled_slo_cohort_burst_rejects_incomplete_contract(
+    kwargs,
+    message,
+):
+    Config = _load_real_config_class()
+    with tempfile.TemporaryDirectory() as model:
+        with pytest.raises(
+            ValueError,
+            match=f"^{re.escape(message)}$",
+        ):
+            Config(
+                model=model,
+                exact_greedy_cohort_burst=True,
+                **kwargs,
+            )
+
+
 class _GreedyFastPathLogits:
     def __init__(self, values, *, shape=None):
         self.values = tuple(tuple(row) for row in values)

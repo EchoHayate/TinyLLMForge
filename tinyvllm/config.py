@@ -48,6 +48,13 @@ class Config:
     exact_greedy_decode_burst_elastic_k16: bool = False
     exact_greedy_decode_burst_octet_folded_graph: bool = False
     exact_greedy_decode_burst_tokens: int = 4
+    exact_greedy_cohort_burst: bool = False
+    exact_greedy_cohort_burst_widths: tuple = (1, 2, 4, 8)
+    exact_greedy_cohort_burst_max_batch_size: int = 8
+    exact_greedy_cohort_burst_target_itl_ns: int = 0
+    exact_greedy_cohort_burst_target_ttft_ns: int = 0
+    exact_greedy_cohort_burst_reserve_ns: int = 0
+    exact_greedy_cohort_burst_cost_table_path: str | None = None
     prefill_cuda_graphs: bool = False
     prefill_cuda_graph_token_allowlist: tuple = (256, 2048)
     phase_stitch_profile: bool = False
@@ -353,6 +360,108 @@ class Config:
                 "exact_greedy_decode_burst_tokens must be an "
                 "integer in [2, 8]"
             )
+        if not isinstance(self.exact_greedy_cohort_burst, bool):
+            raise ValueError(
+                "exact_greedy_cohort_burst must be a bool"
+            )
+        raw_cohort_widths = self.exact_greedy_cohort_burst_widths
+        normalized_cohort_widths = _normalize_positive_int_tuple(
+            raw_cohort_widths,
+            name="exact_greedy_cohort_burst_widths",
+            allow_empty=False,
+        )
+        if tuple(raw_cohort_widths) != normalized_cohort_widths:
+            raise ValueError(
+                "exact_greedy_cohort_burst_widths must be "
+                "strictly increasing"
+            )
+        supported_cohort_widths = (1, 2, 4, 8)
+        if normalized_cohort_widths != supported_cohort_widths[
+            :len(normalized_cohort_widths)
+        ]:
+            raise ValueError(
+                "exact_greedy_cohort_burst_widths must be a "
+                "supported prefix"
+            )
+        self.exact_greedy_cohort_burst_widths = normalized_cohort_widths
+        if (
+            isinstance(
+                self.exact_greedy_cohort_burst_max_batch_size,
+                bool,
+            )
+            or not isinstance(
+                self.exact_greedy_cohort_burst_max_batch_size,
+                int,
+            )
+            or not (
+                1
+                <= self.exact_greedy_cohort_burst_max_batch_size
+                <= 8
+            )
+        ):
+            raise ValueError(
+                "exact_greedy_cohort_burst_max_batch_size must be "
+                "an integer in [1, 8]"
+            )
+        for name in (
+            "exact_greedy_cohort_burst_target_itl_ns",
+            "exact_greedy_cohort_burst_target_ttft_ns",
+            "exact_greedy_cohort_burst_reserve_ns",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"{name} must be a nonnegative integer"
+                )
+        if (
+            self.exact_greedy_cohort_burst_cost_table_path is not None
+            and not isinstance(
+                self.exact_greedy_cohort_burst_cost_table_path,
+                str,
+            )
+        ):
+            raise ValueError(
+                "exact_greedy_cohort_burst_cost_table_path must be "
+                "a string or None"
+            )
+        if self.exact_greedy_cohort_burst:
+            if not self.exact_greedy_decode_burst:
+                raise ValueError(
+                    "SLO cohort burst requires "
+                    "exact_greedy_decode_burst"
+                )
+            if (
+                self.exact_greedy_cohort_burst_target_itl_ns <= 0
+                or self.exact_greedy_cohort_burst_target_ttft_ns <= 0
+            ):
+                raise ValueError(
+                    "SLO cohort burst requires positive ITL and "
+                    "TTFT targets"
+                )
+            path = self.exact_greedy_cohort_burst_cost_table_path
+            if not isinstance(path, str) or not path.strip():
+                raise ValueError(
+                    "SLO cohort burst requires a non-empty "
+                    "cost-table path"
+                )
+            if (
+                self.exact_greedy_cohort_burst_reserve_ns
+                >= self.exact_greedy_cohort_burst_target_itl_ns
+                or self.exact_greedy_cohort_burst_reserve_ns
+                >= self.exact_greedy_cohort_burst_target_ttft_ns
+            ):
+                raise ValueError(
+                    "SLO cohort burst reserve must be below both "
+                    "targets"
+                )
+            if self.tensor_parallel_size != 1:
+                raise ValueError(
+                    "SLO cohort burst requires tensor_parallel_size 1"
+                )
         if self.exact_greedy_decode_burst_octet_folded_graph:
             if not self.exact_greedy_decode_burst:
                 raise ValueError(
