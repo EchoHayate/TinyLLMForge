@@ -1,0 +1,39 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading CAPACITY OPEN
+  throughput was still rising usefully at the largest measured concurrency, so the capacity argument is not dead and GATE B remains worth building
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+L=2048
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+       32     46.375   0.621  690.03             -           -
+       64     51.097   0.374 1252.52         0.148      17.578
+       96     60.719   1.224 1581.04         0.301      10.266
+      128     67.965   1.305 1883.32         0.226       9.446
+      144     72.489   0.373 1986.50         0.283       6.449
+  peak throughput 1986.50 seq/s at B=144
+  the last sequences added 36.7% of what the first ones added
+  scaling efficiency across the sweep: 0.64 of proportional
+  step_ms = 37.548 + 0.239 * B                 R^2 = 0.9901
+  step_ms = 40.642 + 0.150 * B + 5.030e-04 * B^2    R^2 = 0.9943
+  at B=144 the B^2 term is 10.431 ms of 72.658 ms, or 14.4%
+
+L=8192
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+       16     49.581   0.271  322.71             -           -
+       32     65.088   0.721  491.64         0.969      10.558
+       40     72.348   0.712  552.88         0.907       7.656
+  peak throughput 552.88 seq/s at B=40
+  the last sequences added 72.5% of what the first ones added
+  scaling efficiency across the sweep: 0.69 of proportional
+  step_ms = 34.426 + 0.952 * B                 R^2 = 0.9997
+  step_ms = 32.755 + 1.093 * B + -2.575e-03 * B^2    R^2 = 1.0000
+  at B=40 the B^2 term is -4.119 ms of 72.348 ms, or 5.7%
+
+cells that produced no usable measurement
+  L=2048 B=160: no decode step ran at the target batch
+  L=2048 B=176: no decode step ran at the target batch
+  L=2048 B=192: no decode step ran at the target batch
+  L=8192 B=44: no decode step ran at the target batch
+  L=8192 B=48: no decode step ran at the target batch

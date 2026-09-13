@@ -254,6 +254,27 @@ def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utiliza
     return engine
 
 
+def resolve_config_holder(engine):
+    """Find the object that actually carries `config`.
+
+    The wall sweep recorded every identity field as null because `LLM` does not
+    expose `config` directly on itself in every build, and the lookup gave up at
+    the first AttributeError. Provenance that silently degrades to null is worse
+    than no provenance, because the artifact still looks complete.
+    """
+    for path in ("", "llm_engine", "engine", "model_runner"):
+        target = engine
+        if path:
+            try:
+                for attribute in path.split("."):
+                    target = getattr(target, attribute)
+            except AttributeError:
+                continue
+        if getattr(target, "config", None) is not None:
+            return target
+    return engine
+
+
 def _engine_identity(engine):
     """Best-effort record of what the engine actually allocated.
 
@@ -261,6 +282,7 @@ def _engine_identity(engine):
     attribute moving must not fail the run.
     """
     identity = {}
+    engine = resolve_config_holder(engine)
     for path, key in (
         ("config.num_kvcache_blocks", "num_kvcache_blocks"),
         ("config.kvcache_block_size", "kvcache_block_size"),

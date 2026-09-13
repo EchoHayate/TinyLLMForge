@@ -50,6 +50,11 @@ from kvcapacity_step_scaling_verdict import (  # noqa: E402
 # here rather than chosen after looking at the numbers.
 SATURATION_MARGINAL_FRACTION = 0.25
 
+# Concurrency is called useful only if the best throughput in the sweep beats the
+# smallest batch by at least this much. Below it, the extra sequences were paid
+# for and returned nothing.
+MIN_USEFUL_THROUGHPUT_GAIN = 0.10
+
 # Batch 1 runs a CUDA graph fast path on the default execution path: GATE A
 # measured 15-18 ms at B=1 against 43-50 ms at B=2. Comparing across that boundary
 # produces a fake collapse in marginal throughput, so a sweep whose B=1 cell is
@@ -245,7 +250,12 @@ def saturation(rows):
         )
         if batch_ratio > 1:
             proportional_gain = throughput_ratio / batch_ratio
+    smallest = rows[0]["throughput_seq_per_s"]
+    peak_gain = (
+        peak["throughput_seq_per_s"] / smallest if smallest else None
+    )
     return {
+        "peak_gain_over_smallest_batch": peak_gain,
         "first_marginal_throughput_per_seq": first,
         "last_marginal_throughput_per_seq": last,
         "retained_fraction": fraction,
@@ -274,13 +284,48 @@ def capacity_reading(contexts):
             "reading": "INCONCLUSIVE",
             "detail": "no context length carried enough batches to judge",
         }
-    rising = [item for item in verdicts if item[1]["throughput_still_rising"]]
-    if not rising:
+    # Dead means concurrency bought essentially nothing anywhere: the best
+    # throughput in the sweep is no better than the smallest batch already gave.
+    # A sweep that climbed and then fell is not dead, it is bounded, and the two
+    # lead to different decisions.
+    useful = [
+        item
+        for item in verdicts
+        if item[1]["peak_gain_over_smallest_batch"] is not None
+        and item[1]["peak_gain_over_smallest_batch"] > 1.0 + MIN_USEFUL_THROUGHPUT_GAIN
+    ]
+    if not useful:
         return {
             "reading": "CAPACITY DEAD",
             "detail": (
-                "throughput fell as concurrency grew, so holding more "
-                "sequences cannot pay even if KV were free"
+                "the best throughput in the sweep was no better than the "
+                "smallest batch already gave, so holding more sequences cannot "
+                "pay even if KV were free"
+            ),
+        }
+    # A peak strictly inside the sweep is the most important shape a sweep can
+    # find: it means concurrency has an optimum and pushing past it costs
+    # throughput, so the capacity payoff is bounded by that peak rather than by
+    # the KV budget. The wall sweep hit exactly this at L=2048, where throughput
+    # rose to 2015 seq/s at B=128 and fell to 1950 seq/s at B=144.
+    interior_peak = [
+        item for item in verdicts if not item[1]["peak_is_largest_batch"]
+    ]
+    if interior_peak:
+        peaks = ", ".join(
+            "L=%s peaks at B=%d with %.0f seq/s"
+            % (
+                context,
+                sat["peak_batch"],
+                sat["peak_throughput_seq_per_s"],
+            )
+            for context, sat in interior_peak
+        )
+        return {
+            "reading": "CAPACITY BOUNDED",
+            "detail": (
+                "throughput has an interior optimum, so trading KV bytes for "
+                "concurrency pays only up to that peak: " + peaks
             ),
         }
     saturating = [item for item in verdicts if item[1]["saturating"]]

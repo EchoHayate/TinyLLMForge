@@ -1,0 +1,39 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading CAPACITY BOUNDED
+  throughput has an interior optimum, so trading KV bytes for concurrency pays only up to that peak: L=2048 peaks at B=128 with 2015 seq/s
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+L=2048
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+       32     48.650   0.534  657.76             -           -
+       64     51.303   0.973 1247.49         0.083      18.429
+       96     58.329   1.175 1645.84         0.220      12.448
+      128     63.511   0.736 2015.39         0.162      11.549
+      144     73.863   1.674 1949.56         0.647      -4.114
+  peak throughput 2015.39 seq/s at B=128 (before the wall)
+  the last sequences added -22.3% of what the first ones added
+  scaling efficiency across the sweep: 0.66 of proportional
+  step_ms = 39.585 + 0.211 * B                 R^2 = 0.9130
+  step_ms = 50.041 + -0.091 * B + 1.700e-03 * B^2    R^2 = 0.9702
+  at B=144 the B^2 term is 35.253 ms of 72.250 ms, or 48.8%
+
+L=8192
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+       16     49.385   0.462  323.99             -           -
+       32     63.530   0.315  503.70         0.884      11.232
+       40     71.198   0.498  561.82         0.958       7.265
+  peak throughput 561.82 seq/s at B=40
+  the last sequences added 64.7% of what the first ones added
+  scaling efficiency across the sweep: 0.69 of proportional
+  step_ms = 34.814 + 0.905 * B                 R^2 = 0.9996
+  step_ms = 36.823 + 0.736 * B + 3.095e-03 * B^2    R^2 = 1.0000
+  at B=40 the B^2 term is 4.953 ms of 71.198 ms, or 7.0%
+
+cells that produced no usable measurement
+  L=2048 B=160: no decode step ran at the target batch
+  L=2048 B=176: no decode step ran at the target batch
+  L=2048 B=192: no decode step ran at the target batch
+  L=8192 B=44: no decode step ran at the target batch
+  L=8192 B=48: no decode step ran at the target batch

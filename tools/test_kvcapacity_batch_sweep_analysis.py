@@ -137,11 +137,12 @@ class CapacityReadingTests(unittest.TestCase):
         )
         self.assertEqual(reading["reading"], "CAPACITY DEAD")
 
-    def test_a_step_that_explodes_reports_capacity_dead(self):
+    def test_a_step_that_explodes_after_a_gain_is_bounded_at_the_peak(self):
         reading = sweep.capacity_reading(
             self._contexts([(1, 40.0), (2, 45.0), (4, 400.0)])
         )
-        self.assertEqual(reading["reading"], "CAPACITY DEAD")
+        self.assertEqual(reading["reading"], "CAPACITY BOUNDED")
+        self.assertIn("B=2", reading["detail"])
 
     def test_a_sweep_too_short_to_judge_is_inconclusive_not_open(self):
         reading = sweep.capacity_reading(

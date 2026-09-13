@@ -1,0 +1,202 @@
+{
+  "batch_fits": {
+    "2048": {
+      "linear": {
+        "a_ms_per_seq": 0.21062374692452818,
+        "c0_ms": 39.585342228969154,
+        "r_squared": 0.9130367096072163
+      },
+      "max_batch": 144,
+      "quadratic": {
+        "a_ms_per_seq": -0.09058058911700806,
+        "b_ms_per_seq2": 0.0017000795398820169,
+        "c0_ms": 50.04124605278991,
+        "predicted_at_max_batch_ms": 72.25049055893425,
+        "r_squared": 0.970154236457797,
+        "share_at_max_batch": 0.4879253976862343,
+        "term_at_max_batch_ms": 35.25284933899351
+      }
+    },
+    "8192": {
+      "linear": {
+        "a_ms_per_seq": 0.9053444518940509,
+        "c0_ms": 34.81410734821116,
+        "r_squared": 0.9995879481832358
+      },
+      "max_batch": 40,
+      "quadratic": {
+        "a_ms_per_seq": 0.735544090275897,
+        "b_ms_per_seq2": 0.003095319091997647,
+        "c0_ms": 36.823411627359256,
+        "predicted_at_max_batch_ms": 71.19768578559137,
+        "r_squared": 1.0,
+        "share_at_max_batch": 0.06955999331369418,
+        "term_at_max_batch_ms": 4.952510547196235
+      }
+    }
+  },
+  "capacity_reading": {
+    "detail": "throughput has an interior optimum, so trading KV bytes for concurrency pays only up to that peak: L=2048 peaks at B=128 with 2015 seq/s",
+    "reading": "CAPACITY BOUNDED"
+  },
+  "contexts": {
+    "2048": [
+      {
+        "batch": 32,
+        "context_length": 2048,
+        "dispersion_ratio": 0.010968337440814397,
+        "drift_ratio": 0.9958795920848322,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 48.650257755070925,
+        "step_stdev_ms": 0.5336124436402154,
+        "throughput_seq_per_s": 657.7560217893105
+      },
+      {
+        "batch": 64,
+        "context_length": 2048,
+        "dispersion_ratio": 0.01896702995626499,
+        "drift_ratio": 0.9800553349917727,
+        "marginal_ms_per_seq": 0.0828941774670966,
+        "marginal_throughput_per_seq": 18.429297019285695,
+        "step_ms": 51.302871434018016,
+        "step_stdev_ms": 0.9730630993314311,
+        "throughput_seq_per_s": 1247.4935264064527
+      },
+      {
+        "batch": 96,
+        "context_length": 2048,
+        "dispersion_ratio": 0.02014780835106673,
+        "drift_ratio": 1.0436422865317077,
+        "marginal_ms_per_seq": 0.21956509590381756,
+        "marginal_throughput_per_seq": 12.448259538040851,
+        "step_ms": 58.32895450294018,
+        "step_stdev_ms": 1.1752005966433294,
+        "throughput_seq_per_s": 1645.83783162376
+      },
+      {
+        "batch": 128,
+        "context_length": 2048,
+        "dispersion_ratio": 0.0115916279157844,
+        "drift_ratio": 1.014999767972954,
+        "marginal_ms_per_seq": 0.16194666386581957,
+        "marginal_throughput_per_seq": 11.548537935047989,
+        "step_ms": 63.511247746646404,
+        "step_stdev_ms": 0.7361987523463255,
+        "throughput_seq_per_s": 2015.3910455452956
+      },
+      {
+        "batch": 144,
+        "context_length": 2048,
+        "dispersion_ratio": 0.022664040522998852,
+        "drift_ratio": 1.038329090182244,
+        "marginal_ms_per_seq": 0.6469719082815573,
+        "marginal_throughput_per_seq": -4.114403972639394,
+        "step_ms": 73.86279827915132,
+        "step_stdev_ms": 1.6740294533407754,
+        "throughput_seq_per_s": 1949.5605819830653
+      }
+    ],
+    "8192": [
+      {
+        "batch": 16,
+        "context_length": 8192,
+        "dispersion_ratio": 0.009355174107239699,
+        "drift_ratio": 1.0106735984869715,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 49.38451875932515,
+        "step_stdev_ms": 0.4620007711957318,
+        "throughput_seq_per_s": 323.98817285181633
+      },
+      {
+        "batch": 32,
+        "context_length": 8192,
+        "dispersion_ratio": 0.004961196204906667,
+        "drift_ratio": 0.9988384558135301,
+        "marginal_ms_per_seq": 0.8841194066917524,
+        "marginal_throughput_per_seq": 11.231716471662018,
+        "step_ms": 63.530429266393185,
+        "step_stdev_ms": 0.31518692457252134,
+        "throughput_seq_per_s": 503.6956363984086
+      },
+      {
+        "batch": 40,
+        "context_length": 8192,
+        "dispersion_ratio": 0.006994997610253584,
+        "drift_ratio": 1.00714496609342,
+        "marginal_ms_per_seq": 0.9584070648998022,
+        "marginal_throughput_per_seq": 7.265047140355804,
+        "step_ms": 71.1976857855916,
+        "step_stdev_ms": 0.4980276419257988,
+        "throughput_seq_per_s": 561.8160135212551
+      }
+    ]
+  },
+  "excluded_cells": {
+    "2048": [],
+    "8192": []
+  },
+  "grid_is_preregistered": false,
+  "grid_spec": "2048:32;2048:64;2048:96;2048:128;2048:144;8192:16;8192:32;8192:40",
+  "kind": "kvcapacity_batch_sweep_analysis",
+  "note": "This is an exploratory sweep, not GATE A. It cannot pass or fail the pre-registered GATE A grid.",
+  "regime_boundary": {
+    "2048": null,
+    "8192": null
+  },
+  "rejected_cells": [
+    {
+      "batch": 160,
+      "context_length": 2048,
+      "reason": "no decode step ran at the target batch"
+    },
+    {
+      "batch": 176,
+      "context_length": 2048,
+      "reason": "no decode step ran at the target batch"
+    },
+    {
+      "batch": 192,
+      "context_length": 2048,
+      "reason": "no decode step ran at the target batch"
+    },
+    {
+      "batch": 44,
+      "context_length": 8192,
+      "reason": "no decode step ran at the target batch"
+    },
+    {
+      "batch": 48,
+      "context_length": 8192,
+      "reason": "no decode step ran at the target batch"
+    }
+  ],
+  "saturation": {
+    "2048": {
+      "first_marginal_throughput_per_seq": 18.429297019285695,
+      "last_marginal_throughput_per_seq": -4.114403972639394,
+      "peak_batch": 128,
+      "peak_gain_over_smallest_batch": 3.064040432595016,
+      "peak_is_largest_batch": false,
+      "peak_throughput_seq_per_s": 2015.3910455452956,
+      "retained_fraction": -0.22325344088457613,
+      "saturating": true,
+      "scaling_efficiency": 0.6586571168236265,
+      "throughput_still_rising": false
+    },
+    "8192": {
+      "first_marginal_throughput_per_seq": 11.231716471662018,
+      "last_marginal_throughput_per_seq": 7.265047140355804,
+      "peak_batch": 40,
+      "peak_gain_over_smallest_batch": 1.7340633411893556,
+      "peak_is_largest_batch": true,
+      "peak_throughput_seq_per_s": 561.8160135212551,
+      "retained_fraction": 0.6468332029824427,
+      "saturating": false,
+      "scaling_efficiency": 0.6936253364757422,
+      "throughput_still_rising": true
+    }
+  },
+  "source_payload_sha256": "f364c7f49327eceae7ebc89b69008693c565171c444e2b331f97ff9bc276c466,2e57a237fb9221e1ecdd9869b4ff5b8c69a62465a4bfae76e42b7f304eee56ce"
+}
