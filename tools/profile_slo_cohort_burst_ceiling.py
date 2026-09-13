@@ -74,8 +74,10 @@ _DEFAULT_MEASURED_STEPS = 16
 _ENGINE_CONFIG = {
     "enforce_eager": False,
     "max_num_seqs": 8,
-    "max_num_batched_tokens": 4096,
-    "max_num_prefill_tokens_per_step": 2048,
+    "max_num_batched_tokens": (
+        max(_BATCH_SIZES) * _DEFAULT_CONTEXT_BUCKET
+    ),
+    "max_num_prefill_tokens_per_step": 0,
     "autoregressive_draft_command_timeline": True,
     "autoregressive_draft_command_timeline_max_rows": 4096,
 }
@@ -329,39 +331,34 @@ def run_profile_case(
         raise ValueError("step timer must provide measure")
 
     start_ns = clock_ns()
-    pending = list(enumerate(case.arrival_offsets_ns))
+    for request_index, offset_ns in enumerate(
+        case.arrival_offsets_ns
+    ):
+        delay_ns = max(
+            0,
+            start_ns + offset_ns - clock_ns(),
+        )
+        if delay_ns:
+            sleep(delay_ns / 1_000_000_000.0)
+        engine.add_request(
+            _prompt_tokens(case, request_index),
+            sampling_params_factory(
+                temperature=0.0,
+                max_tokens=case.requested_output_tokens,
+                ignore_eos=True,
+            ),
+        )
     target_batch_steps = 0
     measured_rows = []
     step_index = 0
     guard = (
         case.batch_size * case.requested_output_tokens * 4
-        + len(pending)
+        + case.batch_size
         + 128
     )
-    while pending or not engine.is_finished():
+    while not engine.is_finished():
         if step_index > guard:
             raise RuntimeError("profile case exceeded the step guard")
-        now_ns = clock_ns()
-        while pending and pending[0][1] <= now_ns - start_ns:
-            request_index, _offset_ns = pending.pop(0)
-            engine.add_request(
-                _prompt_tokens(case, request_index),
-                sampling_params_factory(
-                    temperature=0.0,
-                    max_tokens=case.requested_output_tokens,
-                    ignore_eos=True,
-                ),
-            )
-        if engine.is_finished():
-            if not pending:
-                break
-            delay_ns = max(
-                0,
-                start_ns + pending[0][1] - clock_ns(),
-            )
-            if delay_ns:
-                sleep(delay_ns / 1_000_000_000.0)
-            continue
 
         step_started_ns = clock_ns()
         (_outputs, num_tokens), target_cuda_ns = step_timer.measure(

@@ -630,6 +630,16 @@ attribute:
 - batch construction and metadata binding;
 - GPU idle bubbles attributable to host control.
 
+Stage 0 is a fixed-cohort decode-step ceiling, not an open-loop service-load
+benchmark. Each case admits requests at its frozen arrival offsets but holds
+model execution behind an admission barrier until the complete cohort has
+arrived. Prefill must then admit the complete cohort in one ordinary batch
+before decode samples are accepted. This prevents decode-first scheduling and
+prefill compilation time from silently turning a requested `b2`, `b4`, or
+`b8` case into sequential `b1` work. The low/medium/high labels remain part of
+the frozen evidence inventory, but Stage 2 is authoritative for real
+arrival-load, fairness, and tail-latency claims.
+
 Generate the frozen cost table and a conservative optimistic throughput
 ceiling.
 

@@ -298,6 +298,14 @@ The profiler must run ordinary multi-request decode at batch sizes
 }
 ```
 
+For each Stage-0 case, admit requests at the frozen arrival offsets but do not
+start model execution until the complete cohort has arrived. Disable chunked
+prefill for this profiler and size `max_num_batched_tokens` for the complete
+`b8 x 2048` prompt cohort so every accepted decode sample has exactly the
+declared batch size. This admission barrier is specific to the fixed-cohort
+ceiling profiler; it does not replace the open-loop arrival execution required
+by Stage 2.
+
 The optimistic headroom removes only host costs that the proposed cohort
 burst can amortize. Target-model CUDA time and irreducible scheduler work
 remain in the denominator.

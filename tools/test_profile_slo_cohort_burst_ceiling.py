@@ -396,6 +396,84 @@ class _FakeProfileEngine:
         return [], (-1 if self._step == 1 else -2)
 
 
+class _AdmissionBarrierClock:
+    def __init__(self):
+        self.now_ns = 0
+
+    def __call__(self):
+        return self.now_ns
+
+    def sleep(self, seconds):
+        self.now_ns += int(round(seconds * 1_000_000_000))
+
+    def advance(self, duration_ns):
+        self.now_ns += duration_ns
+
+
+class _DecodeFirstAdmissionEngine:
+    def __init__(self, clock):
+        self.clock = clock
+        self.live_requests = 0
+        self.first_step_batch_size = None
+        self.last_step_observation = None
+
+    def add_request(self, _prompt, _sampling_params):
+        self.live_requests += 1
+
+    def is_finished(self):
+        return self.live_requests == 0
+
+    def step(self):
+        batch_size = self.live_requests
+        if self.first_step_batch_size is None:
+            self.first_step_batch_size = batch_size
+        self.live_requests = 0
+        self.clock.advance(100)
+        self.last_step_observation = {
+            "command_timeline_step": _timeline_step(wall_ns=100),
+            "memory": {"cuda_reserved_bytes": 4096},
+        }
+        return [], -batch_size
+
+
+def test_profile_case_admits_complete_cohort_before_first_model_step() -> None:
+    case = profile.CeilingProfileCase(
+        case_id="low-b2-c2048-r0",
+        load="low",
+        batch_size=2,
+        context_bucket=2048,
+        burst_width=1,
+        source_commit="a" * 40,
+        arrival_offsets_ns=(0, 4_000_000),
+        requested_output_tokens=8,
+        warmup_steps=0,
+        measured_steps=1,
+    )
+    clock = _AdmissionBarrierClock()
+    engine = _DecodeFirstAdmissionEngine(clock)
+
+    rows = profile.run_profile_case(
+        engine,
+        case,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        step_timer=_FakeStepTimer((60, 60)),
+        clock_ns=clock,
+        sleep=clock.sleep,
+    )
+
+    assert engine.first_step_batch_size == 2
+    assert len(rows) == 1
+    assert rows[0]["committed_tokens"] == 2
+
+
+def test_stage0_engine_config_can_prefill_the_largest_cohort_together() -> None:
+    assert profile._ENGINE_CONFIG["max_num_prefill_tokens_per_step"] == 0
+    assert (
+        profile._ENGINE_CONFIG["max_num_batched_tokens"]
+        >= max(profile._BATCH_SIZES) * profile._DEFAULT_CONTEXT_BUCKET
+    )
+
+
 def test_real_case_profiler_uses_timeline_cuda_and_offered_arrivals() -> None:
     case = profile.CeilingProfileCase(
         case_id="medium-b2-c2048-r0",
@@ -439,7 +517,7 @@ def test_real_case_profiler_uses_timeline_cuda_and_offered_arrivals() -> None:
         sleep=lambda seconds: sleeps.append(seconds),
     )
 
-    assert sleeps == []
+    assert sleeps == [pytest.approx(0.0009999)]
     assert len(engine.added) == 2
     assert engine.is_finished() is True
     assert len(rows) == 2
