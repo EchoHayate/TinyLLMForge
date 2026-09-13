@@ -213,4 +213,3 @@ def build_ceiling_summary(
     }
     summary["classification"] = ceiling.classify_ceiling(summary)
     return summary
-

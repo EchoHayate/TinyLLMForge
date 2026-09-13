@@ -52,4 +52,3 @@ def test_remote_runtime_prelude_redirects_every_cache_to_large_mount() -> None:
 
 def test_kerberos_guard_is_short_enough_for_fast_gpu_claim() -> None:
     assert remote.MINIMUM_KERBEROS_LIFETIME_SECONDS == 1_800
-
