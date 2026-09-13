@@ -1,0 +1,765 @@
+{
+  "attempted_but_unmeasured_cells": [],
+  "batch_term_at_largest_batch": {
+    "batch": 32,
+    "batch_term_ms": 5.620110232954752,
+    "context_length": 8192,
+    "predicted_step_ms": 64.26913305612376,
+    "share": 0.0874464920515876
+  },
+  "checks": [
+    {
+      "detail": "M1 R^2 0.9543 against threshold 0.98",
+      "name": "m1_r_squared",
+      "passed": false
+    },
+    {
+      "detail": "4/5 equal-product groups agree within 10%",
+      "name": "collision_consistency",
+      "passed": false,
+      "vacuous": false
+    },
+    {
+      "detail": "the pure batch term explains 8.7% of the step at L=8192, B=32, against a tolerance of 20%",
+      "name": "batch_term_share",
+      "passed": true
+    },
+    {
+      "detail": "the quadratic term explains 15.0% of the step at L=8192, B=32, against a tolerance of 10%",
+      "name": "curvature_share",
+      "passed": false
+    },
+    {
+      "detail": "18/18 cells held steady within 5% across their measured window",
+      "name": "window_stability",
+      "passed": true,
+      "vacuous": false
+    },
+    {
+      "detail": "18/18 cells kept their spread under 25% of their median",
+      "name": "sample_dispersion",
+      "passed": true,
+      "vacuous": false
+    },
+    {
+      "detail": "18/18 pre-registered cells produced a measurement",
+      "name": "grid_coverage",
+      "passed": true
+    },
+    {
+      "detail": "6 distinct batches measured; at least 3 are needed to say anything about batch scaling",
+      "name": "batch_coverage",
+      "passed": true
+    }
+  ],
+  "collision_groups": [
+    {
+      "kv_tokens": 16384,
+      "mean_ms": 41.639916715212166,
+      "relative_spread": 0.07377633364089611,
+      "shapes": [
+        [
+          8192,
+          2
+        ],
+        [
+          16384,
+          1
+        ]
+      ],
+      "step_ms": [
+        43.175936909392476,
+        40.10389652103186
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 32768,
+      "mean_ms": 43.027566745877266,
+      "relative_spread": 0.12714572903521515,
+      "shapes": [
+        [
+          8192,
+          4
+        ],
+        [
+          16384,
+          2
+        ],
+        [
+          32768,
+          1
+        ]
+      ],
+      "step_ms": [
+        45.499693835154176,
+        43.55408390983939,
+        40.02892249263823
+      ],
+      "within_threshold": false
+    },
+    {
+      "kv_tokens": 65536,
+      "mean_ms": 45.25960229026774,
+      "relative_spread": 0.02538847053092738,
+      "shapes": [
+        [
+          8192,
+          8
+        ],
+        [
+          16384,
+          4
+        ],
+        [
+          32768,
+          2
+        ]
+      ],
+      "step_ms": [
+        45.85477290675044,
+        44.705700827762485,
+        45.21833313629031
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 131072,
+      "mean_ms": 49.73689427909752,
+      "relative_spread": 0.022196278305406315,
+      "shapes": [
+        [
+          8192,
+          16
+        ],
+        [
+          16384,
+          8
+        ],
+        [
+          32768,
+          4
+        ]
+      ],
+      "step_ms": [
+        50.39115878753364,
+        49.53233920969069,
+        49.28718484006822
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 262144,
+      "mean_ms": 62.71180223363141,
+      "relative_spread": 0.057254703088702105,
+      "shapes": [
+        [
+          8192,
+          32
+        ],
+        [
+          16384,
+          16
+        ],
+        [
+          32768,
+          8
+        ]
+      ],
+      "step_ms": [
+        64.25538449548185,
+        63.21518332697451,
+        60.66483887843788
+      ],
+      "within_threshold": true
+    }
+  ],
+  "consequence": "The Stage 0 decode-step model does not describe the serving path. The capacity numbers in the Stage 0 artifact must be refit with the measured form before the latent KV line continues. Do not proceed to GATE B on the old constants.",
+  "curvature_at_largest_product": {
+    "batch": 32,
+    "context_length": 8192,
+    "curvature_term_ms": 9.367643676735005,
+    "kv_tokens": 262144,
+    "predicted_step_ms": 62.63177236260838,
+    "share": 0.14956695816463203
+  },
+  "fit_scope": "all measured batches",
+  "fitted_points": [
+    {
+      "batch": 1,
+      "context_length": 8192,
+      "dispersion_ratio": 0.01774344487983074,
+      "drift_ratio": 1.0043185313486498,
+      "kv_tokens": 8192,
+      "sample_count": 24,
+      "step_ms": 41.30218760110438,
+      "step_stdev_ms": 0.7328430891166242
+    },
+    {
+      "batch": 2,
+      "context_length": 8192,
+      "dispersion_ratio": 0.01247882178240746,
+      "drift_ratio": 0.9992598761609442,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 43.175936909392476,
+      "step_stdev_ms": 0.538784821980777
+    },
+    {
+      "batch": 4,
+      "context_length": 8192,
+      "dispersion_ratio": 0.03164165326115772,
+      "drift_ratio": 0.9993045838854556,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 45.499693835154176,
+      "step_stdev_ms": 1.4396855358207838
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "dispersion_ratio": 0.007263008522349697,
+      "drift_ratio": 0.996686416908753,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.85477290675044,
+      "step_stdev_ms": 0.3330436064121384
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "dispersion_ratio": 0.04807678688007016,
+      "drift_ratio": 1.0012654155319431,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 50.39115878753364,
+      "step_stdev_ms": 2.4226450016680294
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "dispersion_ratio": 0.04981688206764272,
+      "drift_ratio": 0.9974215983387856,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 64.25538449548185,
+      "step_stdev_ms": 3.2010029116224574
+    },
+    {
+      "batch": 1,
+      "context_length": 16384,
+      "dispersion_ratio": 0.01359920631759739,
+      "drift_ratio": 0.9998128711183385,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 40.10389652103186,
+      "step_stdev_ms": 0.5453811629290884
+    },
+    {
+      "batch": 2,
+      "context_length": 16384,
+      "dispersion_ratio": 0.013359856618300466,
+      "drift_ratio": 0.996802045980694,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 43.55408390983939,
+      "step_stdev_ms": 0.5818763161768816
+    },
+    {
+      "batch": 4,
+      "context_length": 16384,
+      "dispersion_ratio": 0.0034814706729258526,
+      "drift_ratio": 1.0002556435703451,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 44.705700827762485,
+      "step_stdev_ms": 0.1556415863444521
+    },
+    {
+      "batch": 8,
+      "context_length": 16384,
+      "dispersion_ratio": 0.003984758068653213,
+      "drift_ratio": 0.9950194126439958,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.53233920969069,
+      "step_stdev_ms": 0.1973743883250829
+    },
+    {
+      "batch": 16,
+      "context_length": 16384,
+      "dispersion_ratio": 0.017311182773980357,
+      "drift_ratio": 1.0053732961347046,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 63.21518332697451,
+      "step_stdev_ms": 1.0943295926639314
+    },
+    {
+      "batch": 1,
+      "context_length": 32768,
+      "dispersion_ratio": 0.007925211027093745,
+      "drift_ratio": 1.0007923260350993,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 40.02892249263823,
+      "step_stdev_ms": 0.31723765794133735
+    },
+    {
+      "batch": 2,
+      "context_length": 32768,
+      "dispersion_ratio": 0.0100407298546803,
+      "drift_ratio": 0.9932655457619145,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.21833313629031,
+      "step_stdev_ms": 0.45402506750042965
+    },
+    {
+      "batch": 4,
+      "context_length": 32768,
+      "dispersion_ratio": 0.013729389678408059,
+      "drift_ratio": 0.9976397402742521,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.28718484006822,
+      "step_stdev_ms": 0.6766829668210228
+    },
+    {
+      "batch": 8,
+      "context_length": 32768,
+      "dispersion_ratio": 0.0057143985951365744,
+      "drift_ratio": 1.0000923533941872,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 60.66483887843788,
+      "step_stdev_ms": 0.34666307006113206
+    },
+    {
+      "batch": 1,
+      "context_length": 40448,
+      "dispersion_ratio": 0.022707586022887347,
+      "drift_ratio": 1.044953463669612,
+      "kv_tokens": 40448,
+      "sample_count": 24,
+      "step_ms": 43.70278608985245,
+      "step_stdev_ms": 0.992384774575169
+    },
+    {
+      "batch": 2,
+      "context_length": 40448,
+      "dispersion_ratio": 0.016070769979220974,
+      "drift_ratio": 0.9986057634008956,
+      "kv_tokens": 80896,
+      "sample_count": 24,
+      "step_ms": 44.97962212190032,
+      "step_stdev_ms": 0.7228571608733393
+    },
+    {
+      "batch": 4,
+      "context_length": 40448,
+      "dispersion_ratio": 0.006543640990249186,
+      "drift_ratio": 0.9991827696176049,
+      "kv_tokens": 161792,
+      "sample_count": 24,
+      "step_ms": 51.25616514123976,
+      "step_stdev_ms": 0.335401943221198
+    }
+  ],
+  "grid_is_preregistered": true,
+  "grid_spec": "8192:1;8192:2;8192:4;8192:8;8192:16;8192:32;16384:1;16384:2;16384:4;16384:8;16384:16;32768:1;32768:2;32768:4;32768:8;40448:1;40448:2;40448:4",
+  "measured_points": [
+    {
+      "batch": 1,
+      "context_length": 8192,
+      "dispersion_ratio": 0.01774344487983074,
+      "drift_ratio": 1.0043185313486498,
+      "kv_tokens": 8192,
+      "sample_count": 24,
+      "step_ms": 41.30218760110438,
+      "step_stdev_ms": 0.7328430891166242
+    },
+    {
+      "batch": 2,
+      "context_length": 8192,
+      "dispersion_ratio": 0.01247882178240746,
+      "drift_ratio": 0.9992598761609442,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 43.175936909392476,
+      "step_stdev_ms": 0.538784821980777
+    },
+    {
+      "batch": 4,
+      "context_length": 8192,
+      "dispersion_ratio": 0.03164165326115772,
+      "drift_ratio": 0.9993045838854556,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 45.499693835154176,
+      "step_stdev_ms": 1.4396855358207838
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "dispersion_ratio": 0.007263008522349697,
+      "drift_ratio": 0.996686416908753,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.85477290675044,
+      "step_stdev_ms": 0.3330436064121384
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "dispersion_ratio": 0.04807678688007016,
+      "drift_ratio": 1.0012654155319431,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 50.39115878753364,
+      "step_stdev_ms": 2.4226450016680294
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "dispersion_ratio": 0.04981688206764272,
+      "drift_ratio": 0.9974215983387856,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 64.25538449548185,
+      "step_stdev_ms": 3.2010029116224574
+    },
+    {
+      "batch": 1,
+      "context_length": 16384,
+      "dispersion_ratio": 0.01359920631759739,
+      "drift_ratio": 0.9998128711183385,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 40.10389652103186,
+      "step_stdev_ms": 0.5453811629290884
+    },
+    {
+      "batch": 2,
+      "context_length": 16384,
+      "dispersion_ratio": 0.013359856618300466,
+      "drift_ratio": 0.996802045980694,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 43.55408390983939,
+      "step_stdev_ms": 0.5818763161768816
+    },
+    {
+      "batch": 4,
+      "context_length": 16384,
+      "dispersion_ratio": 0.0034814706729258526,
+      "drift_ratio": 1.0002556435703451,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 44.705700827762485,
+      "step_stdev_ms": 0.1556415863444521
+    },
+    {
+      "batch": 8,
+      "context_length": 16384,
+      "dispersion_ratio": 0.003984758068653213,
+      "drift_ratio": 0.9950194126439958,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.53233920969069,
+      "step_stdev_ms": 0.1973743883250829
+    },
+    {
+      "batch": 16,
+      "context_length": 16384,
+      "dispersion_ratio": 0.017311182773980357,
+      "drift_ratio": 1.0053732961347046,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 63.21518332697451,
+      "step_stdev_ms": 1.0943295926639314
+    },
+    {
+      "batch": 1,
+      "context_length": 32768,
+      "dispersion_ratio": 0.007925211027093745,
+      "drift_ratio": 1.0007923260350993,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 40.02892249263823,
+      "step_stdev_ms": 0.31723765794133735
+    },
+    {
+      "batch": 2,
+      "context_length": 32768,
+      "dispersion_ratio": 0.0100407298546803,
+      "drift_ratio": 0.9932655457619145,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.21833313629031,
+      "step_stdev_ms": 0.45402506750042965
+    },
+    {
+      "batch": 4,
+      "context_length": 32768,
+      "dispersion_ratio": 0.013729389678408059,
+      "drift_ratio": 0.9976397402742521,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.28718484006822,
+      "step_stdev_ms": 0.6766829668210228
+    },
+    {
+      "batch": 8,
+      "context_length": 32768,
+      "dispersion_ratio": 0.0057143985951365744,
+      "drift_ratio": 1.0000923533941872,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 60.66483887843788,
+      "step_stdev_ms": 0.34666307006113206
+    },
+    {
+      "batch": 1,
+      "context_length": 40448,
+      "dispersion_ratio": 0.022707586022887347,
+      "drift_ratio": 1.044953463669612,
+      "kv_tokens": 40448,
+      "sample_count": 24,
+      "step_ms": 43.70278608985245,
+      "step_stdev_ms": 0.992384774575169
+    },
+    {
+      "batch": 2,
+      "context_length": 40448,
+      "dispersion_ratio": 0.016070769979220974,
+      "drift_ratio": 0.9986057634008956,
+      "kv_tokens": 80896,
+      "sample_count": 24,
+      "step_ms": 44.97962212190032,
+      "step_stdev_ms": 0.7228571608733393
+    },
+    {
+      "batch": 4,
+      "context_length": 40448,
+      "dispersion_ratio": 0.006543640990249186,
+      "drift_ratio": 0.9991827696176049,
+      "kv_tokens": 161792,
+      "sample_count": 24,
+      "step_ms": 51.25616514123976,
+      "step_stdev_ms": 0.335401943221198
+    }
+  ],
+  "missing_preregistered_cells": [],
+  "model_m1": {
+    "c0_ms": 39.789463690086734,
+    "c1_us_per_token": 0.08368350846942484,
+    "form": "step_ms = c0 + c1 * L * B",
+    "parameters": 2,
+    "r_squared": 0.9543203474414038,
+    "residual_sum_squares": 43.25253005114464
+  },
+  "model_m2": {
+    "a_ms_per_sequence": 0.175628444779836,
+    "c0_ms": 39.85619709587735,
+    "c1_us_per_token": 0.07168894091526665,
+    "form": "step_ms = c0 + a * B + c1 * L * B",
+    "parameters": 3,
+    "r_squared": 0.9693901906786092,
+    "residual_reduction_vs_m1": 0.3299027552338397,
+    "residual_sum_squares": 28.98340121643757
+  },
+  "model_m3": {
+    "c0_ms": 41.22354667966206,
+    "c1_us_per_token": 0.0459311752556279,
+    "c2_ms_per_token_squared": 1.3631715667339457e-10,
+    "form": "step_ms = c0 + c1 * L * B + c2 * (L * B)^2",
+    "parameters": 3,
+    "r_squared": 0.9670588511524842,
+    "regressor_scale": 100000.0,
+    "residual_sum_squares": 31.190868376652748
+  },
+  "preregistered_cells": [
+    [
+      8192,
+      1
+    ],
+    [
+      8192,
+      2
+    ],
+    [
+      8192,
+      4
+    ],
+    [
+      8192,
+      8
+    ],
+    [
+      8192,
+      16
+    ],
+    [
+      8192,
+      32
+    ],
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      40448,
+      1
+    ],
+    [
+      40448,
+      2
+    ],
+    [
+      40448,
+      4
+    ]
+  ],
+  "preregistered_cells_v1": [
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      65536,
+      1
+    ],
+    [
+      65536,
+      2
+    ],
+    [
+      65536,
+      4
+    ],
+    [
+      131072,
+      1
+    ],
+    [
+      131072,
+      2
+    ]
+  ],
+  "regime_discontinuity": {
+    "comparisons": [
+      {
+        "batch_one_ms": 41.30218760110438,
+        "batch_two_ms": 43.175936909392476,
+        "context_length": 8192,
+        "ratio": 1.045366829631029
+      },
+      {
+        "batch_one_ms": 40.10389652103186,
+        "batch_two_ms": 43.55408390983939,
+        "context_length": 16384,
+        "ratio": 1.0860312260929095
+      },
+      {
+        "batch_one_ms": 40.02892249263823,
+        "batch_two_ms": 45.21833313629031,
+        "context_length": 32768,
+        "ratio": 1.129641527188409
+      },
+      {
+        "batch_one_ms": 43.70278608985245,
+        "batch_two_ms": 44.97962212190032,
+        "context_length": 40448,
+        "ratio": 1.0292163531501792
+      }
+    ],
+    "max_ratio": 1.129641527188409,
+    "regimes_differ": false
+  },
+  "rejected_cells": [],
+  "report_sha256": "3f2a5a786b6e473a3a69b71b5fde407044c4ab6e89eb089a8e39593609b19665",
+  "schema": "kvcapacity-gate-a-verdict/1",
+  "source_payload_sha256": "e5e43d75a2987f6fc30e2ca4f1e60e8d3e6cb835e9f18e7ab42e27a8485a1a46,25c0c77ba889c1450f589f4e702c51b83ddf6b6025bfda8f528b9ee3aaf28eac,be8e8a3bf335f92e57de5b682f9f2f2ab1184f2e2afa123632e759a438d36277,5161d5d3d3ea74f134e521035d30d240c4e08f1ffe545e35cf0424d63fc5be85",
+  "stage0_comparison": {
+    "c0_ratio": 3.0490010490487918,
+    "c1_ratio": 0.5541954203273168,
+    "measured_c0_ms": 39.789463690086734,
+    "measured_c1_us_per_token": 0.08368350846942484,
+    "stage0_c0_ms": 13.05,
+    "stage0_c1_us_per_token": 0.151
+  },
+  "thresholds": {
+    "max_batch_term_share": 0.2,
+    "max_collision_spread": 0.1,
+    "max_curvature_share": 0.1,
+    "max_dispersion_ratio": 0.25,
+    "max_drift_deviation": 0.05,
+    "min_r_squared": 0.98
+  },
+  "verdict": "FAIL"
+}

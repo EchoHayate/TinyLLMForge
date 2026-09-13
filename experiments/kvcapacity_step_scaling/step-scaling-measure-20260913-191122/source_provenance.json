@@ -1,0 +1,8 @@
+{
+  "source_revision": "92556929c16426bcdbdd7274bfe75d4c4148103e",
+  "tinyvllm_dirty_paths": 0,
+  "worker_sha256": "aa9b7b01d1ae82c37a0f6964bca739a7c256ef6980c275f0522fa48b19787997",
+  "remote_dir": "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-measure-20260913-191122",
+  "cuda_device": "2",
+  "mode": "measure"
+}

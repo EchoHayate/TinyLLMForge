@@ -1,0 +1,71 @@
+GATE A: decode step scaling against the Stage 0 model
+========================================================================
+verdict INCONCLUSIVE
+  At least one cell was still warming up while it was being timed, so the numbers describe compilation as much as decoding. This refutes the measurement, not the Stage 0 model. Raise the warmup and re-run before concluding anything.
+
+measured cells
+         L    B        L*B    step_ms    stdev    n
+      8192    1       8192     15.048    0.944   24
+      8192    2      16384     42.378    0.711   24
+      8192    4      32768     43.457    0.492   24
+      8192    8      65536     45.526    0.620   24
+      8192   16     131072     50.266    0.283   24
+      8192   32     262144     78.543   18.903   24
+     16384    1      16384     15.099    0.406   24
+     16384    2      32768     42.344    0.493   24
+     16384    4      65536     44.491    0.264   24
+     16384    8     131072     51.206    0.981   24
+     16384   16     262144     62.492    1.101   24
+     32768    1      32768     17.487    0.271   24
+     32768    2      65536     45.031    0.606   24
+     32768    4     131072     49.324    0.261   24
+     32768    8     262144     61.121    0.857   24
+     40448    1      40448     18.688    0.433   24
+     40448    2      80896     50.044    0.921   24
+     40448    4     161792     55.010    1.123   24
+
+batch 1 against batch 2, the CUDA graph regime boundary
+  L=8192: 15.048 ms at B=1 against 42.378 ms at B=2, ratio 2.82
+  L=16384: 15.099 ms at B=1 against 42.344 ms at B=2, ratio 2.80
+  L=32768: 17.487 ms at B=1 against 45.031 ms at B=2, ratio 2.58
+  L=40448: 18.688 ms at B=1 against 50.044 ms at B=2, ratio 2.68
+  these are different execution paths; Stage 0's c0 was fit at batch 1 and does not describe the multi-sequence regime its own capacity argument depends on
+
+fitted on: batch >= 2 only, because batch 1 runs a different execution path
+
+M1, the Stage 0 form
+  step_ms = c0 + c1 * L * B
+  c0 = 38.714 ms, c1 = 0.1054 us/token, R^2 = 0.8311
+
+M2, with a pure batch term
+  step_ms = c0 + a * B + c1 * L * B
+  c0 = 38.823 ms, a = 0.5081 ms/seq, c1 = 0.0710 us/token, R^2 = 0.9206
+  residual reduction against M1: 53.0%
+  at L=8192 B=32, the batch term is 16.259 ms of 73.701 ms, or 22.1%
+
+M3, allowing the step to bend with resident tokens
+  step_ms = c0 + c1 * L * B + c2 * (L * B)^2
+  c0 = 41.464 ms, c1 = 0.0478 us/token, c2 = 1.945e-10 ms/token^2, R^2 = 0.8446
+  at L*B=262144, the quadratic term is 13.365 ms of 67.356 ms, or 19.8%
+
+equal-product cells, which M1 requires to cost the same
+  L*B=32768: (8192,4), (16384,2) -> 43.457 ms, 42.344 ms  spread 2.6%  ok
+  L*B=65536: (8192,8), (16384,4), (32768,2) -> 45.526 ms, 44.491 ms, 45.031 ms  spread 2.3%  ok
+  L*B=131072: (8192,16), (16384,8), (32768,4) -> 50.266 ms, 51.206 ms, 49.324 ms  spread 3.7%  ok
+  L*B=262144: (8192,32), (16384,16), (32768,8) -> 78.543 ms, 62.492 ms, 61.121 ms  spread 25.9%  MISMATCH
+
+measured against the frozen Stage 0 inputs
+  c0: 38.714 ms measured against 13.05 ms assumed, ratio 2.967
+  c1: 0.1054 us/token measured against 0.151 us/token assumed, ratio 0.698
+
+pre-registered checks
+  [FAIL] m1_r_squared: M1 R^2 0.8311 against threshold 0.98
+  [FAIL] collision_consistency: 3/4 equal-product groups agree within 10%
+  [FAIL] batch_term_share: the pure batch term explains 22.1% of the step at L=8192, B=32, against a tolerance of 20%
+  [FAIL] curvature_share: the quadratic term explains 19.8% of the step at L=8192, B=32, against a tolerance of 10%
+  [FAIL] window_stability: 13/14 cells held steady within 5% across their measured window; drifting: L=8192 B=32 ratio 1.118
+  [PASS] sample_dispersion: 18/18 cells kept their spread under 25% of their median
+  [PASS] grid_coverage: 18/18 pre-registered cells produced a measurement
+  [PASS] batch_coverage: 5 distinct batches measured; at least 3 are needed to say anything about batch scaling
+
+report_sha256 987a4d59e537c5b0796807999bc0c0fbd0c66de0cd9924b2ebe49d6c4db05ba4

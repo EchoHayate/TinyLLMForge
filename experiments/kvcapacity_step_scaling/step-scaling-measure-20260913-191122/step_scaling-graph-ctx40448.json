@@ -1,0 +1,285 @@
+{
+  "configuration": {
+    "enforce_eager": false,
+    "gpu_memory_utilization": 0.85,
+    "kv_bytes_per_token": 147456,
+    "measured_steps": 24,
+    "model_path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+    "seed": 20260913,
+    "warmup_steps": 8
+  },
+  "engines": [
+    {
+      "context_length": 40448,
+      "identity": {
+        "captured_graph_batches": [
+          1,
+          2,
+          4,
+          8
+        ],
+        "cpu_offload": null,
+        "enforce_eager": null,
+        "gpu_memory_utilization": null,
+        "head_dim": null,
+        "kv_capacity_bytes": null,
+        "kv_capacity_tokens": null,
+        "kv_quant_bits": null,
+        "kvcache_block_size": null,
+        "max_model_len": null,
+        "max_num_batched_tokens": null,
+        "max_num_seqs": null,
+        "multi_sequence_cuda_graphs": null,
+        "num_hidden_layers": null,
+        "num_key_value_heads": null,
+        "num_kvcache_blocks": null,
+        "vocab_size": null
+      }
+    }
+  ],
+  "environment": {
+    "hostname": "n232-195-203",
+    "platform": "Linux-5.15.120.bsk.6-amd64-x86_64-with-glibc2.28",
+    "python": "3.11.15"
+  },
+  "grid": [
+    [
+      40448,
+      1
+    ],
+    [
+      40448,
+      2
+    ],
+    [
+      40448,
+      4
+    ]
+  ],
+  "grid_is_preregistered": false,
+  "grid_spec": "40448:1,2,4",
+  "payload_sha256": "b7aae32796cf9cff599d9d0a9e55317d3c4c828a126d26cde8e21fe20f5733e1",
+  "preregistered_grid_spec": "8192:1,2,4,8,16,32;16384:1,2,4,8,16;32768:1,2,4,8;40448:1,2,4",
+  "product_collision_groups": {},
+  "purpose": "Validate the batch term of the Stage 0 decode-step model step_ms(L, B) = c0 + c1 * L * B on the tinyvllm serving path.",
+  "rows": [
+    {
+      "batch": 1,
+      "context_length": 40448,
+      "decode_steps_by_observed_batch": {
+        "1": 33
+      },
+      "drift": {
+        "first_half_median_ms": 18.758228281512856,
+        "ratio": 0.9948175270064683,
+        "second_half_median_ms": 18.661014270037413
+      },
+      "kv_bytes": 5964300288,
+      "kv_tokens": 40448,
+      "measured": true,
+      "observed_batch_is_stable": true,
+      "prefill_steps": 1,
+      "prefill_tokens_expected": 40448,
+      "prefill_tokens_match": true,
+      "prefill_tokens_total": 40448,
+      "prompt_digests": [
+        "2ddb6d5683a1086444778e83349d381e6ed7b88a336b481175ccdb9f87e700df"
+      ],
+      "skipped_reason": null,
+      "step": {
+        "count": 24,
+        "max_ms": 20.284434780478477,
+        "mean_ms": 18.95531001112734,
+        "median_ms": 18.688497133553028,
+        "min_ms": 18.615756649523973,
+        "p10_ms": 18.628137186169624,
+        "p90_ms": 19.40150512382388,
+        "stdev_ms": 0.43318329360920194
+      },
+      "target_batch_step_count": 33,
+      "target_batch_step_trace_ms": [
+        21.004284266382456,
+        19.203013740479946,
+        18.976595252752304,
+        19.604082219302654,
+        18.776716198772192,
+        18.80431594327092,
+        19.58934497088194,
+        18.685447983443737,
+        18.67276057600975,
+        19.397051073610783,
+        18.642946146428585,
+        18.682828173041344,
+        19.43636266514659,
+        18.740204628556967,
+        18.776251934468746,
+        19.51276883482933,
+        18.694166094064713,
+        18.78752699121833,
+        19.40150512382388,
+        18.657610286027193,
+        18.6509620398283,
+        19.36843479052186,
+        18.6179899610579,
+        18.671042751520872,
+        20.284434780478477,
+        18.66556378081441,
+        18.628137186169624,
+        19.374677911400795,
+        18.615756649523973,
+        18.64036498591304,
+        19.35162814334035,
+        18.656464759260416,
+        18.788367975503206
+      ],
+      "warmup_steps": 8
+    },
+    {
+      "batch": 2,
+      "context_length": 40448,
+      "decode_steps_by_observed_batch": {
+        "2": 33
+      },
+      "drift": {
+        "first_half_median_ms": 50.04431842826307,
+        "ratio": 1.001045586432311,
+        "second_half_median_ms": 50.09664408862591
+      },
+      "kv_bytes": 11928600576,
+      "kv_tokens": 80896,
+      "measured": true,
+      "observed_batch_is_stable": true,
+      "prefill_steps": 2,
+      "prefill_tokens_expected": 80896,
+      "prefill_tokens_match": true,
+      "prefill_tokens_total": 80896,
+      "prompt_digests": [
+        "d5305b91d9daed784bbd2ed3c1f1800d67ceebd971cd10d388d766532d07d149",
+        "9bd8a190a3c4eb0d30d00781eaec3653ca5730ad281ce9798af1006b018ccb0c"
+      ],
+      "skipped_reason": null,
+      "step": {
+        "count": 24,
+        "max_ms": 52.0137557759881,
+        "mean_ms": 50.08280888432637,
+        "median_ms": 50.04431842826307,
+        "min_ms": 47.226731199771166,
+        "p10_ms": 49.16298808529973,
+        "p90_ms": 50.64562987536192,
+        "stdev_ms": 0.9209297201196998
+      },
+      "target_batch_step_count": 33,
+      "target_batch_step_trace_ms": [
+        53.15852118656039,
+        49.48471114039421,
+        50.53759226575494,
+        51.130195148289204,
+        51.20660690590739,
+        51.019127015024424,
+        50.429713912308216,
+        50.3391670063138,
+        52.0137557759881,
+        49.60319632664323,
+        50.457676872611046,
+        50.42951228097081,
+        49.8204380273819,
+        50.00485526397824,
+        50.01623509451747,
+        50.35965424031019,
+        50.07240176200867,
+        49.16298808529973,
+        51.44008668139577,
+        49.72601402550936,
+        51.38888210058212,
+        49.47679862380028,
+        47.226731199771166,
+        49.875731114298105,
+        49.84825989231467,
+        49.76336006075144,
+        48.75917313620448,
+        50.64562987536192,
+        50.63140299171209,
+        50.5142449401319,
+        50.31755706295371,
+        50.43282778933644,
+        49.71276316791773
+      ],
+      "warmup_steps": 8
+    },
+    {
+      "batch": 4,
+      "context_length": 40448,
+      "decode_steps_by_observed_batch": {
+        "4": 33
+      },
+      "drift": {
+        "first_half_median_ms": 56.07710522599518,
+        "ratio": 0.9758345645906356,
+        "second_half_median_ms": 54.721977561712265
+      },
+      "kv_bytes": 23857201152,
+      "kv_tokens": 161792,
+      "measured": true,
+      "observed_batch_is_stable": true,
+      "prefill_steps": 4,
+      "prefill_tokens_expected": 161792,
+      "prefill_tokens_match": true,
+      "prefill_tokens_total": 161792,
+      "prompt_digests": [
+        "2a3856b9ff8ed7f3efd203105c15bd0c0d6491073f53b897ea40e9950b548b8c",
+        "5d42cb1e3d882697ccb76b91c137913fbb8eedfee6c969e93239af9ba77b4155",
+        "82572446cd83963fb74107991dbf8df85b459c2628cead21ac807b385d626004",
+        "e28e2735410ddf2d6f98b7aa8b46e7ff262f73d9839a3ad0bbd83d3d27268ee5"
+      ],
+      "skipped_reason": null,
+      "step": {
+        "count": 24,
+        "max_ms": 59.18131396174431,
+        "mean_ms": 55.316497707584254,
+        "median_ms": 55.010189069435,
+        "min_ms": 53.87461977079511,
+        "p10_ms": 54.22252230346203,
+        "p90_ms": 56.266929022967815,
+        "stdev_ms": 1.12330992886877
+      },
+      "target_batch_step_count": 33,
+      "target_batch_step_trace_ms": [
+        57.73828737437725,
+        55.937521159648895,
+        55.60106365010142,
+        57.51778092235327,
+        56.99881911277771,
+        56.64969887584448,
+        57.02139995992184,
+        56.87151104211807,
+        56.16514617577195,
+        56.266929022967815,
+        56.25276314094663,
+        56.51409178972244,
+        55.989064276218414,
+        56.43521621823311,
+        59.18131396174431,
+        55.5425388738513,
+        55.50382100045681,
+        55.16554182395339,
+        54.52803894877434,
+        54.54449215903878,
+        54.98713627457619,
+        54.74335514008999,
+        54.75118523463607,
+        54.74336305633187,
+        54.70059998333454,
+        55.033241864293814,
+        54.379469249397516,
+        55.68109080195427,
+        54.22252230346203,
+        54.32972498238087,
+        53.87461977079511,
+        54.0606789290905,
+        55.00688776373863
+      ],
+      "warmup_steps": 8
+    }
+  ],
+  "schema": "kvcapacity-gate-a-step-scaling/1"
+}

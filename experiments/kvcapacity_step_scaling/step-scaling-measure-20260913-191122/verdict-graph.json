@@ -1,0 +1,700 @@
+{
+  "attempted_but_unmeasured_cells": [],
+  "batch_term_at_largest_batch": {
+    "batch": 32,
+    "batch_term_ms": 16.258736131106033,
+    "context_length": 8192,
+    "predicted_step_ms": 73.70112981964837,
+    "share": 0.22060362128629854
+  },
+  "checks": [
+    {
+      "detail": "M1 R^2 0.8311 against threshold 0.98",
+      "name": "m1_r_squared",
+      "passed": false
+    },
+    {
+      "detail": "3/4 equal-product groups agree within 10%",
+      "name": "collision_consistency",
+      "passed": false,
+      "vacuous": false
+    },
+    {
+      "detail": "the pure batch term explains 22.1% of the step at L=8192, B=32, against a tolerance of 20%",
+      "name": "batch_term_share",
+      "passed": false
+    },
+    {
+      "detail": "the quadratic term explains 19.8% of the step at L=8192, B=32, against a tolerance of 10%",
+      "name": "curvature_share",
+      "passed": false
+    },
+    {
+      "detail": "13/14 cells held steady within 5% across their measured window; drifting: L=8192 B=32 ratio 1.118",
+      "name": "window_stability",
+      "passed": false,
+      "vacuous": false
+    },
+    {
+      "detail": "18/18 cells kept their spread under 25% of their median",
+      "name": "sample_dispersion",
+      "passed": true,
+      "vacuous": false
+    },
+    {
+      "detail": "18/18 pre-registered cells produced a measurement",
+      "name": "grid_coverage",
+      "passed": true
+    },
+    {
+      "detail": "5 distinct batches measured; at least 3 are needed to say anything about batch scaling",
+      "name": "batch_coverage",
+      "passed": true
+    }
+  ],
+  "collision_groups": [
+    {
+      "kv_tokens": 32768,
+      "mean_ms": 42.90033772122115,
+      "relative_spread": 0.025947544401614286,
+      "shapes": [
+        [
+          8192,
+          4
+        ],
+        [
+          16384,
+          2
+        ]
+      ],
+      "step_ms": [
+        43.456916930153966,
+        42.34375851228833
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 65536,
+      "mean_ms": 45.01623668087026,
+      "relative_spread": 0.022982233259180185,
+      "shapes": [
+        [
+          8192,
+          8
+        ],
+        [
+          16384,
+          4
+        ],
+        [
+          32768,
+          2
+        ]
+      ],
+      "step_ms": [
+        45.52596714347601,
+        44.491393491625786,
+        45.03134940750897
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 131072,
+      "mean_ms": 50.26541238961121,
+      "relative_spread": 0.037455785758668564,
+      "shapes": [
+        [
+          8192,
+          16
+        ],
+        [
+          16384,
+          8
+        ],
+        [
+          32768,
+          4
+        ]
+      ],
+      "step_ms": [
+        50.266263308003545,
+        51.206352189183235,
+        49.32362167164683
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 262144,
+      "mean_ms": 67.38536331492166,
+      "relative_spread": 0.25854735941580304,
+      "shapes": [
+        [
+          8192,
+          32
+        ],
+        [
+          16384,
+          16
+        ],
+        [
+          32768,
+          8
+        ]
+      ],
+      "step_ms": [
+        78.54330958798528,
+        62.49177851714194,
+        61.121001839637756
+      ],
+      "within_threshold": false
+    }
+  ],
+  "consequence": "At least one cell was still warming up while it was being timed, so the numbers describe compilation as much as decoding. This refutes the measurement, not the Stage 0 model. Raise the warmup and re-run before concluding anything.",
+  "curvature_at_largest_product": {
+    "batch": 32,
+    "context_length": 8192,
+    "curvature_term_ms": 13.365016208465326,
+    "kv_tokens": 262144,
+    "predicted_step_ms": 67.35628203360615,
+    "share": 0.19842271284803253
+  },
+  "fit_scope": "batch >= 2 only, because batch 1 runs a different execution path",
+  "fitted_points": [
+    {
+      "batch": 2,
+      "context_length": 8192,
+      "dispersion_ratio": 0.016774633189480984,
+      "drift_ratio": 1.0345295545227484,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 42.377925710752606,
+      "step_stdev_ms": 0.7108741591289501
+    },
+    {
+      "batch": 4,
+      "context_length": 8192,
+      "dispersion_ratio": 0.011312558679221913,
+      "drift_ratio": 1.0063538664684306,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 43.456916930153966,
+      "step_stdev_ms": 0.49160892279043894
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "dispersion_ratio": 0.013613165723398622,
+      "drift_ratio": 1.0112690209372466,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.52596714347601,
+      "step_stdev_ms": 0.6197525354421395
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "dispersion_ratio": 0.005625894429141572,
+      "drift_ratio": 0.998338507523616,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 50.266263308003545,
+      "step_stdev_ms": 0.2827926907182606
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "dispersion_ratio": 0.24067285448427717,
+      "drift_ratio": 1.1183987528345822,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 78.54330958798528,
+      "step_stdev_ms": 18.90324251918271
+    },
+    {
+      "batch": 2,
+      "context_length": 16384,
+      "dispersion_ratio": 0.011632251882794868,
+      "drift_ratio": 0.999900673608231,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 42.34375851228833,
+      "step_stdev_ms": 0.4925532646791772
+    },
+    {
+      "batch": 4,
+      "context_length": 16384,
+      "dispersion_ratio": 0.005930136816629448,
+      "drift_ratio": 0.9999008168026479,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 44.491393491625786,
+      "step_stdev_ms": 0.2638400505678379
+    },
+    {
+      "batch": 8,
+      "context_length": 16384,
+      "dispersion_ratio": 0.019166664433427492,
+      "drift_ratio": 0.9955441162108464,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 51.206352189183235,
+      "step_stdev_ms": 0.9814549692699802
+    },
+    {
+      "batch": 16,
+      "context_length": 16384,
+      "dispersion_ratio": 0.0176180915110153,
+      "drift_ratio": 0.9869855774196719,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 62.49177851714194,
+      "step_stdev_ms": 1.1009858726011066
+    },
+    {
+      "batch": 2,
+      "context_length": 32768,
+      "dispersion_ratio": 0.013465500965314297,
+      "drift_ratio": 1.0215061346280563,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.03134940750897,
+      "step_stdev_ms": 0.6063696789162174
+    },
+    {
+      "batch": 4,
+      "context_length": 32768,
+      "dispersion_ratio": 0.005283757075204752,
+      "drift_ratio": 1.0011473988498818,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.32362167164683,
+      "step_stdev_ms": 0.2606140349822864
+    },
+    {
+      "batch": 8,
+      "context_length": 32768,
+      "dispersion_ratio": 0.014022723264445085,
+      "drift_ratio": 1.009620565004827,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 61.121001839637756,
+      "step_stdev_ms": 0.8570828944428792
+    },
+    {
+      "batch": 2,
+      "context_length": 40448,
+      "dispersion_ratio": 0.018402283197039102,
+      "drift_ratio": 1.001045586432311,
+      "kv_tokens": 80896,
+      "sample_count": 24,
+      "step_ms": 50.04431842826307,
+      "step_stdev_ms": 0.9209297201196998
+    },
+    {
+      "batch": 4,
+      "context_length": 40448,
+      "dispersion_ratio": 0.020420033958634554,
+      "drift_ratio": 0.9758345645906356,
+      "kv_tokens": 161792,
+      "sample_count": 24,
+      "step_ms": 55.010189069435,
+      "step_stdev_ms": 1.12330992886877
+    }
+  ],
+  "grid_is_preregistered": true,
+  "grid_spec": "8192:1;8192:2;8192:4;8192:8;8192:16;8192:32;16384:1;16384:2;16384:4;16384:8;16384:16;32768:1;32768:2;32768:4;32768:8;40448:1;40448:2;40448:4",
+  "measured_points": [
+    {
+      "batch": 1,
+      "context_length": 8192,
+      "dispersion_ratio": 0.06275727194816091,
+      "drift_ratio": 0.9067725606250265,
+      "kv_tokens": 8192,
+      "sample_count": 24,
+      "step_ms": 15.048180473968387,
+      "step_stdev_ms": 0.9443827543298391
+    },
+    {
+      "batch": 2,
+      "context_length": 8192,
+      "dispersion_ratio": 0.016774633189480984,
+      "drift_ratio": 1.0345295545227484,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 42.377925710752606,
+      "step_stdev_ms": 0.7108741591289501
+    },
+    {
+      "batch": 4,
+      "context_length": 8192,
+      "dispersion_ratio": 0.011312558679221913,
+      "drift_ratio": 1.0063538664684306,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 43.456916930153966,
+      "step_stdev_ms": 0.49160892279043894
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "dispersion_ratio": 0.013613165723398622,
+      "drift_ratio": 1.0112690209372466,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.52596714347601,
+      "step_stdev_ms": 0.6197525354421395
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "dispersion_ratio": 0.005625894429141572,
+      "drift_ratio": 0.998338507523616,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 50.266263308003545,
+      "step_stdev_ms": 0.2827926907182606
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "dispersion_ratio": 0.24067285448427717,
+      "drift_ratio": 1.1183987528345822,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 78.54330958798528,
+      "step_stdev_ms": 18.90324251918271
+    },
+    {
+      "batch": 1,
+      "context_length": 16384,
+      "dispersion_ratio": 0.026869461605823933,
+      "drift_ratio": 1.0003934023641279,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 15.099176671355963,
+      "step_stdev_ms": 0.40570674785055144
+    },
+    {
+      "batch": 2,
+      "context_length": 16384,
+      "dispersion_ratio": 0.011632251882794868,
+      "drift_ratio": 0.999900673608231,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 42.34375851228833,
+      "step_stdev_ms": 0.4925532646791772
+    },
+    {
+      "batch": 4,
+      "context_length": 16384,
+      "dispersion_ratio": 0.005930136816629448,
+      "drift_ratio": 0.9999008168026479,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 44.491393491625786,
+      "step_stdev_ms": 0.2638400505678379
+    },
+    {
+      "batch": 8,
+      "context_length": 16384,
+      "dispersion_ratio": 0.019166664433427492,
+      "drift_ratio": 0.9955441162108464,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 51.206352189183235,
+      "step_stdev_ms": 0.9814549692699802
+    },
+    {
+      "batch": 16,
+      "context_length": 16384,
+      "dispersion_ratio": 0.0176180915110153,
+      "drift_ratio": 0.9869855774196719,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 62.49177851714194,
+      "step_stdev_ms": 1.1009858726011066
+    },
+    {
+      "batch": 1,
+      "context_length": 32768,
+      "dispersion_ratio": 0.015501542891199907,
+      "drift_ratio": 0.9995182349412707,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 17.48696668073535,
+      "step_stdev_ms": 0.2710749640384027
+    },
+    {
+      "batch": 2,
+      "context_length": 32768,
+      "dispersion_ratio": 0.013465500965314297,
+      "drift_ratio": 1.0215061346280563,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.03134940750897,
+      "step_stdev_ms": 0.6063696789162174
+    },
+    {
+      "batch": 4,
+      "context_length": 32768,
+      "dispersion_ratio": 0.005283757075204752,
+      "drift_ratio": 1.0011473988498818,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.32362167164683,
+      "step_stdev_ms": 0.2606140349822864
+    },
+    {
+      "batch": 8,
+      "context_length": 32768,
+      "dispersion_ratio": 0.014022723264445085,
+      "drift_ratio": 1.009620565004827,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 61.121001839637756,
+      "step_stdev_ms": 0.8570828944428792
+    },
+    {
+      "batch": 1,
+      "context_length": 40448,
+      "dispersion_ratio": 0.02317914011563143,
+      "drift_ratio": 0.9948175270064683,
+      "kv_tokens": 40448,
+      "sample_count": 24,
+      "step_ms": 18.688497133553028,
+      "step_stdev_ms": 0.43318329360920194
+    },
+    {
+      "batch": 2,
+      "context_length": 40448,
+      "dispersion_ratio": 0.018402283197039102,
+      "drift_ratio": 1.001045586432311,
+      "kv_tokens": 80896,
+      "sample_count": 24,
+      "step_ms": 50.04431842826307,
+      "step_stdev_ms": 0.9209297201196998
+    },
+    {
+      "batch": 4,
+      "context_length": 40448,
+      "dispersion_ratio": 0.020420033958634554,
+      "drift_ratio": 0.9758345645906356,
+      "kv_tokens": 161792,
+      "sample_count": 24,
+      "step_ms": 55.010189069435,
+      "step_stdev_ms": 1.12330992886877
+    }
+  ],
+  "missing_preregistered_cells": [],
+  "model_m1": {
+    "c0_ms": 38.71403975510859,
+    "c1_us_per_token": 0.10538031802400546,
+    "form": "step_ms = c0 + c1 * L * B",
+    "parameters": 2,
+    "r_squared": 0.8311047442663115,
+    "residual_sum_squares": 223.60012503561958
+  },
+  "model_m2": {
+    "a_ms_per_sequence": 0.5080855040970635,
+    "c0_ms": 38.82282778808027,
+    "c1_us_per_token": 0.07102800712761717,
+    "form": "step_ms = c0 + a * B + c1 * L * B",
+    "parameters": 3,
+    "r_squared": 0.9206204723929257,
+    "residual_reduction_vs_m1": 0.5300073571501687,
+    "residual_sum_squares": 105.09041370704357
+  },
+  "model_m3": {
+    "c0_ms": 41.46391311553328,
+    "c1_us_per_token": 0.047788058126859816,
+    "c2_ms_per_token_squared": 1.9448658289133638e-10,
+    "form": "step_ms = c0 + c1 * L * B + c2 * (L * B)^2",
+    "parameters": 3,
+    "r_squared": 0.8446433094562162,
+    "regressor_scale": 100000.0,
+    "residual_sum_squares": 205.6764429516251
+  },
+  "preregistered_cells": [
+    [
+      8192,
+      1
+    ],
+    [
+      8192,
+      2
+    ],
+    [
+      8192,
+      4
+    ],
+    [
+      8192,
+      8
+    ],
+    [
+      8192,
+      16
+    ],
+    [
+      8192,
+      32
+    ],
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      40448,
+      1
+    ],
+    [
+      40448,
+      2
+    ],
+    [
+      40448,
+      4
+    ]
+  ],
+  "preregistered_cells_v1": [
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      65536,
+      1
+    ],
+    [
+      65536,
+      2
+    ],
+    [
+      65536,
+      4
+    ],
+    [
+      131072,
+      1
+    ],
+    [
+      131072,
+      2
+    ]
+  ],
+  "regime_discontinuity": {
+    "comparisons": [
+      {
+        "batch_one_ms": 15.048180473968387,
+        "batch_two_ms": 42.377925710752606,
+        "context_length": 8192,
+        "ratio": 2.816149486249286
+      },
+      {
+        "batch_one_ms": 15.099176671355963,
+        "batch_two_ms": 42.34375851228833,
+        "context_length": 16384,
+        "ratio": 2.804375326809505
+      },
+      {
+        "batch_one_ms": 17.48696668073535,
+        "batch_two_ms": 45.03134940750897,
+        "context_length": 32768,
+        "ratio": 2.5751378286274256
+      },
+      {
+        "batch_one_ms": 18.688497133553028,
+        "batch_two_ms": 50.04431842826307,
+        "context_length": 40448,
+        "ratio": 2.6778139553241176
+      }
+    ],
+    "max_ratio": 2.816149486249286,
+    "regimes_differ": true
+  },
+  "rejected_cells": [],
+  "report_sha256": "987a4d59e537c5b0796807999bc0c0fbd0c66de0cd9924b2ebe49d6c4db05ba4",
+  "schema": "kvcapacity-gate-a-verdict/1",
+  "source_payload_sha256": "7f43aa6ad14428ef4ee777292116c936ca8a7f773bd766db1545c8d23df98873,f640c490e3546134424d7db04603c8b64afe504dc2a84d661f785999ef9f46db,5c2949ea3c0587c26aad9cbf9af044722824003713e59b34c1e7b23229e033d0,b7aae32796cf9cff599d9d0a9e55317d3c4c828a126d26cde8e21fe20f5733e1",
+  "stage0_comparison": {
+    "c0_ratio": 2.9665930846826503,
+    "c1_ratio": 0.6978829008212283,
+    "measured_c0_ms": 38.71403975510859,
+    "measured_c1_us_per_token": 0.10538031802400546,
+    "stage0_c0_ms": 13.05,
+    "stage0_c1_us_per_token": 0.151
+  },
+  "thresholds": {
+    "max_batch_term_share": 0.2,
+    "max_collision_spread": 0.1,
+    "max_curvature_share": 0.1,
+    "max_dispersion_ratio": 0.25,
+    "max_drift_deviation": 0.05,
+    "min_r_squared": 0.98
+  },
+  "verdict": "INCONCLUSIVE"
+}
