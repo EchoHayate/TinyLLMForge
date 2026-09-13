@@ -83,6 +83,9 @@ def _load_scheduler_method(name: str):
         "ProtectedRequestSnapshot": policy.ProtectedRequestSnapshot,
         "SLOCohortBurstObservation": policy.SLOCohortBurstObservation,
         "SLOCohortBurstDecision": policy.SLOCohortBurstDecision,
+        "build_slo_cohort_decision_telemetry": (
+            policy.build_slo_cohort_decision_telemetry
+        ),
         "CohortWriteAuthority": contract.CohortWriteAuthority,
         "ExactGreedyCohortBurstFallback": (
             contract.ExactGreedyCohortBurstFallback
@@ -120,11 +123,20 @@ class FakeScheduler:
     register_slo_request = _load_scheduler_method(
         "register_slo_request"
     )
+    record_slo_prefill_start = _load_scheduler_method(
+        "record_slo_prefill_start"
+    )
+    record_slo_prefill_completion = _load_scheduler_method(
+        "record_slo_prefill_completion"
+    )
     record_slo_publication = _load_scheduler_method(
         "record_slo_publication"
     )
     remove_slo_request = _load_scheduler_method(
         "remove_slo_request"
+    )
+    slo_cohort_telemetry_snapshot = _load_scheduler_method(
+        "slo_cohort_telemetry_snapshot"
     )
     build_slo_cohort_observation = _load_scheduler_method(
         "build_slo_cohort_observation"
@@ -166,6 +178,7 @@ class FakeScheduler:
 
     def __init__(self):
         self.slo_request_state_by_seq_id = {}
+        self.completed_slo_request_state_by_seq_id = {}
         self.slo_clock_invalid = False
         self.slo_clock_invalid_reason = None
         self.exact_greedy_cohort_burst = True
@@ -181,6 +194,7 @@ class FakeScheduler:
         self._slo_cohort_cost_table = SimpleNamespace(
             table_sha256="b" * 64
         )
+        self._last_slo_cohort_decision_telemetry = None
         self.chunked_prefill_slo_mixed = False
         self.decode_progress_ns_by_seq_id = {}
         self.block_manager = _BlockManager()
@@ -346,6 +360,36 @@ def test_slo_request_lifecycle_uses_immutable_replacement() -> None:
     assert 7 not in scheduler.slo_request_state_by_seq_id
 
 
+def test_prefill_timeline_uses_immutable_monotonic_replacement() -> None:
+    scheduler = _scheduler()
+    seq = _sequence(7)
+    state0 = scheduler.register_slo_request(
+        seq,
+        arrival_ns=10,
+        service_class="default",
+    )
+
+    state1 = scheduler.record_slo_prefill_start(7, start_ns=12)
+    assert (
+        scheduler.record_slo_prefill_start(7, start_ns=15)
+        is state1
+    )
+    state2 = scheduler.record_slo_prefill_completion(
+        7,
+        complete_ns=18,
+    )
+
+    assert state1 is not state0
+    assert state2 is not state1
+    assert state2.prefill_start_ns == 12
+    assert state2.prefill_complete_ns == 18
+    with pytest.raises(ValueError, match="precedes"):
+        scheduler.record_slo_prefill_completion(
+            7,
+            complete_ns=11,
+        )
+
+
 def test_add_requires_engine_clock_and_registers_before_enqueue() -> None:
     scheduler = _scheduler()
     seq = _sequence(5)
@@ -487,6 +531,62 @@ def test_decode_publication_and_terminal_cleanup_update_slo_state() -> None:
     removed = []
     scheduler._remove_finished_progress(seq, removed)
     assert 21 not in scheduler.slo_request_state_by_seq_id
+    assert (
+        scheduler.completed_slo_request_state_by_seq_id[21][1]
+        == "length"
+    )
+    request_row = scheduler.slo_cohort_telemetry_snapshot()[
+        "requests"
+    ][0]
+    assert (
+        request_row["schema_version"]
+        == "slo-cohort-burst.request.v1"
+    )
+    assert request_row["completion_ns"] == 20
+    assert request_row["terminal_reason"] == "length"
+    drained = scheduler.slo_cohort_telemetry_snapshot(
+        drain_completed=True,
+    )
+    assert len(drained["requests"]) == 1
+    assert scheduler.slo_cohort_telemetry_snapshot()["requests"] == []
+
+
+def test_draining_request_rows_also_consumes_the_decision_row() -> None:
+    scheduler = _scheduler()
+    scheduler._last_slo_cohort_decision_telemetry = SimpleNamespace(
+        to_payload=lambda: {"selected_width": 4},
+    )
+
+    drained = scheduler.slo_cohort_telemetry_snapshot(
+        drain_completed=True,
+    )
+
+    assert drained["decision"] == {"selected_width": 4}
+    assert (
+        scheduler.slo_cohort_telemetry_snapshot()["decision"]
+        is None
+    )
+
+
+def test_cohort_publication_records_each_token_at_one_visible_time() -> None:
+    scheduler = _scheduler()
+    seq = _sequence(21)
+    scheduler.register_slo_request(
+        seq,
+        arrival_ns=10,
+        service_class="default",
+    )
+
+    scheduler._record_decode_progress(
+        seq,
+        step_end_ns=20,
+        progress_updates={},
+        visible_token_ids=(31, 32, 33, 34),
+    )
+
+    state = scheduler.slo_request_state_by_seq_id[21]
+    assert state.host_visible_token_timestamps_ns == (20, 20, 20, 20)
+    assert state.output_token_ids == (31, 32, 33, 34)
 
 
 def test_postprocess_journals_snapshot_cohort_slo_state() -> None:

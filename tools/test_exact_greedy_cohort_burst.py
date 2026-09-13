@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,6 +34,12 @@ ExactGreedyCohortBurstResult = module.ExactGreedyCohortBurstResult
 ExactGreedyCohortBurstRowResult = module.ExactGreedyCohortBurstRowResult
 ExactGreedyCohortBurstTransaction = (
     module.ExactGreedyCohortBurstTransaction
+)
+build_exact_greedy_cohort_burst_execution_telemetry = (
+    module.build_exact_greedy_cohort_burst_execution_telemetry
+)
+build_terminal_exact_greedy_cohort_burst_execution_telemetry = (
+    module.build_terminal_exact_greedy_cohort_burst_execution_telemetry
 )
 build_exact_greedy_cohort_burst_lease = (
     module.build_exact_greedy_cohort_burst_lease
@@ -199,6 +205,79 @@ def test_eos_prefix_is_committed_and_suffix_is_counted_as_waste() -> None:
     )
     assert validated.wasted_post_eos_tokens == 2
     assert validated.wasted_post_eos_forwards == 2
+
+
+def test_execution_telemetry_closes_identity_work_and_inventory() -> None:
+    lease = _lease()
+    result = _result(
+        lease,
+        tokens=((11, 2, 91, 92), (21, 22, 23, 24)),
+    )
+    publication = validate_exact_greedy_cohort_burst_result(
+        lease,
+        result,
+        eos_token_id=2,
+    )
+
+    row = build_exact_greedy_cohort_burst_execution_telemetry(
+        lease=lease,
+        result=result,
+        publication=publication,
+        actual_duration_ns=25,
+        host_visible_publication_gap_ns=4,
+        token_d2h_bytes=64,
+        quarantine_reason=None,
+        fallback_reason=None,
+        failure_reason=None,
+        rollback_reason=None,
+        pending_lease_count=0,
+        pending_transaction_count=0,
+    )
+
+    assert row.lease_identity_sha256 == lease.identity_sha256
+    assert row.result_identity_sha256
+    assert row.graph_identity_sha256 == lease.graph_identity_sha256
+    assert row.requested_width == 4
+    assert row.authorized_width == 4
+    assert row.completed_replay_count == 4
+    assert row.token_d2h_calls == 1
+    assert row.token_d2h_bytes == 64
+    assert row.generated_token_counts == ((7, 4), (9, 4))
+    assert row.committed_token_counts == ((7, 2), (9, 4))
+    assert row.eos_discarded_token_counts == ((7, 2), (9, 0))
+    assert row.post_eos_wasted_tokens == 2
+    assert row.post_eos_wasted_forwards == 2
+    assert row.pending_inventory == (
+        ("leases", 0),
+        ("transactions", 0),
+    )
+    with pytest.raises(FrozenInstanceError):
+        row.actual_duration_ns = 26
+
+
+def test_terminal_execution_telemetry_closes_failed_inventory() -> None:
+    lease = _lease()
+    row = build_terminal_exact_greedy_cohort_burst_execution_telemetry(
+        lease=lease,
+        completed_replay_count=2,
+        actual_duration_ns=25,
+        host_visible_publication_gap_ns=0,
+        fallback_reason=None,
+        failure_reason="graph_replay_failure",
+        rollback_reason=None,
+        quarantine_reason="graph_replay_failure",
+        pending_lease_count=0,
+        pending_transaction_count=0,
+    )
+
+    assert row.result_identity_sha256 is None
+    assert row.completed_replay_count == 2
+    assert row.failure_reason == "graph_replay_failure"
+    assert row.quarantined is True
+    assert row.pending_inventory == (
+        ("leases", 0),
+        ("transactions", 0),
+    )
 
 
 def test_lease_rejects_overlapping_physical_authority() -> None:

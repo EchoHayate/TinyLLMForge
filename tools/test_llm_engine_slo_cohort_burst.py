@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import importlib.util
 from pathlib import Path
 import sys
@@ -36,8 +37,25 @@ contract = _load_module(
 ExactGreedyCohortBurstFallback = (
     contract.ExactGreedyCohortBurstFallback
 )
+CohortWriteAuthority = contract.CohortWriteAuthority
+ExactGreedyCohortBurstLease = (
+    contract.ExactGreedyCohortBurstLease
+)
+ExactGreedyCohortBurstResult = (
+    contract.ExactGreedyCohortBurstResult
+)
 ExactGreedyCohortBurstTerminalError = (
     contract.ExactGreedyCohortBurstTerminalError
+)
+build_exact_greedy_cohort_burst_execution_telemetry = (
+    contract.build_exact_greedy_cohort_burst_execution_telemetry
+)
+build_terminal_exact_greedy_cohort_burst_execution_telemetry = (
+    contract
+    .build_terminal_exact_greedy_cohort_burst_execution_telemetry
+)
+build_exact_greedy_cohort_burst_lease = (
+    contract.build_exact_greedy_cohort_burst_lease
 )
 
 
@@ -71,11 +89,24 @@ def _load_engine_method(name: str):
         type_comment=method.type_comment,
     )
     namespace = {
+        "hashlib": hashlib,
         "ExactGreedyCohortBurstFallback": (
             ExactGreedyCohortBurstFallback
         ),
+        "ExactGreedyCohortBurstLease": (
+            ExactGreedyCohortBurstLease
+        ),
         "ExactGreedyCohortBurstTerminalError": (
             ExactGreedyCohortBurstTerminalError
+        ),
+        "ExactGreedyCohortBurstResult": (
+            ExactGreedyCohortBurstResult
+        ),
+        "build_exact_greedy_cohort_burst_execution_telemetry": (
+            build_exact_greedy_cohort_burst_execution_telemetry
+        ),
+        "build_terminal_exact_greedy_cohort_burst_execution_telemetry": (
+            build_terminal_exact_greedy_cohort_burst_execution_telemetry
         ),
     }
     exec(
@@ -126,9 +157,36 @@ class _Scheduler:
         self.events.append(
             ("prepare", tuple(seq.seq_id for seq in seqs))
         )
-        self.pending_cohort_lease = SimpleNamespace(
-            authorized_width=decision.selected_width,
+        width = decision.selected_width
+        rows = tuple(
+            CohortWriteAuthority(
+                sequence_id=seq.seq_id,
+                sequence_generation=3,
+                block_table_identity=((seq.seq_id, 5),),
+                writable_block_identities=((seq.seq_id, 5),),
+                first_write_position=len(seq.token_ids) - 1,
+                last_write_position=(
+                    len(seq.token_ids) + width - 2
+                ),
+                first_physical_slot=seq.seq_id * 256,
+                last_physical_slot=seq.seq_id * 256 + width - 1,
+                initial_completion_count=0,
+                initial_sequence_length=len(seq.token_ids),
+                remaining_output_tokens=width,
+            )
+            for seq in seqs
+        )
+        self.pending_cohort_lease = build_exact_greedy_cohort_burst_lease(
+            schedule_generation=kwargs["schedule_generation"],
+            graph_generation=7,
             graph_identity_sha256="a" * 64,
+            requested_width=width,
+            authorized_width=decision.selected_width,
+            decision_now_ns=kwargs["decision_now_ns"],
+            cost_table_sha256="b" * 64,
+            predicted_duration_ns=20,
+            global_slack_ns=30,
+            rows=rows,
         )
         return self.pending_cohort_lease
 
@@ -217,6 +275,9 @@ class _Engine:
     _execute_slo_cohort_burst = _load_engine_method(
         "_execute_slo_cohort_burst"
     )
+    _snapshot_slo_cohort_telemetry = _load_engine_method(
+        "_snapshot_slo_cohort_telemetry"
+    )
 
     def __init__(self, outcome, *, decision_width=4):
         self.scheduler = _Scheduler(
@@ -289,6 +350,30 @@ def test_post_replay_failure_is_terminal_without_k1_retry():
     assert engine.scheduler.fail_count == 1
 
 
+def test_failed_quarantine_is_not_reported_as_successful():
+    seqs = tuple(_Sequence(seq_id) for seq_id in (7, 9))
+    engine = _Engine(
+        ExactGreedyCohortBurstTerminalError(
+            "cohort burst replay failed",
+            completed_replays=2,
+        )
+    )
+
+    def fail_quarantine(_graph_identity, _reason):
+        raise RuntimeError("quarantine failed")
+
+    engine.model_runner.quarantine_exact_greedy_cohort_burst_graph = (
+        fail_quarantine
+    )
+
+    with pytest.raises(RuntimeError, match="cohort burst"):
+        _run(engine, seqs)
+
+    telemetry = engine._last_slo_cohort_execution_telemetry
+    assert telemetry.quarantined is False
+    assert telemetry.quarantine_reason is None
+
+
 def test_invalid_result_replay_count_is_bounded_for_terminal_cleanup():
     seqs = tuple(_Sequence(seq_id) for seq_id in (7, 9, 11, 13))
     engine = _Engine(
@@ -357,3 +442,52 @@ def test_step_calls_cohort_orchestration_only_on_non_speculative_path():
         and node.func.attr == "_execute_slo_cohort_burst"
     ]
     assert len(calls) == 1
+
+
+def test_step_observation_exposes_closed_cohort_telemetry() -> None:
+    source = ENGINE_PATH.read_text(encoding="utf-8")
+    for key in (
+        '"slo_cohort_decision_telemetry"',
+        '"exact_greedy_cohort_burst_execution_telemetry"',
+        '"slo_cohort_request_telemetry"',
+    ):
+        assert key in source
+
+
+def test_request_telemetry_hash_failure_is_non_interfering_and_not_drained():
+    row = {
+        "terminal_reason": "eos",
+        "output_token_ids": [7, 8],
+    }
+
+    class Scheduler:
+        def __init__(self):
+            self.calls = []
+
+        def slo_cohort_telemetry_snapshot(
+            self,
+            *,
+            drain_completed=False,
+        ):
+            self.calls.append(drain_completed)
+            return {
+                "decision": {"selected_width": 4},
+                "requests": [dict(row)],
+            }
+
+    class Tokenizer:
+        def decode(self, _token_ids):
+            raise RuntimeError("decode failed")
+
+    engine = object.__new__(_Engine)
+    engine.scheduler = Scheduler()
+    engine.tokenizer = Tokenizer()
+    engine._last_slo_cohort_telemetry_error = None
+
+    snapshot = engine._snapshot_slo_cohort_telemetry()
+
+    assert snapshot == {"decision": None, "requests": []}
+    assert engine.scheduler.calls == [False]
+    assert engine._last_slo_cohort_telemetry_error == (
+        "RuntimeError: decode failed"
+    )

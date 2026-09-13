@@ -57,8 +57,10 @@ from tinyvllm.engine.slo_cohort_burst import (
     ProtectedRequestSnapshot,
     RequestSLOState,
     SLOCohortBurstDecision,
+    SLOCohortBurstDecisionTelemetry,
     SLOCohortBurstObservation,
     SLOCohortCostTable,
+    build_slo_cohort_decision_telemetry,
     select_slo_cohort_burst_width,
 )
 
@@ -167,6 +169,10 @@ class SchedulerPostprocessJournal:
     slo_clock_invalid_reason: object
     last_slo_decision_now_ns: int | None
     slo_request_states: dict[int, RequestSLOState]
+    completed_slo_request_states: dict[
+        int,
+        tuple[RequestSLOState, str],
+    ]
     last_slo_cohort_decision: SLOCohortBurstDecision | None
     state: str = "active"
 
@@ -277,6 +283,9 @@ class SchedulerPostprocessJournal:
             ),
             slo_request_states=dict(
                 scheduler.slo_request_state_by_seq_id
+            ),
+            completed_slo_request_states=dict(
+                scheduler.completed_slo_request_state_by_seq_id
             ),
             last_slo_cohort_decision=(
                 scheduler._last_slo_cohort_decision
@@ -657,6 +666,10 @@ class SchedulerPostprocessJournal:
             scheduler.slo_request_state_by_seq_id.update(
                 self.slo_request_states
             )
+            scheduler.completed_slo_request_state_by_seq_id.clear()
+            scheduler.completed_slo_request_state_by_seq_id.update(
+                self.completed_slo_request_states
+            )
             scheduler._last_slo_cohort_decision = (
                 self.last_slo_cohort_decision
             )
@@ -692,6 +705,10 @@ class ExactBurstLeaseLocalDeltaJournal:
     slo_clock_invalid_reason: object
     last_slo_decision_now_ns: int | None
     slo_request_states: dict[int, RequestSLOState]
+    completed_slo_request_states: dict[
+        int,
+        tuple[RequestSLOState, str],
+    ]
     last_slo_cohort_decision: SLOCohortBurstDecision | None
     publication_plan: LeaseWriteBlockPublicationPlan
     publication_applied: bool = False
@@ -765,6 +782,9 @@ class ExactBurstLeaseLocalDeltaJournal:
             ),
             slo_request_states=dict(
                 scheduler.slo_request_state_by_seq_id
+            ),
+            completed_slo_request_states=dict(
+                scheduler.completed_slo_request_state_by_seq_id
             ),
             last_slo_cohort_decision=(
                 scheduler._last_slo_cohort_decision
@@ -922,6 +942,10 @@ class ExactBurstLeaseLocalDeltaJournal:
             scheduler.slo_request_state_by_seq_id.clear()
             scheduler.slo_request_state_by_seq_id.update(
                 self.slo_request_states
+            )
+            scheduler.completed_slo_request_state_by_seq_id.clear()
+            scheduler.completed_slo_request_state_by_seq_id.update(
+                self.completed_slo_request_states
             )
             scheduler._last_slo_cohort_decision = (
                 self.last_slo_cohort_decision
@@ -1149,8 +1173,15 @@ class Scheduler:
             int,
             RequestSLOState,
         ] = {}
+        self.completed_slo_request_state_by_seq_id: dict[
+            int,
+            tuple[RequestSLOState, str],
+        ] = {}
         self._last_slo_cohort_decision: (
             SLOCohortBurstDecision | None
+        ) = None
+        self._last_slo_cohort_decision_telemetry: (
+            SLOCohortBurstDecisionTelemetry | None
         ) = None
         self._exact_greedy_cohort_burst_pending_lease = None
         self._exact_greedy_cohort_burst_pending_transaction = None
@@ -2898,10 +2929,31 @@ class Scheduler:
         self,
         seq_id: int,
         visible_ns: int,
+        token_count: int = 1,
+        visible_token_ids: tuple[int, ...] | None = None,
     ) -> RequestSLOState:
         state = self.slo_request_state_by_seq_id.get(seq_id)
         if state is None:
             raise KeyError(f"SLO request {seq_id} is not registered")
+        if (
+            isinstance(token_count, bool)
+            or not isinstance(token_count, int)
+            or token_count < 1
+        ):
+            raise ValueError("token_count must be a positive integer")
+        if visible_token_ids is not None and (
+            not isinstance(visible_token_ids, tuple)
+            or len(visible_token_ids) != token_count
+            or any(
+                isinstance(token_id, bool)
+                or not isinstance(token_id, int)
+                or token_id < 0
+                for token_id in visible_token_ids
+            )
+        ):
+            raise ValueError(
+                "visible token IDs must match token_count"
+            )
         if (
             isinstance(visible_ns, bool)
             or not isinstance(visible_ns, int)
@@ -2923,13 +2975,94 @@ class Scheduler:
                 else state.first_token_visible_ns
             ),
             last_token_visible_ns=visible_ns,
+            host_visible_token_timestamps_ns=(
+                state.host_visible_token_timestamps_ns
+                + (visible_ns,) * token_count
+            ),
+            output_token_ids=(
+                state.output_token_ids
+                + (
+                    visible_token_ids
+                    if visible_token_ids is not None
+                    else ()
+                )
+            ),
         )
         updated.validate()
         self.slo_request_state_by_seq_id[seq_id] = updated
         return updated
 
-    def remove_slo_request(self, seq_id: int) -> None:
-        self.slo_request_state_by_seq_id.pop(seq_id, None)
+    def record_slo_prefill_start(
+        self,
+        seq_id: int,
+        start_ns: int,
+    ) -> RequestSLOState:
+        state = self.slo_request_state_by_seq_id.get(seq_id)
+        if state is None:
+            raise KeyError(f"SLO request {seq_id} is not registered")
+        if (
+            isinstance(start_ns, bool)
+            or not isinstance(start_ns, int)
+            or start_ns < state.arrival_ns
+        ):
+            self._invalidate_slo_clock(
+                "cohort_prefill_start_clock_regressed"
+            )
+            raise ValueError("prefill start precedes request arrival")
+        if state.prefill_start_ns is not None:
+            return state
+        updated = replace(state, prefill_start_ns=start_ns)
+        updated.validate()
+        self.slo_request_state_by_seq_id[seq_id] = updated
+        return updated
+
+    def record_slo_prefill_completion(
+        self,
+        seq_id: int,
+        complete_ns: int,
+    ) -> RequestSLOState:
+        state = self.slo_request_state_by_seq_id.get(seq_id)
+        if state is None:
+            raise KeyError(f"SLO request {seq_id} is not registered")
+        if state.prefill_start_ns is None:
+            raise ValueError(
+                "prefill completion requires a prefill start"
+            )
+        if (
+            isinstance(complete_ns, bool)
+            or not isinstance(complete_ns, int)
+            or complete_ns < state.prefill_start_ns
+        ):
+            self._invalidate_slo_clock(
+                "cohort_prefill_completion_clock_regressed"
+            )
+            raise ValueError("prefill completion precedes prefill start")
+        if state.prefill_complete_ns is not None:
+            if state.prefill_complete_ns != complete_ns:
+                raise ValueError(
+                    "prefill completion is already recorded"
+                )
+            return state
+        updated = replace(
+            state,
+            prefill_complete_ns=complete_ns,
+        )
+        updated.validate()
+        self.slo_request_state_by_seq_id[seq_id] = updated
+        return updated
+
+    def remove_slo_request(
+        self,
+        seq_id: int,
+        *,
+        terminal_reason: str | None = None,
+    ) -> None:
+        state = self.slo_request_state_by_seq_id.pop(seq_id, None)
+        if state is not None and terminal_reason is not None:
+            self.completed_slo_request_state_by_seq_id[seq_id] = (
+                state,
+                terminal_reason,
+            )
 
     def build_slo_cohort_observation(
         self,
@@ -3036,7 +3169,84 @@ class Scheduler:
             self._slo_cohort_cost_table,
         )
         self._last_slo_cohort_decision = decision
+        self._last_slo_cohort_decision_telemetry = (
+            build_slo_cohort_decision_telemetry(
+                schedule_generation=self.schedule_generation,
+                observation=observation,
+                decision=decision,
+                cost_table_sha256=(
+                    self._slo_cohort_cost_table.table_sha256
+                ),
+            )
+        )
         return decision
+
+    def slo_cohort_telemetry_snapshot(
+        self,
+        *,
+        drain_completed: bool = False,
+        include_active: bool = False,
+    ) -> dict[str, object]:
+        decision = self._last_slo_cohort_decision_telemetry
+        request_rows = []
+        state_rows = []
+        if include_active:
+            state_rows.extend(
+                (sequence_id, state, None)
+                for sequence_id, state in (
+                    self.slo_request_state_by_seq_id.items()
+                )
+            )
+        state_rows.extend(
+            (
+                sequence_id,
+                state_and_reason[0],
+                state_and_reason[1],
+            )
+            for sequence_id, state_and_reason in (
+                self.completed_slo_request_state_by_seq_id.items()
+            )
+        )
+        for sequence_id, state, terminal_reason in sorted(
+            state_rows,
+            key=lambda row: row[0],
+        ):
+            request_rows.append({
+                "schema_version": (
+                    "slo-cohort-burst.request.v1"
+                ),
+                "request_id": str(sequence_id),
+                "sequence_id": sequence_id,
+                "service_class": state.service_class,
+                "arrival_ns": state.arrival_ns,
+                "prefill_start_ns": state.prefill_start_ns,
+                "prefill_complete_ns": state.prefill_complete_ns,
+                "first_token_visible_ns": (
+                    state.first_token_visible_ns
+                ),
+                "token_visible_ns": list(
+                    state.host_visible_token_timestamps_ns
+                ),
+                "completion_ns": (
+                    state.last_token_visible_ns
+                    if terminal_reason is not None
+                    else None
+                ),
+                "output_token_ids": list(state.output_token_ids),
+                "output_text_sha256": None,
+                "terminal_reason": terminal_reason,
+            })
+        if drain_completed:
+            self.completed_slo_request_state_by_seq_id.clear()
+            self._last_slo_cohort_decision_telemetry = None
+        return {
+            "decision": (
+                decision.to_payload()
+                if decision is not None
+                else None
+            ),
+            "requests": request_rows,
+        }
 
     def _clear_exact_greedy_cohort_burst(self) -> None:
         self._exact_greedy_cohort_burst_pending_lease = None
@@ -5126,6 +5336,7 @@ class Scheduler:
             seq,
             step_end_ns,
             progress_updates,
+            visible_token_ids=row.output_tokens,
         )
         final_token = row.output_tokens[-1]
         finished = (
@@ -5322,6 +5533,7 @@ class Scheduler:
         seq: Sequence,
         step_end_ns: int | None,
         progress_updates: dict[int, int],
+        visible_token_ids: tuple[int, ...] | None = None,
     ) -> None:
         if step_end_ns is None:
             return
@@ -5330,9 +5542,24 @@ class Scheduler:
             and seq.seq_id in self.slo_request_state_by_seq_id
         ):
             try:
+                state = self.slo_request_state_by_seq_id[seq.seq_id]
+                if (
+                    state.prefill_start_ns is not None
+                    and state.prefill_complete_ns is None
+                ):
+                    self.record_slo_prefill_completion(
+                        seq.seq_id,
+                        step_end_ns,
+                    )
                 self.record_slo_publication(
                     seq.seq_id,
                     step_end_ns,
+                    token_count=(
+                        len(visible_token_ids)
+                        if visible_token_ids is not None
+                        else 1
+                    ),
+                    visible_token_ids=visible_token_ids,
                 )
             except ValueError:
                 pass
@@ -5346,7 +5573,18 @@ class Scheduler:
         seq: Sequence,
         finished_progress_entries_removed: list[int],
     ) -> None:
-        self.remove_slo_request(seq.seq_id)
+        terminal_reason = (
+            "eos"
+            if (
+                not seq.ignore_eos
+                and getattr(seq, "last_token", None) == self.eos
+            )
+            else "length"
+        )
+        self.remove_slo_request(
+            seq.seq_id,
+            terminal_reason=terminal_reason,
+        )
         if self.decode_progress_ns_by_seq_id.pop(seq.seq_id, None) is not None:
             finished_progress_entries_removed.append(seq.seq_id)
 
@@ -5379,6 +5617,7 @@ class Scheduler:
                 seq,
                 step_end_ns,
                 progress_updates,
+                visible_token_ids=(token_id,),
             )
             if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                 seq.status = SequenceStatus.FINISHED
@@ -5410,6 +5649,7 @@ class Scheduler:
                     seq,
                     step_end_ns,
                     progress_updates,
+                    visible_token_ids=(token_id,),
                 )
                 if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                     seq.status = SequenceStatus.FINISHED
@@ -5440,6 +5680,7 @@ class Scheduler:
                     seq,
                     step_end_ns,
                     progress_updates,
+                    visible_token_ids=(token_id,),
                 )
                 if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                     seq.status = SequenceStatus.FINISHED

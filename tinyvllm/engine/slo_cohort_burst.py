@@ -111,6 +111,10 @@ class RequestSLOState:
     first_token_visible_ns: int | None
     last_token_visible_ns: int | None
     service_class: str
+    prefill_start_ns: int | None = None
+    prefill_complete_ns: int | None = None
+    host_visible_token_timestamps_ns: tuple[int, ...] = ()
+    output_token_ids: tuple[int, ...] = ()
 
     def validate(self) -> None:
         _require_int(self.sequence_id, "sequence_id")
@@ -121,10 +125,61 @@ class RequestSLOState:
         )
         first = self.first_token_visible_ns
         last = self.last_token_visible_ns
-        if first is None:
-            if last is not None:
+        timestamps = self.host_visible_token_timestamps_ns
+        if not isinstance(timestamps, tuple):
+            raise ValueError(
+                "host-visible token timestamps must be a tuple"
+            )
+        prior = None
+        for timestamp in timestamps:
+            _require_int(
+                timestamp,
+                "host_visible_token_timestamp_ns",
+            )
+            if timestamp < self.arrival_ns:
                 raise ValueError(
-                    "last token timestamp requires a first token"
+                    "host-visible token timestamp precedes arrival"
+                )
+            if prior is not None and timestamp < prior:
+                raise ValueError(
+                    "host-visible token timestamps regressed"
+                )
+            prior = timestamp
+        if not isinstance(self.output_token_ids, tuple) or any(
+            isinstance(token_id, bool)
+            or not isinstance(token_id, int)
+            or token_id < 0
+            for token_id in self.output_token_ids
+        ):
+            raise ValueError("output token IDs must be non-negative integers")
+        if self.output_token_ids and (
+            len(self.output_token_ids) != len(timestamps)
+        ):
+            raise ValueError(
+                "output token IDs must match visible timestamps"
+            )
+        for name, timestamp in (
+            ("prefill_start_ns", self.prefill_start_ns),
+            ("prefill_complete_ns", self.prefill_complete_ns),
+        ):
+            if timestamp is not None:
+                _require_int(timestamp, name)
+                if timestamp < self.arrival_ns:
+                    raise ValueError(
+                        f"{name} precedes request arrival"
+                    )
+        if (
+            self.prefill_start_ns is not None
+            and self.prefill_complete_ns is not None
+            and self.prefill_complete_ns < self.prefill_start_ns
+        ):
+            raise ValueError(
+                "prefill completion precedes prefill start"
+            )
+        if first is None:
+            if last is not None or timestamps:
+                raise ValueError(
+                    "token timeline requires a first token"
                 )
             return
         _require_int(first, "first_token_visible_ns")
@@ -140,6 +195,19 @@ class RequestSLOState:
         if last < first:
             raise ValueError(
                 "last token timestamp precedes first token"
+            )
+        if (
+            self.prefill_complete_ns is not None
+            and first < self.prefill_complete_ns
+        ):
+            raise ValueError(
+                "first token precedes prefill completion"
+            )
+        if timestamps and (
+            timestamps[0] != first or timestamps[-1] != last
+        ):
+            raise ValueError(
+                "host-visible token timeline endpoints mismatch"
             )
 
 
@@ -410,6 +478,314 @@ class SLOCohortBurstDecision:
     global_slack_ns: int
     predicted_cost_ns_by_width: tuple[tuple[int, int], ...]
     protected_sequence_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class SLOCohortProtectedRequestTelemetry:
+    sequence_id: int
+    category: str
+    service_class: str | None
+    age_ns: int | None
+    slack_ns: int | None
+
+
+@dataclass(frozen=True)
+class SLOCohortBurstDecisionTelemetry:
+    decision_now_ns: int
+    schedule_generation: int
+    batch_size: int
+    ordered_cohort_sequence_ids: tuple[int, ...]
+    queue_depths: tuple[tuple[str, int], ...]
+    context_buckets: tuple[tuple[int, int], ...]
+    protected_requests: tuple[
+        SLOCohortProtectedRequestTelemetry,
+        ...,
+    ]
+    global_slack_ns: int
+    predicted_cost_ns_by_width: tuple[tuple[int, int], ...]
+    structural_eligibility_by_width: tuple[tuple[int, bool], ...]
+    selected_width: int
+    reason: str
+    cost_table_sha256: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": "slo-cohort-burst.decision.v1",
+            "decision_now_ns": self.decision_now_ns,
+            "schedule_generation": self.schedule_generation,
+            "batch_size": self.batch_size,
+            "ordered_cohort_sequence_ids": list(
+                self.ordered_cohort_sequence_ids
+            ),
+            "queue_depths": dict(self.queue_depths),
+            "context_buckets": [
+                {
+                    "sequence_id": sequence_id,
+                    "context_bucket": context_bucket,
+                }
+                for sequence_id, context_bucket
+                in self.context_buckets
+            ],
+            "protected_requests": [
+                {
+                    "sequence_id": request.sequence_id,
+                    "category": request.category,
+                    "service_class": request.service_class,
+                    "age_ns": request.age_ns,
+                    "slack_ns": request.slack_ns,
+                }
+                for request in self.protected_requests
+            ],
+            "global_slack_ns": self.global_slack_ns,
+            "predicted_cost_ns_by_width": dict(
+                self.predicted_cost_ns_by_width
+            ),
+            "structural_eligibility_by_width": dict(
+                self.structural_eligibility_by_width
+            ),
+            "selected_width": self.selected_width,
+            "reason": self.reason,
+            "cost_table_sha256": self.cost_table_sha256,
+        }
+
+
+@dataclass(frozen=True)
+class SLOCohortRequestTelemetry:
+    request_id: str
+    sequence_id: int
+    service_class: str
+    arrival_ns: int
+    prefill_start_ns: int
+    prefill_complete_ns: int
+    first_token_visible_ns: int
+    host_visible_token_timestamps_ns: tuple[int, ...]
+    completion_ns: int
+    output_token_ids: tuple[int, ...]
+    output_text_sha256: str
+    terminal_reason: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": "slo-cohort-burst.request.v1",
+            "request_id": self.request_id,
+            "sequence_id": self.sequence_id,
+            "service_class": self.service_class,
+            "arrival_ns": self.arrival_ns,
+            "prefill_start_ns": self.prefill_start_ns,
+            "prefill_complete_ns": self.prefill_complete_ns,
+            "first_token_visible_ns": self.first_token_visible_ns,
+            "token_visible_ns": list(
+                self.host_visible_token_timestamps_ns
+            ),
+            "completion_ns": self.completion_ns,
+            "output_token_ids": list(self.output_token_ids),
+            "output_text_sha256": self.output_text_sha256,
+            "terminal_reason": self.terminal_reason,
+        }
+
+
+def _request_age_ns(
+    request: ProtectedRequestSnapshot,
+    observation: SLOCohortBurstObservation,
+) -> int | None:
+    state = request.slo_state
+    if state is None:
+        return None
+    anchor = (
+        state.last_token_visible_ns
+        if state.first_token_visible_ns is not None
+        else state.arrival_ns
+    )
+    if anchor is None or anchor > observation.decision_now_ns:
+        return None
+    return observation.decision_now_ns - anchor
+
+
+def build_slo_cohort_decision_telemetry(
+    *,
+    schedule_generation: int,
+    observation: SLOCohortBurstObservation,
+    decision: SLOCohortBurstDecision,
+    cost_table_sha256: str,
+) -> SLOCohortBurstDecisionTelemetry:
+    _require_int(
+        schedule_generation,
+        "schedule_generation",
+        minimum=1,
+    )
+    _validate_observation(observation)
+    if not isinstance(decision, SLOCohortBurstDecision):
+        raise ValueError("cohort decision has an invalid type")
+    digest_valid = (
+        len(cost_table_sha256) == 64
+        and all(
+            character in "0123456789abcdef"
+            for character in cost_table_sha256
+        )
+    )
+    if not digest_valid and not (
+        cost_table_sha256 == ""
+        and decision.reason == "cost_table_invalid"
+    ):
+        raise ValueError("cost table SHA-256 is invalid")
+    requests = _protected_requests(observation)
+    protected_rows = []
+    for request in requests:
+        state = request.slo_state
+        age_ns = _request_age_ns(request, observation)
+        slack_ns = None
+        if state is not None and age_ns is not None:
+            slack_ns = _request_slack_ns(request, observation)
+        protected_rows.append(
+            SLOCohortProtectedRequestTelemetry(
+                sequence_id=request.sequence_id,
+                category=request.category,
+                service_class=(
+                    state.service_class if state is not None else None
+                ),
+                age_ns=age_ns,
+                slack_ns=slack_ns,
+            )
+        )
+    structural_base = (
+        observation.enabled
+        and observation.clock_valid
+        and observation.all_greedy
+        and not observation.mixed_mode_unsupported
+        and observation.graph_available
+        and not observation.graph_quarantined
+        and not observation.pending_lease
+        and observation.cohort_shape_supported
+        and bool(observation.cohort)
+    )
+    structural_eligibility = tuple(
+        (
+            width,
+            structural_base
+            and width in observation.configured_widths
+            and all(
+                request.remaining_output_tokens >= width
+                and request.writable_tokens >= width
+                for request in observation.cohort
+            ),
+        )
+        for width in (8, 4, 2)
+    )
+    return SLOCohortBurstDecisionTelemetry(
+        decision_now_ns=observation.decision_now_ns,
+        schedule_generation=schedule_generation,
+        batch_size=len(observation.cohort),
+        ordered_cohort_sequence_ids=tuple(
+            request.sequence_id for request in observation.cohort
+        ),
+        queue_depths=(
+            ("waiting", len(observation.waiting)),
+            ("prefilling", len(observation.incomplete_prefill)),
+            ("running", (
+                len(observation.cohort)
+                + len(observation.omitted_runnable_decode)
+            )),
+        ),
+        context_buckets=tuple(
+            (request.sequence_id, request.context_bucket)
+            for request in observation.cohort
+        ),
+        protected_requests=tuple(protected_rows),
+        global_slack_ns=decision.global_slack_ns,
+        predicted_cost_ns_by_width=(
+            decision.predicted_cost_ns_by_width
+        ),
+        structural_eligibility_by_width=structural_eligibility,
+        selected_width=decision.selected_width,
+        reason=decision.reason,
+        cost_table_sha256=cost_table_sha256,
+    )
+
+
+def build_slo_cohort_request_telemetry(
+    *,
+    request_id: str,
+    sequence_id: int,
+    service_class: str,
+    arrival_ns: int,
+    prefill_start_ns: int,
+    prefill_complete_ns: int,
+    host_visible_token_timestamps_ns: tuple[int, ...],
+    completion_ns: int,
+    output_token_ids: tuple[int, ...],
+    output_text_sha256: str,
+    terminal_reason: str,
+) -> SLOCohortRequestTelemetry:
+    _require_non_empty_string(request_id, "request_id")
+    _require_int(sequence_id, "sequence_id")
+    _require_non_empty_string(service_class, "service_class")
+    for name, timestamp in (
+        ("arrival_ns", arrival_ns),
+        ("prefill_start_ns", prefill_start_ns),
+        ("prefill_complete_ns", prefill_complete_ns),
+        ("completion_ns", completion_ns),
+    ):
+        _require_int(timestamp, name)
+    if not isinstance(host_visible_token_timestamps_ns, tuple) or not (
+        host_visible_token_timestamps_ns
+    ):
+        raise ValueError(
+            "host-visible token timestamps must be a non-empty tuple"
+        )
+    if not isinstance(output_token_ids, tuple) or (
+        len(output_token_ids)
+        != len(host_visible_token_timestamps_ns)
+    ):
+        raise ValueError(
+            "output token IDs must match host-visible timestamps"
+        )
+    state = RequestSLOState(
+        sequence_id=sequence_id,
+        arrival_ns=arrival_ns,
+        first_token_visible_ns=(
+            host_visible_token_timestamps_ns[0]
+        ),
+        last_token_visible_ns=(
+            host_visible_token_timestamps_ns[-1]
+        ),
+        service_class=service_class,
+        prefill_start_ns=prefill_start_ns,
+        prefill_complete_ns=prefill_complete_ns,
+        host_visible_token_timestamps_ns=(
+            host_visible_token_timestamps_ns
+        ),
+        output_token_ids=output_token_ids,
+    )
+    state.validate()
+    if completion_ns != host_visible_token_timestamps_ns[-1]:
+        raise ValueError(
+            "request completion must equal final token visibility"
+        )
+    _require_non_empty_string(terminal_reason, "terminal_reason")
+    if (
+        len(output_text_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in output_text_sha256
+        )
+    ):
+        raise ValueError("output text SHA-256 is invalid")
+    return SLOCohortRequestTelemetry(
+        request_id=request_id,
+        sequence_id=sequence_id,
+        service_class=service_class,
+        arrival_ns=arrival_ns,
+        prefill_start_ns=prefill_start_ns,
+        prefill_complete_ns=prefill_complete_ns,
+        first_token_visible_ns=host_visible_token_timestamps_ns[0],
+        host_visible_token_timestamps_ns=(
+            host_visible_token_timestamps_ns
+        ),
+        completion_ns=completion_ns,
+        output_token_ids=output_token_ids,
+        output_text_sha256=output_text_sha256,
+        terminal_reason=terminal_reason,
+    )
 
 
 def _fallback(

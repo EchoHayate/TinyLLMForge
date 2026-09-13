@@ -354,6 +354,282 @@ class ValidatedExactGreedyCohortBurstPublication:
 
 
 @dataclass(frozen=True)
+class ExactGreedyCohortBurstExecutionTelemetry:
+    lease_identity_sha256: str
+    result_identity_sha256: str | None
+    graph_identity_sha256: str
+    requested_width: int
+    authorized_width: int
+    completed_replay_count: int
+    predicted_duration_ns: int
+    actual_duration_ns: int
+    host_visible_publication_gap_ns: int
+    token_d2h_calls: int
+    token_d2h_bytes: int
+    sampled_logit_d2h_calls: int
+    generated_token_counts: tuple[tuple[int, int], ...]
+    committed_token_counts: tuple[tuple[int, int], ...]
+    eos_discarded_token_counts: tuple[tuple[int, int], ...]
+    post_eos_wasted_tokens: int
+    post_eos_wasted_forwards: int
+    post_eos_wasted_forward_fraction: float
+    fallback_reason: str | None
+    failure_reason: str | None
+    rollback_reason: str | None
+    quarantined: bool
+    quarantine_reason: str | None
+    pending_inventory: tuple[tuple[str, int], ...]
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "schema_version": (
+                "exact-greedy-cohort-burst.execution.v1"
+            ),
+            "lease_identity_sha256": self.lease_identity_sha256,
+            "result_identity_sha256": self.result_identity_sha256,
+            "graph_identity_sha256": self.graph_identity_sha256,
+            "requested_width": self.requested_width,
+            "authorized_width": self.authorized_width,
+            "completed_replay_count": self.completed_replay_count,
+            "predicted_duration_ns": self.predicted_duration_ns,
+            "actual_duration_ns": self.actual_duration_ns,
+            "host_visible_publication_gap_ns": (
+                self.host_visible_publication_gap_ns
+            ),
+            "token_d2h_calls": self.token_d2h_calls,
+            "token_d2h_bytes": self.token_d2h_bytes,
+            "sampled_logit_d2h_calls": (
+                self.sampled_logit_d2h_calls
+            ),
+            "generated_token_counts": dict(
+                self.generated_token_counts
+            ),
+            "committed_token_counts": dict(
+                self.committed_token_counts
+            ),
+            "eos_discarded_token_counts": dict(
+                self.eos_discarded_token_counts
+            ),
+            "post_eos_wasted_tokens": self.post_eos_wasted_tokens,
+            "post_eos_wasted_forwards": (
+                self.post_eos_wasted_forwards
+            ),
+            "post_eos_wasted_forward_fraction": (
+                self.post_eos_wasted_forward_fraction
+            ),
+            "fallback_reason": self.fallback_reason,
+            "failure_reason": self.failure_reason,
+            "rollback_reason": self.rollback_reason,
+            "quarantined": self.quarantined,
+            "quarantine_reason": self.quarantine_reason,
+            "pending_inventory": dict(self.pending_inventory),
+        }
+
+
+def build_exact_greedy_cohort_burst_execution_telemetry(
+    *,
+    lease: ExactGreedyCohortBurstLease,
+    result: ExactGreedyCohortBurstResult,
+    publication: ValidatedExactGreedyCohortBurstPublication,
+    actual_duration_ns: int,
+    host_visible_publication_gap_ns: int,
+    token_d2h_bytes: int,
+    quarantine_reason: str | None,
+    fallback_reason: str | None,
+    failure_reason: str | None,
+    rollback_reason: str | None,
+    pending_lease_count: int,
+    pending_transaction_count: int,
+) -> ExactGreedyCohortBurstExecutionTelemetry:
+    if not isinstance(lease, ExactGreedyCohortBurstLease):
+        raise ValueError("cohort lease has an invalid type")
+    _validate_lease_identity(lease)
+    if not isinstance(result, ExactGreedyCohortBurstResult):
+        raise ValueError("cohort result has an invalid type")
+    if not isinstance(
+        publication,
+        ValidatedExactGreedyCohortBurstPublication,
+    ):
+        raise ValueError("cohort publication has an invalid type")
+    for name, value in (
+        ("actual_duration_ns", actual_duration_ns),
+        (
+            "host_visible_publication_gap_ns",
+            host_visible_publication_gap_ns,
+        ),
+        ("token_d2h_bytes", token_d2h_bytes),
+        ("pending_lease_count", pending_lease_count),
+        ("pending_transaction_count", pending_transaction_count),
+    ):
+        _require_int(value, name)
+    for name, reason in (
+        ("quarantine_reason", quarantine_reason),
+        ("fallback_reason", fallback_reason),
+        ("failure_reason", failure_reason),
+        ("rollback_reason", rollback_reason),
+    ):
+        if reason is not None:
+            _require_reason(reason, name)
+    generated = tuple(
+        (row.sequence_id, len(row.tokens))
+        for row in result.rows
+    )
+    committed = tuple(
+        (sequence_id, len(tokens))
+        for sequence_id, tokens in zip(
+            publication.ordered_sequence_ids,
+            publication.commit_tokens,
+        )
+    )
+    committed_by_sequence = dict(committed)
+    discarded = tuple(
+        (
+            sequence_id,
+            count - committed_by_sequence[sequence_id],
+        )
+        for sequence_id, count in generated
+    )
+    result_payload = {
+        "schema_version": (
+            "exact-greedy-cohort-burst.result-identity.v1"
+        ),
+        "lease_identity_sha256": result.lease_identity_sha256,
+        "graph_identity_sha256": result.graph_identity_sha256,
+        "graph_generation": result.graph_generation,
+        "replay_count": result.replay_count,
+        "rows": [asdict(row) for row in result.rows],
+        "token_d2h_calls": result.token_d2h_calls,
+        "sampled_logit_d2h_calls": (
+            result.sampled_logit_d2h_calls
+        ),
+    }
+    result_identity = hashlib.sha256(
+        _canonical_json_bytes(result_payload)
+    ).hexdigest()
+    total_forward_slots = (
+        result.replay_count * len(result.rows)
+    )
+    waste_fraction = (
+        publication.wasted_post_eos_forwards
+        / total_forward_slots
+        if total_forward_slots
+        else 0.0
+    )
+    return ExactGreedyCohortBurstExecutionTelemetry(
+        lease_identity_sha256=lease.identity_sha256,
+        result_identity_sha256=result_identity,
+        graph_identity_sha256=result.graph_identity_sha256,
+        requested_width=lease.requested_width,
+        authorized_width=lease.authorized_width,
+        completed_replay_count=result.replay_count,
+        predicted_duration_ns=lease.predicted_duration_ns,
+        actual_duration_ns=actual_duration_ns,
+        host_visible_publication_gap_ns=(
+            host_visible_publication_gap_ns
+        ),
+        token_d2h_calls=result.token_d2h_calls,
+        token_d2h_bytes=token_d2h_bytes,
+        sampled_logit_d2h_calls=(
+            result.sampled_logit_d2h_calls
+        ),
+        generated_token_counts=generated,
+        committed_token_counts=committed,
+        eos_discarded_token_counts=discarded,
+        post_eos_wasted_tokens=(
+            publication.wasted_post_eos_tokens
+        ),
+        post_eos_wasted_forwards=(
+            publication.wasted_post_eos_forwards
+        ),
+        post_eos_wasted_forward_fraction=waste_fraction,
+        fallback_reason=fallback_reason,
+        failure_reason=failure_reason,
+        rollback_reason=rollback_reason,
+        quarantined=quarantine_reason is not None,
+        quarantine_reason=quarantine_reason,
+        pending_inventory=(
+            ("leases", pending_lease_count),
+            ("transactions", pending_transaction_count),
+        ),
+    )
+
+
+def build_terminal_exact_greedy_cohort_burst_execution_telemetry(
+    *,
+    lease: ExactGreedyCohortBurstLease,
+    completed_replay_count: int,
+    actual_duration_ns: int,
+    host_visible_publication_gap_ns: int,
+    fallback_reason: str | None,
+    failure_reason: str | None,
+    rollback_reason: str | None,
+    quarantine_reason: str | None,
+    pending_lease_count: int,
+    pending_transaction_count: int,
+) -> ExactGreedyCohortBurstExecutionTelemetry:
+    if not isinstance(lease, ExactGreedyCohortBurstLease):
+        raise ValueError("cohort lease has an invalid type")
+    _validate_lease_identity(lease)
+    for name, value in (
+        ("completed_replay_count", completed_replay_count),
+        ("actual_duration_ns", actual_duration_ns),
+        (
+            "host_visible_publication_gap_ns",
+            host_visible_publication_gap_ns,
+        ),
+        ("pending_lease_count", pending_lease_count),
+        ("pending_transaction_count", pending_transaction_count),
+    ):
+        _require_int(value, name)
+    if completed_replay_count > lease.authorized_width:
+        raise ValueError(
+            "completed replay count exceeds authorization"
+        )
+    reasons = (
+        ("fallback_reason", fallback_reason),
+        ("failure_reason", failure_reason),
+        ("rollback_reason", rollback_reason),
+        ("quarantine_reason", quarantine_reason),
+    )
+    for name, reason in reasons:
+        if reason is not None:
+            _require_reason(reason, name)
+    if not any(reason is not None for _name, reason in reasons):
+        raise ValueError("terminal telemetry requires a terminal reason")
+    return ExactGreedyCohortBurstExecutionTelemetry(
+        lease_identity_sha256=lease.identity_sha256,
+        result_identity_sha256=None,
+        graph_identity_sha256=lease.graph_identity_sha256,
+        requested_width=lease.requested_width,
+        authorized_width=lease.authorized_width,
+        completed_replay_count=completed_replay_count,
+        predicted_duration_ns=lease.predicted_duration_ns,
+        actual_duration_ns=actual_duration_ns,
+        host_visible_publication_gap_ns=(
+            host_visible_publication_gap_ns
+        ),
+        token_d2h_calls=0,
+        token_d2h_bytes=0,
+        sampled_logit_d2h_calls=0,
+        generated_token_counts=(),
+        committed_token_counts=(),
+        eos_discarded_token_counts=(),
+        post_eos_wasted_tokens=0,
+        post_eos_wasted_forwards=0,
+        post_eos_wasted_forward_fraction=0.0,
+        fallback_reason=fallback_reason,
+        failure_reason=failure_reason,
+        rollback_reason=rollback_reason,
+        quarantined=quarantine_reason is not None,
+        quarantine_reason=quarantine_reason,
+        pending_inventory=(
+            ("leases", pending_lease_count),
+            ("transactions", pending_transaction_count),
+        ),
+    )
+
+
+@dataclass(frozen=True)
 class ExactGreedyCohortBurstFallback:
     fallback_reason: str
     replay_count: int = 0

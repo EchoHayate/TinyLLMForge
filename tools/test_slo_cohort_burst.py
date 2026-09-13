@@ -30,6 +30,12 @@ ProtectedRequestSnapshot = module.ProtectedRequestSnapshot
 RequestSLOState = module.RequestSLOState
 SLOCohortBurstObservation = module.SLOCohortBurstObservation
 SLOCohortCostTable = module.SLOCohortCostTable
+build_slo_cohort_decision_telemetry = (
+    module.build_slo_cohort_decision_telemetry
+)
+build_slo_cohort_request_telemetry = (
+    module.build_slo_cohort_request_telemetry
+)
 select_slo_cohort_burst_width = module.select_slo_cohort_burst_width
 
 
@@ -430,3 +436,117 @@ def test_request_slo_state_rejects_invalid_timestamp_order(
 ) -> None:
     with pytest.raises(ValueError):
         state.validate()
+
+
+def test_decision_telemetry_closes_policy_inputs_and_is_immutable() -> None:
+    observation = _observation(
+        cohort=(
+            _snapshot(7, context_bucket=2048),
+            _snapshot(9, context_bucket=4096),
+        ),
+        waiting=(
+            _snapshot(
+                11,
+                category="waiting",
+                state=_state(
+                    11,
+                    arrival_ns=10_000_000,
+                    first_token_visible_ns=None,
+                    last_token_visible_ns=None,
+                ),
+            ),
+        ),
+    )
+    table = _table(context_buckets=(2048, 4096))
+    decision = select_slo_cohort_burst_width(observation, table)
+
+    row = build_slo_cohort_decision_telemetry(
+        schedule_generation=23,
+        observation=observation,
+        decision=decision,
+        cost_table_sha256=table.table_sha256,
+    )
+
+    assert row.schedule_generation == 23
+    assert row.ordered_cohort_sequence_ids == (7, 9)
+    assert row.queue_depths == (
+        ("waiting", 1),
+        ("prefilling", 0),
+        ("running", 2),
+    )
+    assert row.context_buckets == ((7, 2048), (9, 4096))
+    assert tuple(
+        request.sequence_id for request in row.protected_requests
+    ) == (7, 9, 11)
+    assert row.predicted_cost_ns_by_width == (
+        (8, 30_000_000),
+        (4, 18_000_000),
+        (2, 9_000_000),
+    )
+    assert row.structural_eligibility_by_width == (
+        (8, True),
+        (4, True),
+        (2, True),
+    )
+    assert row.selected_width == 4
+    assert row.reason == "selected"
+    assert row.cost_table_sha256 == table.table_sha256
+    with pytest.raises(FrozenInstanceError):
+        row.selected_width = 1
+
+
+def test_request_telemetry_preserves_raw_publication_timeline() -> None:
+    row = build_slo_cohort_request_telemetry(
+        request_id="request-7",
+        sequence_id=7,
+        service_class="interactive",
+        arrival_ns=10,
+        prefill_start_ns=12,
+        prefill_complete_ns=20,
+        host_visible_token_timestamps_ns=(30, 30, 45),
+        completion_ns=45,
+        output_token_ids=(101, 102, 2),
+        output_text_sha256="e" * 64,
+        terminal_reason="eos",
+    )
+
+    assert row.first_token_visible_ns == 30
+    assert row.host_visible_token_timestamps_ns == (30, 30, 45)
+    assert row.output_token_ids == (101, 102, 2)
+    assert row.output_text_sha256 == "e" * 64
+    assert row.terminal_reason == "eos"
+    with pytest.raises(FrozenInstanceError):
+        row.completion_ns = 46
+
+
+def test_request_telemetry_rejects_token_before_prefill_completion() -> None:
+    with pytest.raises(ValueError, match="prefill completion"):
+        build_slo_cohort_request_telemetry(
+            request_id="request-7",
+            sequence_id=7,
+            service_class="interactive",
+            arrival_ns=10,
+            prefill_start_ns=12,
+            prefill_complete_ns=31,
+            host_visible_token_timestamps_ns=(30,),
+            completion_ns=30,
+            output_token_ids=(101,),
+            output_text_sha256="e" * 64,
+            terminal_reason="eos",
+        )
+
+
+def test_invalid_cost_table_still_emits_a_closed_decision_row() -> None:
+    observation = _observation()
+    table = SLOCohortCostTable.invalid("missing")
+    decision = select_slo_cohort_burst_width(observation, table)
+
+    row = build_slo_cohort_decision_telemetry(
+        schedule_generation=23,
+        observation=observation,
+        decision=decision,
+        cost_table_sha256=table.table_sha256,
+    )
+
+    assert row.reason == "cost_table_invalid"
+    assert row.cost_table_sha256 == ""

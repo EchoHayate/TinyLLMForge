@@ -19,7 +19,11 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
 )
 from tinyvllm.engine.exact_greedy_cohort_burst import (
     ExactGreedyCohortBurstFallback,
+    ExactGreedyCohortBurstLease,
+    ExactGreedyCohortBurstResult,
     ExactGreedyCohortBurstTerminalError,
+    build_exact_greedy_cohort_burst_execution_telemetry,
+    build_terminal_exact_greedy_cohort_burst_execution_telemetry,
 )
 from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
     ExactBurstSplitPhaseTransaction,
@@ -543,6 +547,8 @@ class LLMEngine:
         self.last_batch_kind = None
         self.last_scheduled_seqs = []
         self.last_step_observation = None
+        self._last_slo_cohort_execution_telemetry = None
+        self._last_slo_cohort_telemetry_error = None
         self._exact_burst_split_phase_transaction = None
         self._phase_stitch_transaction = None
         self.speculative_runtime = None
@@ -4239,6 +4245,8 @@ class LLMEngine:
         exact_burst_gate_width: int | None,
         exact_burst_correctness_trace: bool,
     ) -> tuple[bool, int | None, int]:
+        self._last_slo_cohort_execution_telemetry = None
+        self._last_slo_cohort_telemetry_error = None
         config = getattr(self.model_runner, "config", None)
         enabled = bool(
             getattr(
@@ -4298,6 +4306,8 @@ class LLMEngine:
         if lease is None:
             return False, None, 0
         result = None
+        step_end_ns = None
+        prepared = None
         try:
             result = self.model_runner.call(
                 "run_exact_greedy_cohort_burst",
@@ -4309,10 +4319,37 @@ class LLMEngine:
                 result,
                 ExactGreedyCohortBurstFallback,
             ):
+                fallback_end_ns = self._clock_ns()
                 self.scheduler.cancel_exact_greedy_cohort_burst(
                     lease,
                     result.fallback_reason,
                 )
+                if isinstance(lease, ExactGreedyCohortBurstLease):
+                    try:
+                        self._last_slo_cohort_execution_telemetry = (
+                            build_terminal_exact_greedy_cohort_burst_execution_telemetry(
+                                lease=lease,
+                                completed_replay_count=0,
+                                actual_duration_ns=(
+                                    fallback_end_ns
+                                    - decision_now_ns
+                                ),
+                                host_visible_publication_gap_ns=0,
+                                fallback_reason=(
+                                    result.fallback_reason
+                                ),
+                                failure_reason=None,
+                                rollback_reason=None,
+                                quarantine_reason=None,
+                                pending_lease_count=0,
+                                pending_transaction_count=0,
+                            )
+                        )
+                    except BaseException as telemetry_error:
+                        self._last_slo_cohort_telemetry_error = (
+                            f"{type(telemetry_error).__name__}: "
+                            f"{telemetry_error}"
+                        )
                 return False, None, 0
             step_end_ns = self._clock_ns()
             prepared = (
@@ -4330,18 +4367,23 @@ class LLMEngine:
             )
             self.scheduler.commit_prepared_postprocess(prepared)
         except BaseException as error:
+            failure_reason = (
+                getattr(error, "reason", None)
+                or "engine_failure:" + type(error).__name__
+            )
             quarantine = getattr(
                 self.model_runner,
                 "quarantine_exact_greedy_cohort_burst_graph",
                 None,
             )
+            quarantine_succeeded = False
             if callable(quarantine):
                 try:
                     quarantine(
                         lease.graph_identity_sha256,
-                        "engine_failure:"
-                        + type(error).__name__,
+                        failure_reason,
                     )
+                    quarantine_succeeded = True
                 except BaseException:
                     pass
             raw_completed_replays = getattr(
@@ -4368,19 +4410,160 @@ class LLMEngine:
                     lease,
                     terminal=True,
                     reason=(
-                        getattr(error, "reason", None)
-                        or "engine_failure:"
-                        + type(error).__name__
+                        failure_reason
                     ),
                     completed_replays=completed_replays,
                 )
             except BaseException:
                 pass
+            try:
+                failure_end_ns = self._clock_ns()
+            except BaseException:
+                failure_end_ns = (
+                    step_end_ns
+                    if step_end_ns is not None
+                    else decision_now_ns
+                )
+            rollback_reason = None
+            if getattr(prepared, "state", None) == "rolled_back":
+                rollback_reason = failure_reason
+            if isinstance(lease, ExactGreedyCohortBurstLease):
+                try:
+                    self._last_slo_cohort_execution_telemetry = (
+                        build_terminal_exact_greedy_cohort_burst_execution_telemetry(
+                            lease=lease,
+                            completed_replay_count=completed_replays,
+                            actual_duration_ns=(
+                                failure_end_ns - decision_now_ns
+                            ),
+                            host_visible_publication_gap_ns=0,
+                            fallback_reason=None,
+                            failure_reason=failure_reason,
+                            rollback_reason=rollback_reason,
+                            quarantine_reason=(
+                                failure_reason
+                                if quarantine_succeeded
+                                else None
+                            ),
+                            pending_lease_count=int(
+                                getattr(
+                                    self.scheduler,
+                                    (
+                                        "_exact_greedy_cohort_burst_"
+                                        "pending_lease"
+                                    ),
+                                    None,
+                                )
+                                is not None
+                            ),
+                            pending_transaction_count=int(
+                                getattr(
+                                    self.scheduler,
+                                    (
+                                        "_exact_greedy_cohort_burst_"
+                                        "pending_transaction"
+                                    ),
+                                    None,
+                                )
+                                is not None
+                            ),
+                        )
+                    )
+                except BaseException as telemetry_error:
+                    self._last_slo_cohort_telemetry_error = (
+                        f"{type(telemetry_error).__name__}: "
+                        f"{telemetry_error}"
+                    )
             raise
+        if isinstance(result, ExactGreedyCohortBurstResult):
+            pending_lease = getattr(
+                self.scheduler,
+                "_exact_greedy_cohort_burst_pending_lease",
+                None,
+            )
+            pending_transaction = getattr(
+                self.scheduler,
+                "_exact_greedy_cohort_burst_pending_transaction",
+                None,
+            )
+            try:
+                self._last_slo_cohort_execution_telemetry = (
+                    build_exact_greedy_cohort_burst_execution_telemetry(
+                        lease=lease,
+                        result=result,
+                        publication=(
+                            prepared.exact_cohort_burst_publication
+                        ),
+                        actual_duration_ns=(
+                            step_end_ns - decision_now_ns
+                        ),
+                        host_visible_publication_gap_ns=(
+                            step_end_ns - decision_now_ns
+                        ),
+                        token_d2h_bytes=(
+                            len(result.rows)
+                            * result.replay_count
+                            * 8
+                        ),
+                        quarantine_reason=capability.get(
+                            "quarantine_reason"
+                        ),
+                        fallback_reason=None,
+                        failure_reason=None,
+                        rollback_reason=None,
+                        pending_lease_count=int(
+                            pending_lease is not None
+                        ),
+                        pending_transaction_count=int(
+                            pending_transaction is not None
+                        ),
+                    )
+                )
+            except BaseException as telemetry_error:
+                self._last_slo_cohort_telemetry_error = (
+                    f"{type(telemetry_error).__name__}: "
+                    f"{telemetry_error}"
+                )
         committed_token_count = sum(
             len(row.output_tokens) for row in prepared.rows
         )
         return True, step_end_ns, committed_token_count
+
+    def _snapshot_slo_cohort_telemetry(self) -> dict[str, object]:
+        empty = {
+            "decision": None,
+            "requests": [],
+        }
+        snapshotter = getattr(
+            self.scheduler,
+            "slo_cohort_telemetry_snapshot",
+            None,
+        )
+        if not callable(snapshotter):
+            return empty
+        try:
+            snapshot = snapshotter()
+            for request_row in snapshot["requests"]:
+                if (
+                    request_row["terminal_reason"] is not None
+                    and request_row["output_token_ids"]
+                ):
+                    output_text = self.tokenizer.decode(
+                        request_row["output_token_ids"]
+                    )
+                    request_row["output_text_sha256"] = (
+                        hashlib.sha256(
+                            output_text.encode("utf-8")
+                        ).hexdigest()
+                    )
+            snapshotter(drain_completed=True)
+            return snapshot
+        except BaseException as telemetry_error:
+            self._last_slo_cohort_telemetry_error = (
+                f"{type(telemetry_error).__name__}: "
+                f"{telemetry_error}"
+            )
+            return empty
 
     def step(
         self,
@@ -4507,6 +4690,21 @@ class LLMEngine:
                 else:
                     seqs, is_prefill, do_sample = scheduled
                     batch_kind = None
+                if is_prefill:
+                    record_prefill_start = getattr(
+                        self.scheduler,
+                        "record_slo_prefill_start",
+                        None,
+                    )
+                    if callable(record_prefill_start):
+                        for seq in seqs:
+                            try:
+                                record_prefill_start(
+                                    seq.seq_id,
+                                    decision_now_ns,
+                                )
+                            except KeyError:
+                                pass
                 if phase_stitch_pending_sequence_id is not None:
                     if (
                         len(seqs) == 1
@@ -6502,6 +6700,24 @@ class LLMEngine:
                 for seq in seqs
             }
             timing_observation = self.scheduler.last_slo_observation()
+            cohort_telemetry_collector = getattr(
+                self,
+                "_snapshot_slo_cohort_telemetry",
+                None,
+            )
+            cohort_telemetry_snapshot = (
+                cohort_telemetry_collector()
+                if callable(cohort_telemetry_collector)
+                else {
+                    "decision": None,
+                    "requests": [],
+                }
+            )
+            cohort_execution_telemetry = getattr(
+                self,
+                "_last_slo_cohort_execution_telemetry",
+                None,
+            )
             scheduler_burst_summary = getattr(
                 self.scheduler,
                 "exact_greedy_decode_burst_summary",
@@ -6619,6 +6835,22 @@ class LLMEngine:
                             0,
                         )
                     )
+                ),
+                "slo_cohort_decision_telemetry": (
+                    cohort_telemetry_snapshot["decision"]
+                ),
+                "exact_greedy_cohort_burst_execution_telemetry": (
+                    cohort_execution_telemetry.to_payload()
+                    if cohort_execution_telemetry is not None
+                    else None
+                ),
+                "slo_cohort_telemetry_error": getattr(
+                    self,
+                    "_last_slo_cohort_telemetry_error",
+                    None,
+                ),
+                "slo_cohort_request_telemetry": (
+                    cohort_telemetry_snapshot["requests"]
                 ),
                 "split_phase_attempted": split_phase_attempted,
                 "split_phase_accepted": split_phase_accepted,
