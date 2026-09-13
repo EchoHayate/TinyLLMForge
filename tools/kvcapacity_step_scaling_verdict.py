@@ -56,6 +56,9 @@ MAX_COLLISION_SPREAD = 0.10
 MAX_BATCH_TERM_SHARE = 0.20
 MAX_CURVATURE_SHARE = 0.10
 MAX_DRIFT_DEVIATION = 0.05
+# Above this, batch 1 and batch 2 are not the same execution path and must not be
+# fitted together.
+MAX_REGIME_STEP_RATIO = 1.30
 
 # Frozen Stage 0 constants, fit from batch-1 data in the erratum artifact.
 STAGE0_C0_MS = 13.05
@@ -119,11 +122,39 @@ def r_squared(designs, observations, coefficients):
     return 1.0 - residual / total, predictions, residual
 
 
-PREREGISTERED_CELLS = (
+# The grid as first registered. It is retained because amending a pre-registered
+# plan after seeing data is exactly the move that invalidates a result, so the
+# original must stay visible next to the reason it changed.
+#
+# It is unrunnable on the target model. Qwen3-8B declares
+# max_position_embeddings = 40960, so the engine clamps max_model_len to 40960 and
+# rejects any prompt beyond it. The 65536 and 131072 rows could never have been
+# measured without RoPE scaling, which would change the model rather than measure
+# it. This was a planning error in Stage 0, which swept contexts up to 131072 for a
+# model that cannot reach them.
+PREREGISTERED_CELLS_V1 = (
     (16384, 1), (16384, 2), (16384, 4), (16384, 8), (16384, 16),
     (32768, 1), (32768, 2), (32768, 4), (32768, 8),
     (65536, 1), (65536, 2), (65536, 4),
     (131072, 1), (131072, 2),
+)
+
+# The amended grid. GATE A asks only whether the step is affine in L * B, and the
+# V1 run answered that at four separate equal-product groups whose members agree
+# within 5.3%: at fixed L * B, shape does not matter. Resident token count can
+# therefore be extended through batch instead of through context, which keeps the
+# whole L * B range that Stage 0 depends on, up to 262144, inside the positional
+# limit the model actually has.
+#
+# Two properties of this amendment are worth stating plainly, because the
+# alternative reading is that the grid was moved to obtain a nicer answer. The
+# range of the quantity being modelled is unchanged, and the checks had already
+# passed on the V1 cells that were measurable, so nothing here rescues a failure.
+PREREGISTERED_CELLS = (
+    (8192, 1), (8192, 2), (8192, 4), (8192, 8), (8192, 16), (8192, 32),
+    (16384, 1), (16384, 2), (16384, 4), (16384, 8), (16384, 16),
+    (32768, 1), (32768, 2), (32768, 4), (32768, 8),
+    (40960, 1), (40960, 2), (40960, 4),
 )
 
 
@@ -145,6 +176,7 @@ def merge_payloads(payloads):
     rows = []
     engines = []
     attempted = set()
+    measured = set()
     seen = set()
     for payload in payloads:
         for row in payload.get("rows", []):
@@ -153,20 +185,30 @@ def merge_payloads(payloads):
                 raise ValueError(f"cell {key} appears in more than one artifact")
             seen.add(key)
             attempted.add(key)
+            if row.get("measured") and row.get("step"):
+                measured.add(key)
             rows.append(row)
         engines.extend(payload.get("engines", []))
+    # Coverage is judged on cells that produced a number, not on cells that were
+    # attempted. The first full run made the difference matter: five of fourteen
+    # cells failed on a positional limit, the remaining nine fit well, and the gate
+    # returned PASS while a third of the grid had silently disappeared.
+    target = set(PREREGISTERED_CELLS)
     merged = {
         "rows": rows,
         "engines": engines,
         "payload_sha256": ",".join(
             str(payload.get("payload_sha256")) for payload in payloads
         ),
-        "grid_is_preregistered": attempted == set(PREREGISTERED_CELLS),
+        "grid_is_preregistered": measured == target,
         "grid_spec": ";".join(
-            f"{context}:{batch}" for context, batch in sorted(attempted)
+            f"{context}:{batch}" for context, batch in sorted(measured)
         ),
-        "missing_preregistered_cells": sorted(set(PREREGISTERED_CELLS) - attempted),
-        "extra_cells": sorted(attempted - set(PREREGISTERED_CELLS)),
+        "attempted_cells": sorted(attempted),
+        "measured_cells": sorted(measured),
+        "missing_preregistered_cells": sorted(target - measured),
+        "attempted_but_unmeasured_cells": sorted(attempted - measured),
+        "extra_cells": sorted(measured - target),
         "source_artifact_count": len(payloads),
     }
     return merged
@@ -221,6 +263,51 @@ def extract_points(payload):
             }
         )
     return points, rejected
+
+
+def regime_discontinuity(points):
+    """Compare batch 1 with batch 2 at each context that measured both.
+
+    Decode CUDA graphs on this engine are captured for batches 1, 2, 4 and 8, but
+    the first full run showed they only take effect at batch 1: at L=16384 the step
+    was 15.3 ms at batch 1 and 43.3 ms at batch 2, then rose smoothly. The eager
+    path shows no such jump, 40.4 ms against 42.0 ms, which confirms the cause is
+    graph replay rather than compute.
+
+    This matters more than a curve shape. Stage 0 fit `c0 = 13.05 ms` from
+    batch-1 data, so its constant was measured on the graph fast path, and then
+    applied at every batch. Stage 0's entire argument is that KV compression pays
+    by raising the reachable decode batch, which lives entirely in the regime where
+    that constant does not hold.
+
+    Fitting the two regimes together would average two different execution paths
+    and describe neither, so the discontinuity is measured explicitly.
+    """
+    by_context = {}
+    for point in points:
+        by_context.setdefault(point["context_length"], {})[point["batch"]] = point
+    comparisons = []
+    for context_length, batches in sorted(by_context.items()):
+        if 1 in batches and 2 in batches:
+            single = batches[1]["step_ms"]
+            double = batches[2]["step_ms"]
+            if single > 0:
+                comparisons.append(
+                    {
+                        "context_length": context_length,
+                        "batch_one_ms": single,
+                        "batch_two_ms": double,
+                        "ratio": double / single,
+                    }
+                )
+    if not comparisons:
+        return None
+    worst = max(comparisons, key=lambda item: item["ratio"])
+    return {
+        "comparisons": comparisons,
+        "max_ratio": worst["ratio"],
+        "regimes_differ": worst["ratio"] > MAX_REGIME_STEP_RATIO,
+    }
 
 
 def fit_models(points):
@@ -398,9 +485,10 @@ def stage0_comparison(m1):
     }
 
 
-def decide(m1, m2, m3, collisions, share, curvature, points):
+def decide(m1, m2, m3, collisions, share, curvature, points, coverage_points=None):
     """Apply the pre-registered thresholds."""
     checks = []
+    coverage_points = coverage_points if coverage_points is not None else points
 
     checks.append(
         {
@@ -503,6 +591,29 @@ def decide(m1, m2, m3, collisions, share, curvature, points):
         }
     )
 
+    measured_cells = {
+        (point["context_length"], point["batch"]) for point in coverage_points
+    }
+    missing = sorted(set(PREREGISTERED_CELLS) - measured_cells)
+    checks.append(
+        {
+            "name": "grid_coverage",
+            "detail": (
+                f"{len(measured_cells & set(PREREGISTERED_CELLS))}/"
+                f"{len(PREREGISTERED_CELLS)} pre-registered cells produced a "
+                "measurement"
+                + (
+                    "; missing: "
+                    + ", ".join(f"({cell[0]},{cell[1]})" for cell in missing[:8])
+                    + (" ..." if len(missing) > 8 else "")
+                    if missing
+                    else ""
+                )
+            ),
+            "passed": not missing,
+        }
+    )
+
     coverage_ok = len({point["batch"] for point in points}) >= 3
     checks.append(
         {
@@ -529,6 +640,15 @@ def decide(m1, m2, m3, collisions, share, curvature, points):
             "the numbers describe compilation as much as decoding. This refutes the "
             "measurement, not the Stage 0 model. Raise the warmup and re-run before "
             "concluding anything."
+        )
+    elif missing:
+        verdict = "INCONCLUSIVE"
+        consequence = (
+            f"{len(missing)} pre-registered cells produced no measurement, so the "
+            "grid the thresholds were registered against was not actually covered. "
+            "A missing cell is a gap in the measurement, not evidence against the "
+            "Stage 0 model. Recover those cells or re-register the grid with the "
+            "reason, then re-run."
         )
     elif not coverage_ok:
         verdict = "INCONCLUSIVE"
@@ -576,6 +696,18 @@ def build_report(payload):
             "measured_points": points,
             "rejected_cells": rejected,
         }
+    discontinuity = regime_discontinuity(points)
+    fit_points = points
+    fit_scope = "all measured batches"
+    if discontinuity and discontinuity["regimes_differ"]:
+        multi = [point for point in points if point["batch"] >= 2]
+        if len(multi) >= 3 and len({point["kv_tokens"] for point in multi}) >= 2:
+            fit_points = multi
+            fit_scope = (
+                "batch >= 2 only, because batch 1 runs a different execution path"
+            )
+    points_all = points
+    points = fit_points
     m1, m2 = fit_models(points)
     preregistered = payload.get("grid_is_preregistered")
     m3 = fit_curvature_model(points)
@@ -583,7 +715,8 @@ def build_report(payload):
     share = batch_term_share(m2, points)
     curvature = curvature_share(m3, points)
     verdict, consequence, checks = decide(
-        m1, m2, m3, collisions, share, curvature, points
+        m1, m2, m3, collisions, share, curvature, points,
+        coverage_points=points_all,
     )
     if preregistered is False:
         # A narrowed grid cannot decide the gate in either direction, so every
@@ -611,6 +744,9 @@ def build_report(payload):
         "grid_is_preregistered": preregistered,
         "grid_spec": payload.get("grid_spec"),
         "missing_preregistered_cells": payload.get("missing_preregistered_cells"),
+        "attempted_but_unmeasured_cells": payload.get("attempted_but_unmeasured_cells"),
+        "preregistered_cells_v1": [list(cell) for cell in PREREGISTERED_CELLS_V1],
+        "preregistered_cells": [list(cell) for cell in PREREGISTERED_CELLS],
         "thresholds": {
             "min_r_squared": MIN_R_SQUARED,
             "max_collision_spread": MAX_COLLISION_SPREAD,
@@ -618,7 +754,10 @@ def build_report(payload):
             "max_curvature_share": MAX_CURVATURE_SHARE,
             "max_drift_deviation": MAX_DRIFT_DEVIATION,
         },
-        "measured_points": points,
+        "measured_points": points_all,
+        "fitted_points": points,
+        "fit_scope": fit_scope,
+        "regime_discontinuity": discontinuity,
         "rejected_cells": rejected,
         "model_m1": m1,
         "model_m2": m2,
@@ -673,6 +812,25 @@ def render(report):
             lines.append(
                 f"  L={entry['context_length']} B={entry['batch']}: {entry['reason']}"
             )
+        lines.append("")
+
+    discontinuity = report.get("regime_discontinuity")
+    if discontinuity:
+        lines.append("batch 1 against batch 2, the CUDA graph regime boundary")
+        for item in discontinuity["comparisons"]:
+            lines.append(
+                f"  L={item['context_length']}: {item['batch_one_ms']:.3f} ms at B=1 "
+                f"against {item['batch_two_ms']:.3f} ms at B=2, ratio {item['ratio']:.2f}"
+            )
+        if discontinuity["regimes_differ"]:
+            lines.append(
+                "  these are different execution paths; Stage 0's c0 was fit at "
+                "batch 1 and does not describe the multi-sequence regime its own "
+                "capacity argument depends on"
+            )
+        lines.append("")
+    if report.get("fit_scope"):
+        lines.append(f"fitted on: {report['fit_scope']}")
         lines.append("")
 
     m1 = report.get("model_m1")

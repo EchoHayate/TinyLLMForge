@@ -59,11 +59,22 @@ import time
 # the Stage 0 artifact assumes. The cells were chosen so that the product
 # `context_length * batch` collides across different shapes; those collisions are
 # the sharpest available test of the model's central claim.
+# Amended after the first full run. Qwen3-8B declares max_position_embeddings =
+# 40960, so the engine clamps max_model_len to 40960 and rejected every cell at
+# 65536 and 131072: those contexts were never reachable without RoPE scaling,
+# which would change the model instead of measuring it. Stage 0 swept contexts up
+# to 131072 for a model that cannot reach them, and this grid inherited the error.
+#
+# Resident token count is extended through batch instead, which preserves the full
+# L * B range Stage 0 depends on, up to 262144. That substitution is legitimate
+# here precisely because the first run established it: at four separate
+# equal-product groups the members agreed within 5.3%, so at fixed L * B the shape
+# does not matter. See PREREGISTERED_CELLS_V1 in the verdict tool for the original.
 CONTEXT_BATCH_GRID = (
+    (8192, (1, 2, 4, 8, 16, 32)),
     (16384, (1, 2, 4, 8, 16)),
     (32768, (1, 2, 4, 8)),
-    (65536, (1, 2, 4)),
-    (131072, (1, 2)),
+    (40960, (1, 2, 4)),
 )
 
 KV_BYTES_PER_TOKEN = 147456

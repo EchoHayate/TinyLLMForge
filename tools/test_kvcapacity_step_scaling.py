@@ -129,6 +129,32 @@ def test_every_grid_cell_fits_the_stage0_budget():
         assert worker.cell_fits(context, batch, budget), (context, batch)
 
 
+def test_every_grid_context_is_within_the_model_positional_limit():
+    """The first full run lost five cells to this and the gate still said PASS.
+
+    Qwen3-8B declares max_position_embeddings = 40960, so the engine clamps
+    max_model_len and rejects longer prompts outright. A grid that asks for more is
+    not ambitious, it is unrunnable.
+    """
+    for context, _batch in worker.enumerate_cells():
+        assert context <= 40960, context
+
+
+def test_amended_grid_preserves_the_original_resident_token_range():
+    """The amendment must not quietly shrink what is being modelled."""
+    original = {context * batch for context, batch in verdict.PREREGISTERED_CELLS_V1}
+    amended = {context * batch for context, batch in worker.enumerate_cells()}
+    assert max(amended) >= max(original)
+    assert min(amended) <= min(original)
+
+
+def test_the_original_grid_is_retained_for_the_record():
+    """Amending a pre-registered plan is only defensible if the original stays visible."""
+    assert (65536, 1) in verdict.PREREGISTERED_CELLS_V1
+    assert (131072, 2) in verdict.PREREGISTERED_CELLS_V1
+    assert (65536, 1) not in verdict.PREREGISTERED_CELLS
+
+
 # ---------------------------------------------------------------------------
 # Prompt construction, the guard against prefix-cache sharing.
 # ---------------------------------------------------------------------------
@@ -416,8 +442,9 @@ def test_verdict_is_inconclusive_with_too_few_batches():
             ((16384, 1), (32768, 1), (65536, 1), (131072, 1)),
         )
     )
+    # Coverage is reported first, since a grid that was not covered cannot test
+    # anything else. Either way this data must not yield a decision.
     assert report["verdict"] == "INCONCLUSIVE"
-    assert "do not proceed" in report["consequence"].lower()
 
 
 def test_verdict_is_inconclusive_with_too_few_points():
@@ -557,8 +584,13 @@ def test_fit_is_not_confused_by_a_single_wild_outlier_being_excluded():
         "skipped_reason": "no decode step ran at the target batch",
     }
     report = verdict.build_report(payload)
-    assert report["verdict"] == "PASS"
+    # A dropped cell now blocks a PASS, because coverage is judged on cells that
+    # produced a number. It must not become a FAIL: a gap in the measurement is not
+    # evidence against the model.
+    assert report["verdict"] == "INCONCLUSIVE"
+    assert "no measurement" in report["consequence"]
     assert len(report["rejected_cells"]) == 1
+    # The fit itself is unaffected by the exclusion.
     assert report["model_m1"]["r_squared"] == pytest.approx(1.0, abs=1e-6)
 
 
@@ -810,8 +842,10 @@ def test_a_narrowed_grid_cannot_produce_a_pass():
     assert report["grid_is_preregistered"] is False
     assert report["verdict"] == "INCONCLUSIVE"
     assert "narrowed grid" in report["consequence"]
-    # The underlying checks still ran and still passed; only the verdict is held back.
-    assert all(check["passed"] for check in report["checks"])
+    # Every check except coverage still ran and passed; only the verdict is held back.
+    for check in report["checks"]:
+        if check["name"] != "grid_coverage":
+            assert check["passed"], check
 
 
 def test_a_narrowed_grid_cannot_produce_a_failure_either():
@@ -827,9 +861,10 @@ def test_a_narrowed_grid_cannot_produce_a_failure_either():
     payload = _payload_for_grid(grid, lambda L, B: 13.05 + 9.0 * B + 0.000151 * L * B)
     report = verdict.build_report(payload)
     assert report["verdict"] == "INCONCLUSIVE"
-    # The underlying failure is preserved as commentary, not discarded.
-    assert "FAIL" in report["consequence"]
-    assert any(not check["passed"] for check in report["checks"])
+    # The failing checks are still reported, so the failure is visible even though
+    # the verdict withholds judgement.
+    failed = [check["name"] for check in report["checks"] if not check["passed"]]
+    assert "m1_r_squared" in failed
 
 
 def test_render_flags_a_narrowed_grid():
@@ -935,8 +970,9 @@ def test_merge_payloads_reports_a_lost_context_group():
     ]
     combined = verdict.merge_payloads(payloads)
     assert combined["grid_is_preregistered"] is False
-    assert (131072, 1) in combined["missing_preregistered_cells"]
-    assert (131072, 2) in combined["missing_preregistered_cells"]
+    dropped = worker.CONTEXT_BATCH_GRID[-1]
+    for batch in dropped[1]:
+        assert (dropped[0], batch) in combined["missing_preregistered_cells"]
 
 
 def test_merge_payloads_rejects_a_duplicated_cell():
@@ -1092,3 +1128,152 @@ def test_warmup_default_was_raised_after_the_smoke_run():
 
 def test_drift_threshold_is_declared_in_a_sane_range():
     assert 0.0 < verdict.MAX_DRIFT_DEVIATION <= 0.15
+
+
+# ---------------------------------------------------------------------------
+# The CUDA graph regime boundary.
+#
+# Measured on Qwen3-8B, A100, at L=16384: 15.3 ms at batch 1 against 43.3 ms at
+# batch 2, then a smooth rise to 62.1 ms at batch 16. The eager path over the same
+# cells shows 40.4 ms against 42.0 ms, so the jump is graph replay, not compute.
+# Decode graphs are captured for batches 1, 2, 4 and 8 but only take effect at 1.
+# ---------------------------------------------------------------------------
+
+
+def _point(context, batch, step_ms):
+    return {
+        "context_length": context,
+        "batch": batch,
+        "kv_tokens": context * batch,
+        "step_ms": step_ms,
+        "step_stdev_ms": 0.5,
+        "sample_count": 24,
+        "drift_ratio": 1.0,
+    }
+
+
+def test_regime_discontinuity_detects_the_measured_graph_boundary():
+    """Reproduces the observed graph-path numbers."""
+    points = [
+        _point(16384, 1, 15.263),
+        _point(16384, 2, 43.295),
+        _point(32768, 1, 17.607),
+        _point(32768, 2, 46.409),
+    ]
+    found = verdict.regime_discontinuity(points)
+    assert found["regimes_differ"] is True
+    assert found["max_ratio"] > 2.5
+    assert len(found["comparisons"]) == 2
+
+
+def test_regime_discontinuity_is_quiet_on_the_eager_path():
+    """The eager numbers over the same cells must not trip the detector."""
+    points = [
+        _point(16384, 1, 40.402),
+        _point(16384, 2, 41.969),
+        _point(32768, 1, 43.709),
+        _point(32768, 2, 47.640),
+    ]
+    found = verdict.regime_discontinuity(points)
+    assert found["regimes_differ"] is False
+    assert found["max_ratio"] < verdict.MAX_REGIME_STEP_RATIO
+
+
+def test_regime_discontinuity_needs_both_batches_at_one_context():
+    points = [_point(16384, 2, 43.0), _point(16384, 4, 45.0)]
+    assert verdict.regime_discontinuity(points) is None
+
+
+def test_regime_discontinuity_reports_the_worst_context():
+    points = [
+        _point(16384, 1, 15.0),
+        _point(16384, 2, 45.0),
+        _point(32768, 1, 40.0),
+        _point(32768, 2, 44.0),
+    ]
+    found = verdict.regime_discontinuity(points)
+    assert found["max_ratio"] == pytest.approx(3.0)
+
+
+def _graph_path_rows():
+    """A full V2 grid where batch 1 is on the graph path and batch >= 2 is not."""
+    rows = []
+    for context, batch in worker.enumerate_cells():
+        if batch == 1:
+            step = 13.0 + 0.000151 * context * batch
+        else:
+            step = 40.0 + 0.000090 * context * batch
+        row = _row(context, batch, step)
+        row["drift"] = {"ratio": 1.0, "first_half_median_ms": step,
+                        "second_half_median_ms": step}
+        rows.append(row)
+    return rows
+
+
+def test_fit_excludes_batch_one_when_the_regimes_differ():
+    """Mixing two execution paths into one fit would describe neither."""
+    report = verdict.build_report({"rows": _graph_path_rows(), "payload_sha256": "x"})
+    assert report["regime_discontinuity"]["regimes_differ"] is True
+    assert "batch >= 2" in report["fit_scope"]
+    assert all(point["batch"] >= 2 for point in report["fitted_points"])
+    # The batch-1 cells are still reported, just not fitted.
+    assert any(point["batch"] == 1 for point in report["measured_points"])
+
+
+def test_excluding_batch_one_does_not_weaken_coverage():
+    """Coverage must still be judged on every measured cell, not the fit subset.
+
+    Otherwise dropping batch 1 from the fit would also quietly drop it from the
+    coverage requirement, and the gate would stop noticing missing cells.
+    """
+    report = verdict.build_report({"rows": _graph_path_rows(), "payload_sha256": "x"})
+    check = next(c for c in report["checks"] if c["name"] == "grid_coverage")
+    assert check["passed"] is True
+    rows = [row for row in _graph_path_rows() if row["batch"] != 1]
+    partial = verdict.build_report({"rows": rows, "payload_sha256": "x"})
+    coverage = next(c for c in partial["checks"] if c["name"] == "grid_coverage")
+    assert coverage["passed"] is False
+
+
+def test_a_clean_multi_batch_regime_can_still_pass():
+    """Separating the regimes must remain capable of returning PASS."""
+    report = verdict.build_report({"rows": _graph_path_rows(), "payload_sha256": "x"})
+    assert report["verdict"] == "PASS"
+    assert report["model_m1"]["r_squared"] >= verdict.MIN_R_SQUARED
+
+
+def test_the_fit_uses_the_multi_batch_constant_not_the_batch_one_constant():
+    """The whole point: Stage 0's c0 came from batch 1 and is not the serving c0."""
+    report = verdict.build_report({"rows": _graph_path_rows(), "payload_sha256": "x"})
+    # Planted: 13.0 at batch 1, 40.0 for the multi-sequence regime.
+    assert report["model_m1"]["c0_ms"] == pytest.approx(40.0, abs=0.5)
+    comparison = report["stage0_comparison"]
+    assert comparison["c0_ratio"] > 2.5
+
+
+def test_single_regime_data_is_fitted_whole():
+    """With no discontinuity, batch 1 stays in the fit."""
+    rows = []
+    for context, batch in worker.enumerate_cells():
+        step = 40.0 + 0.000090 * context * batch
+        row = _row(context, batch, step)
+        row["drift"] = {"ratio": 1.0, "first_half_median_ms": step,
+                        "second_half_median_ms": step}
+        rows.append(row)
+    report = verdict.build_report({"rows": rows, "payload_sha256": "x"})
+    assert report["regime_discontinuity"]["regimes_differ"] is False
+    assert report["fit_scope"] == "all measured batches"
+    assert any(point["batch"] == 1 for point in report["fitted_points"])
+
+
+def test_render_explains_the_regime_boundary():
+    text = verdict.render(
+        verdict.build_report({"rows": _graph_path_rows(), "payload_sha256": "x"})
+    )
+    assert "regime boundary" in text
+    assert "different execution paths" in text
+    assert "fitted on:" in text
+
+
+def test_regime_threshold_is_declared_in_a_sane_range():
+    assert 1.0 < verdict.MAX_REGIME_STEP_RATIO <= 2.0

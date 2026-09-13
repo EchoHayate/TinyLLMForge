@@ -242,11 +242,14 @@ if [[ "${MODE}" == smoke ]]; then
   RUN_MEASURED_STEPS=12
 else
   MODEL_FOR_RUN="${TARGET_MODEL}"
+  # Amended after the first full run: Qwen3-8B clamps max_model_len to its
+  # max_position_embeddings of 40960, so 65536 and 131072 were unreachable.
+  # Resident tokens are extended through batch instead, preserving the L * B range.
   GRID_GROUPS=(
+    "8192:1,2,4,8,16,32"
     "16384:1,2,4,8,16"
     "32768:1,2,4,8"
-    "65536:1,2,4"
-    "131072:1,2"
+    "40960:1,2,4"
   )
   RUN_MEASURED_STEPS="${MEASURED_STEPS}"
 fi
