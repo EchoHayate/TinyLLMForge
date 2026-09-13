@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from tinyvllm.config import Config
@@ -42,6 +42,14 @@ from tinyvllm.engine.phase_stitched_exact_graph import (
 from tinyvllm.engine.speculative_selection import (
     SpeculativeSelectionConfig,
     build_speculative_selection_record,
+)
+from tinyvllm.engine.slo_cohort_burst import (
+    ProtectedRequestSnapshot,
+    RequestSLOState,
+    SLOCohortBurstDecision,
+    SLOCohortBurstObservation,
+    SLOCohortCostTable,
+    select_slo_cohort_burst_width,
 )
 
 ADAPTIVE_MIXED_INACTIVE = "inactive"
@@ -134,6 +142,8 @@ class SchedulerPostprocessJournal:
     slo_clock_invalid: bool
     slo_clock_invalid_reason: object
     last_slo_decision_now_ns: int | None
+    slo_request_states: dict[int, RequestSLOState]
+    last_slo_cohort_decision: SLOCohortBurstDecision | None
     state: str = "active"
 
     @property
@@ -240,6 +250,12 @@ class SchedulerPostprocessJournal:
             ),
             last_slo_decision_now_ns=(
                 scheduler._last_slo_decision_now_ns
+            ),
+            slo_request_states=dict(
+                scheduler.slo_request_state_by_seq_id
+            ),
+            last_slo_cohort_decision=(
+                scheduler._last_slo_cohort_decision
             ),
         )
         for seq in seqs:
@@ -613,6 +629,13 @@ class SchedulerPostprocessJournal:
             scheduler._last_slo_decision_now_ns = (
                 self.last_slo_decision_now_ns
             )
+            scheduler.slo_request_state_by_seq_id.clear()
+            scheduler.slo_request_state_by_seq_id.update(
+                self.slo_request_states
+            )
+            scheduler._last_slo_cohort_decision = (
+                self.last_slo_cohort_decision
+            )
         except BaseException:
             self.state = "rollback_failed"
             raise
@@ -644,6 +667,8 @@ class ExactBurstLeaseLocalDeltaJournal:
     slo_clock_invalid: bool
     slo_clock_invalid_reason: object
     last_slo_decision_now_ns: int | None
+    slo_request_states: dict[int, RequestSLOState]
+    last_slo_cohort_decision: SLOCohortBurstDecision | None
     publication_plan: LeaseWriteBlockPublicationPlan
     publication_applied: bool = False
     state: str = "active"
@@ -713,6 +738,12 @@ class ExactBurstLeaseLocalDeltaJournal:
             ),
             last_slo_decision_now_ns=(
                 scheduler._last_slo_decision_now_ns
+            ),
+            slo_request_states=dict(
+                scheduler.slo_request_state_by_seq_id
+            ),
+            last_slo_cohort_decision=(
+                scheduler._last_slo_cohort_decision
             ),
             publication_plan=publication_plan,
         )
@@ -863,6 +894,13 @@ class ExactBurstLeaseLocalDeltaJournal:
             )
             scheduler._last_slo_decision_now_ns = (
                 self.last_slo_decision_now_ns
+            )
+            scheduler.slo_request_state_by_seq_id.clear()
+            scheduler.slo_request_state_by_seq_id.update(
+                self.slo_request_states
+            )
+            scheduler._last_slo_cohort_decision = (
+                self.last_slo_cohort_decision
             )
         except BaseException:
             self.state = "rollback_failed"
@@ -1042,6 +1080,55 @@ class Scheduler:
         self.slo_clock_invalid = False
         self.slo_clock_invalid_reason: str | None = None
         self._last_slo_decision_now_ns: int | None = None
+        self.exact_greedy_cohort_burst = bool(
+            getattr(config, "exact_greedy_cohort_burst", False)
+        )
+        self.exact_greedy_cohort_burst_widths = tuple(
+            getattr(
+                config,
+                "exact_greedy_cohort_burst_widths",
+                (1, 2, 4, 8),
+            )
+        )
+        self.exact_greedy_cohort_burst_target_itl_ns = int(
+            getattr(
+                config,
+                "exact_greedy_cohort_burst_target_itl_ns",
+                0,
+            )
+        )
+        self.exact_greedy_cohort_burst_target_ttft_ns = int(
+            getattr(
+                config,
+                "exact_greedy_cohort_burst_target_ttft_ns",
+                0,
+            )
+        )
+        self.exact_greedy_cohort_burst_reserve_ns = int(
+            getattr(
+                config,
+                "exact_greedy_cohort_burst_reserve_ns",
+                0,
+            )
+        )
+        cost_table_path = getattr(
+            config,
+            "exact_greedy_cohort_burst_cost_table_path",
+            None,
+        )
+        self._slo_cohort_cost_table = (
+            SLOCohortCostTable.load(cost_table_path)
+            if self.exact_greedy_cohort_burst
+            else SLOCohortCostTable.invalid("disabled")
+        )
+        self.slo_request_state_by_seq_id: dict[
+            int,
+            RequestSLOState,
+        ] = {}
+        self._last_slo_cohort_decision: (
+            SLOCohortBurstDecision | None
+        ) = None
+        self._exact_greedy_cohort_burst_pending_lease = None
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.hybrid_state_allocator = hybrid_state_allocator
@@ -2753,8 +2840,193 @@ class Scheduler:
         )
         return self._return_schedule(mixed, branch)
 
-    def add(self, seq: Sequence):
+    def register_slo_request(
+        self,
+        seq: Sequence,
+        arrival_ns: int,
+        service_class: str,
+    ) -> RequestSLOState:
+        state = RequestSLOState(
+            sequence_id=seq.seq_id,
+            arrival_ns=arrival_ns,
+            first_token_visible_ns=None,
+            last_token_visible_ns=None,
+            service_class=service_class,
+        )
+        try:
+            state.validate()
+        except ValueError:
+            self._invalidate_slo_clock(
+                "invalid_cohort_admission_timestamp"
+            )
+            raise
+        if seq.seq_id in self.slo_request_state_by_seq_id:
+            raise ValueError("SLO request is already registered")
+        self.slo_request_state_by_seq_id[seq.seq_id] = state
+        return state
+
+    def record_slo_publication(
+        self,
+        seq_id: int,
+        visible_ns: int,
+    ) -> RequestSLOState:
+        state = self.slo_request_state_by_seq_id.get(seq_id)
+        if state is None:
+            raise KeyError(f"SLO request {seq_id} is not registered")
+        if (
+            isinstance(visible_ns, bool)
+            or not isinstance(visible_ns, int)
+            or visible_ns < state.arrival_ns
+            or (
+                state.last_token_visible_ns is not None
+                and visible_ns < state.last_token_visible_ns
+            )
+        ):
+            self._invalidate_slo_clock(
+                "cohort_publication_clock_regressed"
+            )
+            raise ValueError("SLO publication timestamp regressed")
+        updated = replace(
+            state,
+            first_token_visible_ns=(
+                visible_ns
+                if state.first_token_visible_ns is None
+                else state.first_token_visible_ns
+            ),
+            last_token_visible_ns=visible_ns,
+        )
+        updated.validate()
+        self.slo_request_state_by_seq_id[seq_id] = updated
+        return updated
+
+    def remove_slo_request(self, seq_id: int) -> None:
+        self.slo_request_state_by_seq_id.pop(seq_id, None)
+
+    def build_slo_cohort_observation(
+        self,
+        seqs: tuple[Sequence, ...],
+        *,
+        decision_now_ns: int,
+        graph_capability: dict,
+        all_greedy: bool,
+        mixed_mode_unsupported: bool,
+    ) -> SLOCohortBurstObservation:
+        seen = set()
+
+        def snapshot(seq, category):
+            seen.add(seq.seq_id)
+            first_write_position = max(0, len(seq) - 1)
+            writable_tokens = (
+                self.block_manager.block_size
+                - first_write_position
+                % self.block_manager.block_size
+            )
+            return ProtectedRequestSnapshot(
+                sequence_id=seq.seq_id,
+                category=category,
+                context_bucket=max(1, len(seq)),
+                remaining_output_tokens=max(
+                    0,
+                    int(seq.max_tokens)
+                    - int(seq.num_completion_tokens),
+                ),
+                writable_tokens=writable_tokens,
+                slo_state=self.slo_request_state_by_seq_id.get(
+                    seq.seq_id
+                ),
+            )
+
+        cohort = tuple(snapshot(seq, "cohort") for seq in seqs)
+
+        def unique_snapshots(queue, category):
+            rows = []
+            for seq in queue:
+                if seq.seq_id in seen:
+                    continue
+                rows.append(snapshot(seq, category))
+            return tuple(rows)
+
+        omitted = unique_snapshots(
+            self.running,
+            "omitted_decode",
+        )
+        waiting = unique_snapshots(self.waiting, "waiting")
+        incomplete_prefill = unique_snapshots(
+            self.prefilling,
+            "incomplete_prefill",
+        )
+        return SLOCohortBurstObservation(
+            enabled=self.exact_greedy_cohort_burst,
+            decision_now_ns=decision_now_ns,
+            target_itl_ns=(
+                self.exact_greedy_cohort_burst_target_itl_ns
+            ),
+            target_ttft_ns=(
+                self.exact_greedy_cohort_burst_target_ttft_ns
+            ),
+            reserve_ns=self.exact_greedy_cohort_burst_reserve_ns,
+            configured_widths=(
+                self.exact_greedy_cohort_burst_widths
+            ),
+            cohort=cohort,
+            omitted_runnable_decode=omitted,
+            waiting=waiting,
+            incomplete_prefill=incomplete_prefill,
+            clock_valid=not self.slo_clock_invalid,
+            all_greedy=all_greedy,
+            mixed_mode_unsupported=mixed_mode_unsupported,
+            graph_available=graph_capability["available"],
+            graph_quarantined=graph_capability["quarantined"],
+            pending_lease=(
+                self._exact_greedy_cohort_burst_pending_lease
+                is not None
+            ),
+            cohort_shape_supported=graph_capability[
+                "shape_supported"
+            ],
+        )
+
+    def select_slo_cohort_burst(
+        self,
+        seqs: tuple[Sequence, ...],
+        *,
+        decision_now_ns: int,
+        graph_capability: dict,
+        all_greedy: bool,
+        mixed_mode_unsupported: bool,
+    ) -> SLOCohortBurstDecision:
+        observation = self.build_slo_cohort_observation(
+            seqs,
+            decision_now_ns=decision_now_ns,
+            graph_capability=graph_capability,
+            all_greedy=all_greedy,
+            mixed_mode_unsupported=mixed_mode_unsupported,
+        )
+        decision = select_slo_cohort_burst_width(
+            observation,
+            self._slo_cohort_cost_table,
+        )
+        self._last_slo_cohort_decision = decision
+        return decision
+
+    def add(
+        self,
+        seq: Sequence,
+        *,
+        arrival_ns: int | None = None,
+        service_class: str = "default",
+    ):
         self._validate_admission(seq)
+        if self.exact_greedy_cohort_burst:
+            if arrival_ns is None:
+                raise ValueError(
+                    "cohort burst admission requires arrival_ns"
+                )
+            self.register_slo_request(
+                seq,
+                arrival_ns=arrival_ns,
+                service_class=service_class,
+            )
         self.waiting.append(seq)
 
     def install_prefill_commit_hook(self, hook) -> None:
@@ -4490,7 +4762,20 @@ class Scheduler:
         step_end_ns: int | None,
         progress_updates: dict[int, int],
     ) -> None:
-        if not self.chunked_prefill_slo_mixed or step_end_ns is None:
+        if step_end_ns is None:
+            return
+        if (
+            self.exact_greedy_cohort_burst
+            and seq.seq_id in self.slo_request_state_by_seq_id
+        ):
+            try:
+                self.record_slo_publication(
+                    seq.seq_id,
+                    step_end_ns,
+                )
+            except ValueError:
+                pass
+        if not self.chunked_prefill_slo_mixed:
             return
         self.decode_progress_ns_by_seq_id[seq.seq_id] = step_end_ns
         progress_updates[seq.seq_id] = step_end_ns
@@ -4500,6 +4785,7 @@ class Scheduler:
         seq: Sequence,
         finished_progress_entries_removed: list[int],
     ) -> None:
+        self.remove_slo_request(seq.seq_id)
         if self.decode_progress_ns_by_seq_id.pop(seq.seq_id, None) is not None:
             finished_progress_entries_removed.append(seq.seq_id)
 

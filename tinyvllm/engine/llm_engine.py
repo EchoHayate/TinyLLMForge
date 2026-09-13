@@ -3851,7 +3851,10 @@ class LLMEngine:
             registered = True
         try:
             _try_qwen35_hybrid_prefix_restore(self, seq)
-            self.scheduler.add(seq)           #直接加到waiting
+            self.scheduler.add(
+                seq,
+                arrival_ns=self._clock_ns(),
+            )
         except BaseException:
             if registered:
                 lifecycle.release_sequence(seq.seq_id)
