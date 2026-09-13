@@ -1,0 +1,10 @@
+{
+  "classification": "CONTINUE_RUNTIME",
+  "evidence_complete": true,
+  "high_headroom_ratio": 0.34802745071726937,
+  "low_headroom_ratio": 0.12984421035807836,
+  "medium_headroom_ratio": 0.23119582440269426,
+  "row_count": 192,
+  "schema_version": "slo-cohort-burst.ceiling-summary.v1",
+  "source_exact": true
+}

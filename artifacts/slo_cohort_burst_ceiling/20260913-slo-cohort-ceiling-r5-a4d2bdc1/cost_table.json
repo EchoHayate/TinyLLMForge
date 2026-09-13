@@ -1,0 +1,177 @@
+{
+  "entries": {
+    "b1-c2048-k1": {
+      "batch_size": 1,
+      "burst_width": 1,
+      "context_bucket": 2048,
+      "p50_ns": 7377418,
+      "p95_ns": 10954786,
+      "p99_ns": 13265100,
+      "raw_sample_sha256": "c798b992f475368b53a56d4a7ee08a259cc35232dc34b88ac8c0341b0d02984c",
+      "sample_count": 48
+    },
+    "b1-c2048-k2": {
+      "batch_size": 1,
+      "burst_width": 2,
+      "context_bucket": 2048,
+      "p50_ns": 10022960,
+      "p95_ns": 13594238,
+      "p99_ns": 15909609,
+      "raw_sample_sha256": "32330b4c264d16c7443545e2a9172d1616b2c216d70beabc40a15d557317ec51",
+      "sample_count": 48
+    },
+    "b1-c2048-k4": {
+      "batch_size": 1,
+      "burst_width": 4,
+      "context_bucket": 2048,
+      "p50_ns": 15314044,
+      "p95_ns": 18880445,
+      "p99_ns": 21198627,
+      "raw_sample_sha256": "37728c40e021b80b2712a48105c7eb4ba3f6442fc15e35bd29242cbe8581f6e9",
+      "sample_count": 48
+    },
+    "b1-c2048-k8": {
+      "batch_size": 1,
+      "burst_width": 8,
+      "context_bucket": 2048,
+      "p50_ns": 25878175,
+      "p95_ns": 29430950,
+      "p99_ns": 31776663,
+      "raw_sample_sha256": "00b166ffd2ab0b65d05b0ba8d3d571f0165d40f84a1f42f730c40caffe6d6ecb",
+      "sample_count": 48
+    },
+    "b2-c2048-k1": {
+      "batch_size": 2,
+      "burst_width": 1,
+      "context_bucket": 2048,
+      "p50_ns": 37070806,
+      "p95_ns": 39392806,
+      "p99_ns": 40264261,
+      "raw_sample_sha256": "905e8bb9b2c162362a5f10df89d921ab8e97352b61599a9e28d5344f440f9722",
+      "sample_count": 48
+    },
+    "b2-c2048-k2": {
+      "batch_size": 2,
+      "burst_width": 2,
+      "context_bucket": 2048,
+      "p50_ns": 67766063,
+      "p95_ns": 69619896,
+      "p99_ns": 71698884,
+      "raw_sample_sha256": "715df25d4564b0d958fbffb0075241de6a5c25c33c3a756d7ce74ee8dc5e1038",
+      "sample_count": 48
+    },
+    "b2-c2048-k4": {
+      "batch_size": 2,
+      "burst_width": 4,
+      "context_bucket": 2048,
+      "p50_ns": 126922735,
+      "p95_ns": 132550515,
+      "p99_ns": 134568130,
+      "raw_sample_sha256": "b1cc2b6c236ee3191a04b723c8a497f9c15b64e30b7495e7ea0068d96ed5e4ef",
+      "sample_count": 48
+    },
+    "b2-c2048-k8": {
+      "batch_size": 2,
+      "burst_width": 8,
+      "context_bucket": 2048,
+      "p50_ns": 245628410,
+      "p95_ns": 259397099,
+      "p99_ns": 260927162,
+      "raw_sample_sha256": "1cf831ac1491bf241f2152d093049aa682e454e45ddb4f48aa732b6de7d9d9ef",
+      "sample_count": 48
+    },
+    "b4-c2048-k1": {
+      "batch_size": 4,
+      "burst_width": 1,
+      "context_bucket": 2048,
+      "p50_ns": 36255161,
+      "p95_ns": 41054324,
+      "p99_ns": 42084230,
+      "raw_sample_sha256": "40e0ca1c44f9f7848f752f7ce4c1eeb0f5ea7be792412f5a1c1f244e8272c2c7",
+      "sample_count": 48
+    },
+    "b4-c2048-k2": {
+      "batch_size": 4,
+      "burst_width": 2,
+      "context_bucket": 2048,
+      "p50_ns": 65820946,
+      "p95_ns": 71757579,
+      "p99_ns": 74447553,
+      "raw_sample_sha256": "beeefe8b9e4a781cf6b6072d3e6e17d49aad578d9b452a4950118f833b4522bd",
+      "sample_count": 48
+    },
+    "b4-c2048-k4": {
+      "batch_size": 4,
+      "burst_width": 4,
+      "context_bucket": 2048,
+      "p50_ns": 126220929,
+      "p95_ns": 133414317,
+      "p99_ns": 139174199,
+      "raw_sample_sha256": "86faa962b2506bf4c0cc236a2731394dcaeffb3bdca806a2ee910cc146d1da3f",
+      "sample_count": 48
+    },
+    "b4-c2048-k8": {
+      "batch_size": 4,
+      "burst_width": 8,
+      "context_bucket": 2048,
+      "p50_ns": 248234054,
+      "p95_ns": 257942108,
+      "p99_ns": 268627491,
+      "raw_sample_sha256": "2af1c4718ff120dad39eb3aaebe4133477280fffefd7e7cba07398638f12e77c",
+      "sample_count": 48
+    },
+    "b8-c2048-k1": {
+      "batch_size": 8,
+      "burst_width": 1,
+      "context_bucket": 2048,
+      "p50_ns": 37942517,
+      "p95_ns": 43868333,
+      "p99_ns": 51496722,
+      "raw_sample_sha256": "b756cad7f2ad7a9c9e9675cc7605263b37ba19cabf1c58baa611a7cb0b654fe9",
+      "sample_count": 48
+    },
+    "b8-c2048-k2": {
+      "batch_size": 8,
+      "burst_width": 2,
+      "context_bucket": 2048,
+      "p50_ns": 68515258,
+      "p95_ns": 76199011,
+      "p99_ns": 95022296,
+      "raw_sample_sha256": "3f6a83116a46d9b4994e21605b7db8dfa289a6403aa5c1ec3d0f146c196601ec",
+      "sample_count": 48
+    },
+    "b8-c2048-k4": {
+      "batch_size": 8,
+      "burst_width": 4,
+      "context_bucket": 2048,
+      "p50_ns": 129580776,
+      "p95_ns": 140146433,
+      "p99_ns": 182073444,
+      "raw_sample_sha256": "70adc85c5aafbd588b562f4faf8423e0b2c8da6021a3004b25a9e5fde7fdd8ec",
+      "sample_count": 48
+    },
+    "b8-c2048-k8": {
+      "batch_size": 8,
+      "burst_width": 8,
+      "context_bucket": 2048,
+      "p50_ns": 252156961,
+      "p95_ns": 268041277,
+      "p99_ns": 356175740,
+      "raw_sample_sha256": "4a0783fa8287ad2c5582f2b6f7e3b026f3c1e299409902ad8bfaeea21a8d8075",
+      "sample_count": 48
+    }
+  },
+  "schema_version": "slo-cohort-burst.cost-table.v1",
+  "source_identity": {
+    "checkpoint_sha256": "ba82f1af84f565431337c7d609fa0aa19d48d574a0abceb440216ab4771f894d",
+    "config_sha256": "5a3f0421facd27022099066989ba1e90807521584deb582dc5a4fa7a650b8c11",
+    "dtype": "torch.bfloat16",
+    "gpu_name": "NVIDIA A100 80GB PCIe",
+    "gpu_uuid": "GPU-63c05907-407b-8240-07a0-f38872840867",
+    "model": "Qwen3-0.6B",
+    "source_commit": "a4d2bdc123e565f16144860568f888f073687d67",
+    "source_patch_sha256": "b1e5f134db09b21782afb3d837f29e3b8f9185102365c2b523a04715d6a6ff7a",
+    "tensor_parallel_size": 1
+  },
+  "table_sha256": "ad244efa25731874d2ea93a96612f9d3bc949645fa6cc1ee491aaf07ae9c6a0f"
+}

@@ -1,0 +1,39 @@
+{
+  "gpu_inventory": null,
+  "remote_paths": {
+    "controller": "/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/controller-verification/20260913-slo-cohort-ceiling-r5-a4d2bdc1",
+    "primary": "/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/runs/20260913-slo-cohort-ceiling-r5-a4d2bdc1",
+    "staging": "/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/staging/20260913-slo-cohort-ceiling-r5-a4d2bdc1"
+  },
+  "resume_receipt": {
+    "artifact_sha256": {
+      "ceiling_summary.json": "4c1a2b7802bb661ab9945d2db77b3be54ce169f7151b44024853f7e0e7a86e96",
+      "cost_table.json": "24429fc52c7cb03fc4c290bc8ba52a83352531951a205637ac8cbdf80a48742d",
+      "raw_rows.jsonl": "15f75f345fca18d7cff51d6e3f1e46937dfb8970a2952a8d2cb9b9864f1880a1",
+      "remote_verify.json": "16c93a42cbcfc58a7c463bc84850372e02bacde70c463a6fe5c1a65e93c4c669",
+      "source_manifest.json": "d01ba86fb2193fc103b02ee8e2da2ecbc92c6027710272b7c4d5d2337a088381"
+    },
+    "remote_paths": {
+      "controller": "/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/controller-verification/20260913-slo-cohort-ceiling-r5-a4d2bdc1",
+      "primary": "/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/runs/20260913-slo-cohort-ceiling-r5-a4d2bdc1",
+      "staging": "/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/staging/20260913-slo-cohort-ceiling-r5-a4d2bdc1"
+    },
+    "run_tag": "20260913-slo-cohort-ceiling-r5-a4d2bdc1",
+    "schema_version": "slo-cohort-burst.remote-resume.v1",
+    "source_commit": "a4d2bdc123e565f16144860568f888f073687d67",
+    "status": "COMPLETE"
+  },
+  "resumed": true,
+  "schema_version": "slo-cohort-burst.local-controller.v1",
+  "selected_gpu": null,
+  "source_commit": "a4d2bdc123e565f16144860568f888f073687d67",
+  "status": "COMPLETE",
+  "verification": {
+    "classification": "CONTINUE_RUNTIME",
+    "cost_table_sha256": "ad244efa25731874d2ea93a96612f9d3bc949645fa6cc1ee491aaf07ae9c6a0f",
+    "verified": true
+  },
+  "worker": {
+    "status": "RESUMED"
+  }
+}

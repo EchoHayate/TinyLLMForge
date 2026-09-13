@@ -1,0 +1,11 @@
+{
+  "checkpoint_sha256": "ba82f1af84f565431337c7d609fa0aa19d48d574a0abceb440216ab4771f894d",
+  "config_sha256": "5a3f0421facd27022099066989ba1e90807521584deb582dc5a4fa7a650b8c11",
+  "dtype": "torch.bfloat16",
+  "gpu_name": "NVIDIA A100 80GB PCIe",
+  "gpu_uuid": "GPU-63c05907-407b-8240-07a0-f38872840867",
+  "model": "Qwen3-0.6B",
+  "source_commit": "a4d2bdc123e565f16144860568f888f073687d67",
+  "source_patch_sha256": "b1e5f134db09b21782afb3d837f29e3b8f9185102365c2b523a04715d6a6ff7a",
+  "tensor_parallel_size": 1
+}
