@@ -72,6 +72,47 @@ MEASURED_STEPS = 24
 DEFAULT_SEED = 20260913
 
 
+def parse_grid_spec(text):
+    """Parse a grid override such as ``1024:1,2,4;2048:1,2``.
+
+    The override exists so a smoke run can prove the plumbing works on a small
+    model without occupying a GPU for the full grid. It is not a tuning knob. The
+    artifact records whether the pre-registered grid was used, so a run on a
+    narrowed grid cannot later be presented as the pre-registered measurement.
+    """
+    groups = []
+    for chunk in text.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if ":" not in chunk:
+            raise ValueError(f"grid group {chunk!r} is missing its ':' separator")
+        head, tail = chunk.split(":", 1)
+        context_length = int(head)
+        if context_length <= 0:
+            raise ValueError("context length must be positive")
+        batches = tuple(int(value) for value in tail.split(",") if value.strip())
+        if not batches:
+            raise ValueError(f"grid group {chunk!r} lists no batch")
+        if any(batch <= 0 for batch in batches):
+            raise ValueError("batch must be positive")
+        if len(set(batches)) != len(batches):
+            raise ValueError(f"grid group {chunk!r} repeats a batch")
+        groups.append((context_length, batches))
+    if not groups:
+        raise ValueError("grid specification is empty")
+    if len({context for context, _batches in groups}) != len(groups):
+        raise ValueError("grid specification repeats a context length")
+    return tuple(groups)
+
+
+def format_grid_spec(grid):
+    return ";".join(
+        f"{context}:" + ",".join(str(batch) for batch in batches)
+        for context, batches in grid
+    )
+
+
 def enumerate_cells(grid=CONTEXT_BATCH_GRID):
     """Flatten the grid into ordered (context_length, batch) pairs."""
     cells = []
@@ -279,17 +320,47 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
 
 def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
         warmup_steps, measured_steps, grid=CONTEXT_BATCH_GRID):
-    """Measure every feasible cell, one engine per context length."""
+    """Measure every feasible cell, one engine per context length.
+
+    Context lengths are attempted in ascending order and a group that fails is
+    recorded rather than allowed to abort the run. The largest contexts are the
+    plausible casualties: admitting a 131072-token prompt requires
+    `max_num_batched_tokens` to be at least as large, so a single prefill step can
+    demand a great deal of activation memory. Losing that group should cost the
+    run those cells and nothing else, because a partial grid still constrains the
+    model while a crashed run constrains nothing.
+    """
     rows = []
     engines = []
-    for context_length, batches in grid:
-        engine = _load_engine(
-            model_path=model_path,
-            max_model_len=context_length + 1024,
-            enforce_eager=enforce_eager,
-            gpu_memory_utilization=gpu_memory_utilization,
-            max_num_seqs=max(8, max(batches) + 4),
-        )
+    for context_length, batches in sorted(grid, key=lambda group: group[0]):
+        engine = None
+        try:
+            engine = _load_engine(
+                model_path=model_path,
+                max_model_len=context_length + 1024,
+                enforce_eager=enforce_eager,
+                gpu_memory_utilization=gpu_memory_utilization,
+                max_num_seqs=max(8, max(batches) + 4),
+            )
+        except Exception as error:  # noqa: BLE001 - recorded, not swallowed
+            reason = f"engine construction failed: {type(error).__name__}: {error}"
+            engines.append(
+                {"context_length": context_length, "identity": None, "error": reason}
+            )
+            for batch in batches:
+                rows.append(
+                    {
+                        "context_length": context_length,
+                        "batch": batch,
+                        "kv_tokens": context_length * batch,
+                        "kv_bytes": kv_bytes_for_cell(context_length, batch),
+                        "measured": False,
+                        "step": None,
+                        "skipped_reason": reason,
+                    }
+                )
+            continue
+
         identity = _engine_identity(engine)
         engines.append({"context_length": context_length, "identity": identity})
         vocab_size = identity.get("vocab_size") or 151936
@@ -314,17 +385,32 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
                         }
                     )
                     continue
-                rows.append(
-                    _measure_cell(
-                        engine,
-                        context_length=context_length,
-                        batch=batch,
-                        vocab_size=vocab_size,
-                        rng=rng,
-                        warmup_steps=warmup_steps,
-                        measured_steps=measured_steps,
+                try:
+                    rows.append(
+                        _measure_cell(
+                            engine,
+                            context_length=context_length,
+                            batch=batch,
+                            vocab_size=vocab_size,
+                            rng=rng,
+                            warmup_steps=warmup_steps,
+                            measured_steps=measured_steps,
+                        )
                     )
-                )
+                except Exception as error:  # noqa: BLE001 - recorded, not swallowed
+                    rows.append(
+                        {
+                            "context_length": context_length,
+                            "batch": batch,
+                            "kv_tokens": context_length * batch,
+                            "kv_bytes": kv_bytes_for_cell(context_length, batch),
+                            "measured": False,
+                            "step": None,
+                            "skipped_reason": (
+                                f"measurement failed: {type(error).__name__}: {error}"
+                            ),
+                        }
+                    )
         finally:
             del engine
             try:
@@ -337,8 +423,10 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
 
 
 def build_payload(rows, engines, *, model_path, enforce_eager, seed,
-                  gpu_memory_utilization, warmup_steps, measured_steps):
-    cells = enumerate_cells()
+                  gpu_memory_utilization, warmup_steps, measured_steps,
+                  grid=CONTEXT_BATCH_GRID):
+    cells = enumerate_cells(grid)
+    preregistered = tuple(grid) == CONTEXT_BATCH_GRID
     payload = {
         "schema": "kvcapacity-gate-a-step-scaling/1",
         "purpose": (
@@ -355,6 +443,9 @@ def build_payload(rows, engines, *, model_path, enforce_eager, seed,
             "kv_bytes_per_token": KV_BYTES_PER_TOKEN,
         },
         "grid": [list(cell) for cell in cells],
+        "grid_spec": format_grid_spec(grid),
+        "grid_is_preregistered": preregistered,
+        "preregistered_grid_spec": format_grid_spec(CONTEXT_BATCH_GRID),
         "product_collision_groups": {
             str(product): [list(member) for member in members]
             for product, members in product_collision_groups(cells).items()
@@ -381,7 +472,22 @@ def parse_args(argv=None):
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--warmup-steps", type=int, default=WARMUP_STEPS)
     parser.add_argument("--measured-steps", type=int, default=MEASURED_STEPS)
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--grid-spec",
+        help=(
+            "override the pre-registered grid, for smoke runs only, "
+            "formatted as 1024:1,2,4;2048:1,2"
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.grid_spec:
+        try:
+            args.grid = parse_grid_spec(args.grid_spec)
+        except ValueError as error:
+            parser.error(str(error))
+    else:
+        args.grid = CONTEXT_BATCH_GRID
+    return args
 
 
 def main(argv=None):
@@ -393,6 +499,7 @@ def main(argv=None):
         seed=args.seed,
         warmup_steps=args.warmup_steps,
         measured_steps=args.measured_steps,
+        grid=args.grid,
     )
     payload = build_payload(
         rows,
@@ -403,6 +510,7 @@ def main(argv=None):
         gpu_memory_utilization=args.gpu_memory_utilization,
         warmup_steps=args.warmup_steps,
         measured_steps=args.measured_steps,
+        grid=args.grid,
     )
     directory = os.path.dirname(os.path.abspath(args.out))
     if directory:
@@ -412,6 +520,11 @@ def main(argv=None):
         handle.write("\n")
     measured = sum(1 for row in rows if row.get("measured"))
     print(f"measured {measured}/{len(rows)} cells")
+    if not payload["grid_is_preregistered"]:
+        print(
+            "WARNING: this run used a narrowed grid, so it is a plumbing check "
+            "and not the pre-registered GATE A measurement"
+        )
     print(f"payload_sha256 {payload['payload_sha256']}")
     return 0
 

@@ -481,6 +481,7 @@ def build_report(payload):
             "rejected_cells": rejected,
         }
     m1, m2 = fit_models(points)
+    preregistered = payload.get("grid_is_preregistered")
     m3 = fit_curvature_model(points)
     collisions = collision_consistency(points)
     share = batch_term_share(m2, points)
@@ -488,9 +489,21 @@ def build_report(payload):
     verdict, consequence, checks = decide(
         m1, m2, m3, collisions, share, curvature, points
     )
+    if preregistered is False:
+        # A narrowed grid can still be internally consistent, so a PASS here
+        # would be technically true and materially misleading. Downgrade it.
+        if verdict == "PASS":
+            verdict = "INCONCLUSIVE"
+        consequence = (
+            "This run used a narrowed grid rather than the pre-registered one, so "
+            "it can only demonstrate that the measurement works. It cannot decide "
+            "GATE A. Consequence recorded from the checks: " + consequence
+        )
     report = {
         "schema": "kvcapacity-gate-a-verdict/1",
         "source_payload_sha256": payload.get("payload_sha256"),
+        "grid_is_preregistered": preregistered,
+        "grid_spec": payload.get("grid_spec"),
         "thresholds": {
             "min_r_squared": MIN_R_SQUARED,
             "max_collision_spread": MAX_COLLISION_SPREAD,
@@ -522,6 +535,8 @@ def render(report):
     verdict = report["verdict"]
     lines.append(f"verdict {verdict}")
     lines.append(f"  {report['consequence']}")
+    if report.get("grid_is_preregistered") is False:
+        lines.append(f"  grid used: {report.get('grid_spec')} (NOT pre-registered)")
     lines.append("")
 
     points = report.get("measured_points") or []

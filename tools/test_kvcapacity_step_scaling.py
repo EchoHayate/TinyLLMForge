@@ -717,3 +717,157 @@ def test_a_realistic_law_passes_all_three_model_checks():
     assert report["verdict"] == "PASS"
     assert report["curvature_at_largest_product"]["share"] < verdict.MAX_CURVATURE_SHARE
     assert report["batch_term_at_largest_batch"]["share"] < verdict.MAX_BATCH_TERM_SHARE
+
+
+# ---------------------------------------------------------------------------
+# Grid overrides and the provenance that keeps a smoke run honest.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_grid_spec_reads_a_well_formed_specification():
+    assert worker.parse_grid_spec("1024:1,2,4;2048:1,2") == (
+        (1024, (1, 2, 4)),
+        (2048, (1, 2)),
+    )
+
+
+def test_parse_grid_spec_tolerates_whitespace_and_trailing_separators():
+    assert worker.parse_grid_spec(" 1024:1,2 ; ") == ((1024, (1, 2)),)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "1024",
+        "1024:",
+        "0:1",
+        "1024:0",
+        "-8:1",
+        "1024:1,1",
+        "1024:1;1024:2",
+    ],
+)
+def test_parse_grid_spec_rejects_malformed_input(text):
+    with pytest.raises(ValueError):
+        worker.parse_grid_spec(text)
+
+
+def test_format_grid_spec_round_trips():
+    spec = worker.format_grid_spec(worker.CONTEXT_BATCH_GRID)
+    assert worker.parse_grid_spec(spec) == worker.CONTEXT_BATCH_GRID
+
+
+def test_enumerate_cells_honours_an_override_grid():
+    cells = worker.enumerate_cells(((512, (1, 2)),))
+    assert cells == ((512, 1), (512, 2))
+
+
+def _payload_for_grid(grid, model):
+    rows = [
+        _row(context, batch, model(context, batch))
+        for context, batch in worker.enumerate_cells(grid)
+    ]
+    return worker.build_payload(
+        rows,
+        [],
+        model_path="/models/qwen3-8b",
+        enforce_eager=False,
+        seed=1,
+        gpu_memory_utilization=0.85,
+        warmup_steps=8,
+        measured_steps=24,
+        grid=grid,
+    )
+
+
+def test_payload_marks_the_preregistered_grid():
+    payload = _payload_for_grid(
+        worker.CONTEXT_BATCH_GRID, lambda L, B: 13.05 + 0.000151 * L * B
+    )
+    assert payload["grid_is_preregistered"] is True
+    assert payload["grid_spec"] == payload["preregistered_grid_spec"]
+
+
+def test_payload_marks_a_narrowed_grid():
+    grid = ((1024, (1, 2, 4)), (2048, (1, 2)))
+    payload = _payload_for_grid(grid, lambda L, B: 13.05 + 0.000151 * L * B)
+    assert payload["grid_is_preregistered"] is False
+    assert payload["grid_spec"] == "1024:1,2,4;2048:1,2"
+    assert payload["preregistered_grid_spec"] != payload["grid_spec"]
+
+
+def test_a_narrowed_grid_cannot_produce_a_pass():
+    """A smoke run that fits perfectly must not be presentable as GATE A.
+
+    This is the safeguard against the exact move that sank the previous research
+    line: a technically correct number reported as though it answered a question
+    it never addressed.
+    """
+    grid = ((1024, (1, 2, 4)), (2048, (1, 2)), (4096, (1,)))
+    payload = _payload_for_grid(grid, lambda L, B: 13.05 + 0.000151 * L * B)
+    report = verdict.build_report(payload)
+    assert report["grid_is_preregistered"] is False
+    assert report["verdict"] == "INCONCLUSIVE"
+    assert "narrowed grid" in report["consequence"]
+    # The underlying checks still ran and still passed; only the verdict is held back.
+    assert all(check["passed"] for check in report["checks"])
+
+
+def test_a_narrowed_grid_still_reports_a_failure_as_a_failure():
+    grid = ((1024, (1, 2, 4)), (2048, (1, 2)), (4096, (1,)))
+    payload = _payload_for_grid(grid, lambda L, B: 13.05 + 9.0 * B + 0.000151 * L * B)
+    report = verdict.build_report(payload)
+    assert report["verdict"] == "FAIL"
+
+
+def test_render_flags_a_narrowed_grid():
+    grid = ((1024, (1, 2, 4)), (2048, (1, 2)), (4096, (1,)))
+    text = verdict.render(verdict.build_report(_payload_for_grid(grid, lambda L, B: 13.05 + 0.000151 * L * B)))
+    assert "NOT pre-registered" in text
+
+
+def test_preregistered_grid_verdict_is_not_downgraded():
+    payload = _payload_for_grid(
+        worker.CONTEXT_BATCH_GRID, lambda L, B: 13.05 + 0.000151 * L * B
+    )
+    report = verdict.build_report(payload)
+    assert report["grid_is_preregistered"] is True
+    assert report["verdict"] == "PASS"
+
+
+def test_payload_is_hashed_and_json_serialisable():
+    payload = _payload_for_grid(
+        worker.CONTEXT_BATCH_GRID, lambda L, B: 13.05 + 0.000151 * L * B
+    )
+    assert len(payload["payload_sha256"]) == 64
+    assert json.loads(json.dumps(payload))["schema"] == payload["schema"]
+
+
+def test_payload_hash_tracks_the_grid():
+    full = _payload_for_grid(
+        worker.CONTEXT_BATCH_GRID, lambda L, B: 13.05 + 0.000151 * L * B
+    )
+    narrow = _payload_for_grid(
+        ((1024, (1, 2)),), lambda L, B: 13.05 + 0.000151 * L * B
+    )
+    assert full["payload_sha256"] != narrow["payload_sha256"]
+
+
+def test_cli_defaults_to_the_preregistered_grid():
+    args = worker.parse_args(["--model-path", "/models/x", "--out", "/tmp/x.json"])
+    assert args.grid == worker.CONTEXT_BATCH_GRID
+
+
+def test_cli_accepts_a_grid_override():
+    args = worker.parse_args(
+        ["--model-path", "/models/x", "--out", "/tmp/x.json", "--grid-spec", "512:1,2"]
+    )
+    assert args.grid == ((512, (1, 2)),)
+
+
+def test_cli_rejects_a_malformed_grid_override():
+    with pytest.raises(SystemExit):
+        worker.parse_args(
+            ["--model-path", "/models/x", "--out", "/tmp/x.json", "--grid-spec", "512:"]
+        )
