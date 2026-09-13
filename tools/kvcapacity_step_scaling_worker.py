@@ -1,0 +1,420 @@
+#!/usr/bin/env python3
+"""GATE A worker: measure how a decode step scales with context and batch.
+
+Why this exists
+---------------
+Stage 0 of the latent KV capacity line models the decode step as::
+
+    step_ms(L, B) = c0 + c1 * L * B
+
+with `c0 = 13.05 ms` and `c1 = 0.151 us/token`. Those two constants were fit
+from a **batch-1** artifact. The batch term is therefore an *extrapolation*, and
+every Stage 0 conclusion, including the entire GO/NO-GO structure, rests on it.
+
+The previous research line in this repository died because a ratio was trusted
+while its denominator was measured by a harness that was technically correct and
+semantically wrong. This worker exists so that the same mistake is not repeated
+one level up. It measures `step_ms(L, B)` directly on the serving path that this
+repository ships, and it is allowed to invalidate Stage 0.
+
+What it measures
+----------------
+For each pre-registered `(context_length, batch)` cell, `batch` independent
+requests are admitted, each carrying `context_length` tokens, and the engine is
+driven one scheduler step at a time. Only decode steps whose *observed* running
+batch equals the target are timed. The observed batch is read from the engine's
+own step accounting (`num_tokens = -len(seqs)` for decode) rather than assumed.
+
+Three guards that the measurement can fail on
+---------------------------------------------
+1. **Prefix sharing.** Block-hash prefix caching is enabled on this engine. If
+   the `batch` prompts shared any prefix, their KV blocks would be shared, the
+   decode step would read far fewer than `batch * context_length` tokens, and the
+   step would look sublinear in batch. That would masquerade as good news. Every
+   prompt is therefore drawn independently at full length, and the total prefill
+   token count reported by the engine is recorded next to `batch * context_length`
+   so a discrepancy is visible instead of silently favourable.
+2. **Observed batch drift.** Requests may finish or be preempted at different
+   times, so a step nominally at batch `B` can run fewer sequences. Steps whose
+   observed batch differs from the target are discarded, not averaged in.
+3. **Capacity.** A cell whose KV footprint exceeds the device budget is recorded
+   as skipped with a reason. It is never estimated.
+
+This worker measures time and capacity only. It says nothing about output
+quality, and the pre-registered plan forbids drawing quality conclusions from it.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import platform
+import random
+import statistics
+import sys
+import time
+
+# Pre-registered measurement grid. Each cell is feasible under a 47.6 GiB KV
+# budget at the Qwen3-8B GQA footprint of 147456 bytes per token, which is what
+# the Stage 0 artifact assumes. The cells were chosen so that the product
+# `context_length * batch` collides across different shapes; those collisions are
+# the sharpest available test of the model's central claim.
+CONTEXT_BATCH_GRID = (
+    (16384, (1, 2, 4, 8, 16)),
+    (32768, (1, 2, 4, 8)),
+    (65536, (1, 2, 4)),
+    (131072, (1, 2)),
+)
+
+KV_BYTES_PER_TOKEN = 147456
+WARMUP_STEPS = 8
+MEASURED_STEPS = 24
+DEFAULT_SEED = 20260913
+
+
+def enumerate_cells(grid=CONTEXT_BATCH_GRID):
+    """Flatten the grid into ordered (context_length, batch) pairs."""
+    cells = []
+    for context_length, batches in grid:
+        for batch in batches:
+            cells.append((int(context_length), int(batch)))
+    return tuple(cells)
+
+
+def product_collision_groups(cells):
+    """Group cells by `context_length * batch`.
+
+    Only groups with more than one member are returned, because a single member
+    cannot test anything.
+    """
+    groups = {}
+    for context_length, batch in cells:
+        groups.setdefault(context_length * batch, []).append((context_length, batch))
+    return {
+        product: tuple(members)
+        for product, members in sorted(groups.items())
+        if len(members) > 1
+    }
+
+
+def kv_bytes_for_cell(context_length, batch, bytes_per_token=KV_BYTES_PER_TOKEN):
+    return int(context_length) * int(batch) * int(bytes_per_token)
+
+
+def cell_fits(context_length, batch, available_kv_bytes, *, headroom=0.95):
+    """Whether a cell's resident KV fits, keeping a little headroom."""
+    if available_kv_bytes is None:
+        return True
+    required = kv_bytes_for_cell(context_length, batch)
+    return required <= float(available_kv_bytes) * headroom
+
+
+def build_distinct_prompts(context_length, batch, vocab_size, rng):
+    """Draw `batch` independent prompts, each `context_length` tokens long.
+
+    Independence at full length is deliberate. Sharing even the first block
+    across two prompts would let block-hash prefix caching merge their KV and
+    corrupt the batch scaling this worker exists to measure.
+    """
+    if vocab_size < 16:
+        raise ValueError("vocab_size is implausibly small")
+    prompts = []
+    seen_first_block = set()
+    for _ in range(batch):
+        while True:
+            prompt = [rng.randrange(4, vocab_size - 1) for _ in range(context_length)]
+            marker = tuple(prompt[:256])
+            if marker not in seen_first_block:
+                seen_first_block.add(marker)
+                break
+        prompts.append(prompt)
+    return prompts
+
+
+def prompt_digest(prompt):
+    payload = ",".join(str(token) for token in prompt).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def summarise(samples):
+    """Robust summary of a list of step durations in milliseconds."""
+    if not samples:
+        return None
+    ordered = sorted(samples)
+    return {
+        "count": len(ordered),
+        "mean_ms": statistics.fmean(ordered),
+        "median_ms": statistics.median(ordered),
+        "p10_ms": ordered[max(0, int(0.10 * (len(ordered) - 1)))],
+        "p90_ms": ordered[min(len(ordered) - 1, int(0.90 * (len(ordered) - 1)))],
+        "min_ms": ordered[0],
+        "max_ms": ordered[-1],
+        "stdev_ms": statistics.pstdev(ordered) if len(ordered) > 1 else 0.0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GPU section. Everything below imports torch and tinyvllm lazily so that the
+# pure helpers above stay importable, and testable, on a laptop.
+# ---------------------------------------------------------------------------
+
+
+def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utilization,
+                 max_num_seqs):
+    from tinyvllm import LLM
+
+    engine = LLM(
+        model=model_path,
+        enforce_eager=enforce_eager,
+        max_model_len=max_model_len,
+        max_num_batched_tokens=max(16384, max_model_len),
+        max_num_seqs=max_num_seqs,
+        gpu_memory_utilization=gpu_memory_utilization,
+        tensor_parallel_size=1,
+    )
+    return engine
+
+
+def _engine_identity(engine):
+    """Best-effort record of what the engine actually allocated.
+
+    Reached defensively: this is evidence, not control flow, and a private
+    attribute moving must not fail the run.
+    """
+    identity = {}
+    for path, key in (
+        ("config.num_kvcache_blocks", "num_kvcache_blocks"),
+        ("config.kvcache_block_size", "kvcache_block_size"),
+        ("config.max_model_len", "max_model_len"),
+        ("config.max_num_seqs", "max_num_seqs"),
+        ("config.max_num_batched_tokens", "max_num_batched_tokens"),
+        ("config.gpu_memory_utilization", "gpu_memory_utilization"),
+        ("config.enforce_eager", "enforce_eager"),
+        ("config.hf_config.vocab_size", "vocab_size"),
+        ("config.hf_config.num_hidden_layers", "num_hidden_layers"),
+        ("config.hf_config.num_key_value_heads", "num_key_value_heads"),
+        ("config.hf_config.head_dim", "head_dim"),
+    ):
+        target = engine
+        try:
+            for attribute in path.split("."):
+                target = getattr(target, attribute)
+        except AttributeError:
+            identity[key] = None
+            continue
+        identity[key] = target
+    blocks = identity.get("num_kvcache_blocks")
+    block_size = identity.get("kvcache_block_size")
+    if isinstance(blocks, int) and isinstance(block_size, int) and blocks > 0:
+        identity["kv_capacity_tokens"] = blocks * block_size
+        identity["kv_capacity_bytes"] = blocks * block_size * KV_BYTES_PER_TOKEN
+    else:
+        identity["kv_capacity_tokens"] = None
+        identity["kv_capacity_bytes"] = None
+    return identity
+
+
+def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
+                  warmup_steps, measured_steps):
+    """Drive one grid cell and time only the steps that really ran at `batch`."""
+    from tinyvllm.sampling_params import SamplingParams
+
+    prompts = build_distinct_prompts(context_length, batch, vocab_size, rng)
+    max_tokens = warmup_steps + measured_steps + 2
+    params = SamplingParams(temperature=0.0, max_tokens=max_tokens, ignore_eos=True)
+    for prompt in prompts:
+        engine.add_request(prompt, params)
+
+    prefill_tokens_total = 0
+    prefill_steps = 0
+    decode_steps_by_batch = {}
+    samples = []
+    observed_batches = []
+    step_index = 0
+    guard = (warmup_steps + measured_steps + 8) * max(1, batch) + 64
+
+    while not engine.is_finished():
+        step_index += 1
+        if step_index > guard:
+            break
+        start = time.perf_counter()
+        _output, num_tokens = engine.step()
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        if num_tokens > 0:
+            prefill_tokens_total += num_tokens
+            prefill_steps += 1
+            continue
+        observed = -num_tokens
+        observed_batches.append(observed)
+        decode_steps_by_batch[observed] = decode_steps_by_batch.get(observed, 0) + 1
+        if observed != batch:
+            continue
+        if decode_steps_by_batch[observed] <= warmup_steps:
+            continue
+        if len(samples) < measured_steps:
+            samples.append(elapsed_ms)
+
+    return {
+        "context_length": context_length,
+        "batch": batch,
+        "kv_tokens": context_length * batch,
+        "kv_bytes": kv_bytes_for_cell(context_length, batch),
+        "prompt_digests": [prompt_digest(prompt) for prompt in prompts],
+        "prefill_steps": prefill_steps,
+        "prefill_tokens_total": prefill_tokens_total,
+        "prefill_tokens_expected": context_length * batch,
+        "prefill_tokens_match": prefill_tokens_total == context_length * batch,
+        "decode_steps_by_observed_batch": {
+            str(key): value for key, value in sorted(decode_steps_by_batch.items())
+        },
+        "observed_batch_is_stable": bool(
+            observed_batches and set(observed_batches) == {batch}
+        ),
+        "target_batch_step_count": decode_steps_by_batch.get(batch, 0),
+        "step": summarise(samples),
+        "measured": bool(samples),
+        "skipped_reason": None if samples else "no decode step ran at the target batch",
+    }
+
+
+def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
+        warmup_steps, measured_steps, grid=CONTEXT_BATCH_GRID):
+    """Measure every feasible cell, one engine per context length."""
+    rows = []
+    engines = []
+    for context_length, batches in grid:
+        engine = _load_engine(
+            model_path=model_path,
+            max_model_len=context_length + 1024,
+            enforce_eager=enforce_eager,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_num_seqs=max(8, max(batches) + 4),
+        )
+        identity = _engine_identity(engine)
+        engines.append({"context_length": context_length, "identity": identity})
+        vocab_size = identity.get("vocab_size") or 151936
+        available = identity.get("kv_capacity_bytes")
+        rng = random.Random(seed + context_length)
+        try:
+            for batch in batches:
+                if not cell_fits(context_length, batch, available):
+                    rows.append(
+                        {
+                            "context_length": context_length,
+                            "batch": batch,
+                            "kv_tokens": context_length * batch,
+                            "kv_bytes": kv_bytes_for_cell(context_length, batch),
+                            "measured": False,
+                            "step": None,
+                            "skipped_reason": (
+                                "resident KV exceeds the device budget: "
+                                f"{kv_bytes_for_cell(context_length, batch)} bytes "
+                                f"required, {available} available"
+                            ),
+                        }
+                    )
+                    continue
+                rows.append(
+                    _measure_cell(
+                        engine,
+                        context_length=context_length,
+                        batch=batch,
+                        vocab_size=vocab_size,
+                        rng=rng,
+                        warmup_steps=warmup_steps,
+                        measured_steps=measured_steps,
+                    )
+                )
+        finally:
+            del engine
+            try:
+                import torch
+
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+    return rows, engines
+
+
+def build_payload(rows, engines, *, model_path, enforce_eager, seed,
+                  gpu_memory_utilization, warmup_steps, measured_steps):
+    cells = enumerate_cells()
+    payload = {
+        "schema": "kvcapacity-gate-a-step-scaling/1",
+        "purpose": (
+            "Validate the batch term of the Stage 0 decode-step model "
+            "step_ms(L, B) = c0 + c1 * L * B on the tinyvllm serving path."
+        ),
+        "configuration": {
+            "model_path": model_path,
+            "enforce_eager": enforce_eager,
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "seed": seed,
+            "warmup_steps": warmup_steps,
+            "measured_steps": measured_steps,
+            "kv_bytes_per_token": KV_BYTES_PER_TOKEN,
+        },
+        "grid": [list(cell) for cell in cells],
+        "product_collision_groups": {
+            str(product): [list(member) for member in members]
+            for product, members in product_collision_groups(cells).items()
+        },
+        "engines": engines,
+        "rows": rows,
+        "environment": {
+            "python": sys.version.split()[0],
+            "platform": platform.platform(),
+            "hostname": platform.node(),
+        },
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    payload["payload_sha256"] = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return payload
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model-path", required=True)
+    parser.add_argument("--out", required=True)
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.85)
+    parser.add_argument("--enforce-eager", action="store_true")
+    parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
+    parser.add_argument("--warmup-steps", type=int, default=WARMUP_STEPS)
+    parser.add_argument("--measured-steps", type=int, default=MEASURED_STEPS)
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    rows, engines = run(
+        model_path=args.model_path,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        enforce_eager=args.enforce_eager,
+        seed=args.seed,
+        warmup_steps=args.warmup_steps,
+        measured_steps=args.measured_steps,
+    )
+    payload = build_payload(
+        rows,
+        engines,
+        model_path=args.model_path,
+        enforce_eager=args.enforce_eager,
+        seed=args.seed,
+        gpu_memory_utilization=args.gpu_memory_utilization,
+        warmup_steps=args.warmup_steps,
+        measured_steps=args.measured_steps,
+    )
+    directory = os.path.dirname(os.path.abspath(args.out))
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(args.out, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    measured = sum(1 for row in rows if row.get("measured"))
+    print(f"measured {measured}/{len(rows)} cells")
+    print(f"payload_sha256 {payload['payload_sha256']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

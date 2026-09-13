@@ -1,0 +1,719 @@
+#!/usr/bin/env python3
+"""Tests for the GATE A step-scaling worker helpers and verdict logic.
+
+These tests never touch a GPU. They cover the parts that can silently produce a
+plausible-looking wrong answer: the fit, the equal-product consistency check, the
+rejection of cells whose batch is not what it claims, and the threshold logic.
+"""
+
+import importlib.util
+import json
+import math
+import random
+import sys
+import types
+from pathlib import Path
+
+import pytest
+
+HERE = Path(__file__).resolve().parent
+
+
+def _load(name, filename):
+    """Import a tool module by path without importing the tinyvllm package."""
+    path = HERE / filename
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+worker = _load("_gate_a_worker", "kvcapacity_step_scaling_worker.py")
+verdict = _load("_gate_a_verdict", "kvcapacity_step_scaling_verdict.py")
+
+
+# ---------------------------------------------------------------------------
+# The worker must not drag in torch at import time.
+# ---------------------------------------------------------------------------
+
+
+def test_worker_import_does_not_require_torch():
+    assert "torch" not in sys.modules or isinstance(sys.modules["torch"], types.ModuleType)
+    source = (HERE / "kvcapacity_step_scaling_worker.py").read_text(encoding="utf-8")
+    header = source.split("# ---", 1)[0]
+    assert "import torch" not in header
+    assert "from tinyvllm" not in header
+
+
+def test_verdict_import_does_not_require_torch_or_numpy():
+    source = (HERE / "kvcapacity_step_scaling_verdict.py").read_text(encoding="utf-8")
+    assert "import torch" not in source
+    assert "import numpy" not in source
+
+
+# ---------------------------------------------------------------------------
+# Grid construction and the equal-product structure it is supposed to provide.
+# ---------------------------------------------------------------------------
+
+
+def test_enumerate_cells_matches_grid_size():
+    cells = worker.enumerate_cells()
+    expected = sum(len(batches) for _context, batches in worker.CONTEXT_BATCH_GRID)
+    assert len(cells) == expected
+    assert len(set(cells)) == len(cells)
+
+
+def test_grid_contains_batch_one_for_every_context():
+    cells = worker.enumerate_cells()
+    contexts = {context for context, _batch in cells}
+    for context in contexts:
+        assert (context, 1) in cells
+
+
+def test_grid_has_at_least_three_distinct_batches():
+    batches = {batch for _context, batch in worker.enumerate_cells()}
+    assert len(batches) >= 3
+
+
+def test_grid_provides_equal_product_collisions():
+    """The grid is worthless for this purpose if no two shapes share L*B."""
+    groups = worker.product_collision_groups(worker.enumerate_cells())
+    assert groups, "the grid must contain at least one equal-product group"
+    for product, members in groups.items():
+        assert len(members) >= 2
+        for context, batch in members:
+            assert context * batch == product
+        assert len({context for context, _batch in members}) >= 2
+
+
+def test_product_collision_groups_excludes_singletons():
+    groups = worker.product_collision_groups(((1024, 1), (2048, 4)))
+    assert groups == {}
+
+
+def test_product_collision_groups_finds_a_planted_pair():
+    groups = worker.product_collision_groups(((1024, 4), (2048, 2), (4096, 1)))
+    assert list(groups) == [4096]
+    assert len(groups[4096]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Capacity arithmetic.
+# ---------------------------------------------------------------------------
+
+
+def test_kv_bytes_scales_with_both_dimensions():
+    single = worker.kv_bytes_for_cell(16384, 1)
+    assert single == 16384 * worker.KV_BYTES_PER_TOKEN
+    assert worker.kv_bytes_for_cell(16384, 4) == 4 * single
+    assert worker.kv_bytes_for_cell(65536, 1) == 4 * single
+
+
+def test_cell_fits_respects_budget_and_headroom():
+    budget = worker.kv_bytes_for_cell(16384, 8)
+    assert worker.cell_fits(16384, 4, budget)
+    # Exactly at the budget must fail, because the guard keeps headroom.
+    assert not worker.cell_fits(16384, 8, budget)
+    assert worker.cell_fits(16384, 8, budget / 0.95 + 1)
+
+
+def test_cell_fits_is_permissive_when_budget_unknown():
+    assert worker.cell_fits(131072, 32, None)
+
+
+def test_every_grid_cell_fits_the_stage0_budget():
+    """The pre-registered grid must be runnable under the modelled KV budget."""
+    budget = int(47.6 * (1024 ** 3))
+    for context, batch in worker.enumerate_cells():
+        assert worker.cell_fits(context, batch, budget), (context, batch)
+
+
+# ---------------------------------------------------------------------------
+# Prompt construction, the guard against prefix-cache sharing.
+# ---------------------------------------------------------------------------
+
+
+def test_prompts_have_requested_shape():
+    rng = random.Random(0)
+    prompts = worker.build_distinct_prompts(512, 3, 1000, rng)
+    assert len(prompts) == 3
+    assert all(len(prompt) == 512 for prompt in prompts)
+
+
+def test_prompts_differ_in_the_first_block():
+    """Block-hash prefix caching keys on whole blocks, so block zero must differ."""
+    rng = random.Random(1)
+    prompts = worker.build_distinct_prompts(600, 6, 5000, rng)
+    first_blocks = {tuple(prompt[:256]) for prompt in prompts}
+    assert len(first_blocks) == 6
+
+
+def test_prompt_tokens_stay_in_range():
+    rng = random.Random(2)
+    prompts = worker.build_distinct_prompts(128, 2, 300, rng)
+    for prompt in prompts:
+        assert all(4 <= token < 299 for token in prompt)
+
+
+def test_build_distinct_prompts_rejects_tiny_vocabulary():
+    with pytest.raises(ValueError):
+        worker.build_distinct_prompts(16, 2, 4, random.Random(3))
+
+
+def test_prompt_digest_is_order_sensitive_and_stable():
+    assert worker.prompt_digest([1, 2, 3]) == worker.prompt_digest([1, 2, 3])
+    assert worker.prompt_digest([1, 2, 3]) != worker.prompt_digest([3, 2, 1])
+
+
+# ---------------------------------------------------------------------------
+# Summary statistics.
+# ---------------------------------------------------------------------------
+
+
+def test_summarise_reports_none_for_no_samples():
+    assert worker.summarise([]) is None
+
+
+def test_summarise_computes_expected_values():
+    summary = worker.summarise([10.0, 12.0, 11.0, 100.0])
+    assert summary["count"] == 4
+    assert summary["min_ms"] == 10.0
+    assert summary["max_ms"] == 100.0
+    assert summary["median_ms"] == pytest.approx(11.5)
+    # The median must resist the outlier that the mean absorbs.
+    assert summary["mean_ms"] > summary["median_ms"]
+
+
+# ---------------------------------------------------------------------------
+# The fit.
+# ---------------------------------------------------------------------------
+
+
+def _points_from(model, cells):
+    return [
+        {
+            "context_length": context,
+            "batch": batch,
+            "kv_tokens": context * batch,
+            "step_ms": model(context, batch),
+            "step_stdev_ms": 0.0,
+            "sample_count": 24,
+        }
+        for context, batch in cells
+    ]
+
+
+def test_least_squares_recovers_a_planted_affine_law():
+    designs = [[1.0, 0.0], [1.0, 1.0], [1.0, 2.0], [1.0, 3.0]]
+    observations = [5.0, 7.0, 9.0, 11.0]
+    intercept, slope = verdict.least_squares(designs, observations)
+    assert intercept == pytest.approx(5.0)
+    assert slope == pytest.approx(2.0)
+
+
+def test_least_squares_rejects_underdetermined_systems():
+    with pytest.raises(ValueError):
+        verdict.least_squares([[1.0, 1.0]], [1.0])
+
+
+def test_least_squares_rejects_mismatched_lengths():
+    with pytest.raises(ValueError):
+        verdict.least_squares([[1.0, 1.0], [1.0, 2.0]], [1.0])
+
+
+def test_least_squares_rejects_a_singular_design():
+    with pytest.raises(ValueError):
+        verdict.least_squares([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]], [1.0, 2.0, 3.0])
+
+
+def test_r_squared_is_one_for_an_exact_fit():
+    designs = [[1.0, 1.0], [1.0, 2.0], [1.0, 3.0]]
+    score, _predictions, residual = verdict.r_squared(designs, [3.0, 5.0, 7.0], [1.0, 2.0])
+    assert score == pytest.approx(1.0)
+    assert residual == pytest.approx(0.0)
+
+
+def test_fit_models_recovers_the_stage0_law_when_it_holds():
+    cells = worker.enumerate_cells()
+    points = _points_from(lambda L, B: 13.05 + 0.000151 * L * B, cells)
+    m1, m2 = verdict.fit_models(points)
+    assert m1["c0_ms"] == pytest.approx(13.05, abs=1e-6)
+    assert m1["c1_us_per_token"] == pytest.approx(0.151, abs=1e-9)
+    assert m1["r_squared"] == pytest.approx(1.0)
+    # M2 has a spare parameter and must drive it to zero, not invent structure.
+    assert m2["a_ms_per_sequence"] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_fit_models_exposes_a_hidden_batch_term():
+    """The point of M2: a per-sequence cost must not hide inside M1's constants."""
+    cells = worker.enumerate_cells()
+    points = _points_from(lambda L, B: 13.0 + 1.5 * B + 0.000151 * L * B, cells)
+    m1, m2 = verdict.fit_models(points)
+    assert m2["a_ms_per_sequence"] == pytest.approx(1.5, abs=1e-6)
+    assert m2["r_squared"] > m1["r_squared"]
+    assert m2["residual_reduction_vs_m1"] > 0.5
+    # M1 absorbs the batch cost by distorting its parameters.
+    assert m1["c1_us_per_token"] > 0.151
+
+
+def test_fit_models_returns_no_m2_without_batch_variation():
+    points = _points_from(lambda L, B: 13.0 + 0.000151 * L * B, ((16384, 1), (32768, 1), (65536, 1)))
+    _m1, m2 = verdict.fit_models(points)
+    assert m2 is None
+
+
+def test_batch_term_share_is_reported_at_the_largest_batch():
+    cells = worker.enumerate_cells()
+    points = _points_from(lambda L, B: 13.0 + 1.0 * B + 0.000151 * L * B, cells)
+    _m1, m2 = verdict.fit_models(points)
+    share = verdict.batch_term_share(m2, points)
+    assert share["batch"] == max(point["batch"] for point in points)
+    assert 0.0 < share["share"] < 1.0
+
+
+def test_batch_term_share_is_none_without_m2():
+    assert verdict.batch_term_share(None, []) is None
+
+
+# ---------------------------------------------------------------------------
+# Equal-product consistency, the parameter-free test.
+# ---------------------------------------------------------------------------
+
+
+def test_collision_consistency_passes_when_shape_does_not_matter():
+    points = _points_from(lambda L, B: 13.05 + 0.000151 * L * B, worker.enumerate_cells())
+    groups = verdict.collision_consistency(points)
+    assert groups
+    assert all(group["within_threshold"] for group in groups)
+
+
+def test_collision_consistency_catches_shape_dependence():
+    """If batch is more expensive than context, equal-product cells diverge."""
+    points = _points_from(
+        lambda L, B: 13.05 + 0.000151 * L * B + 4.0 * B, worker.enumerate_cells()
+    )
+    groups = verdict.collision_consistency(points)
+    assert any(not group["within_threshold"] for group in groups)
+
+
+def test_collision_consistency_ignores_lonely_products():
+    points = _points_from(lambda L, B: 10.0, ((1024, 1), (4096, 1)))
+    assert verdict.collision_consistency(points) == []
+
+
+# ---------------------------------------------------------------------------
+# Point extraction: the integrity filters.
+# ---------------------------------------------------------------------------
+
+
+def _row(context, batch, median, **overrides):
+    row = {
+        "context_length": context,
+        "batch": batch,
+        "measured": True,
+        "prefill_tokens_match": True,
+        "step": {"median_ms": median, "stdev_ms": 0.1, "count": 24},
+    }
+    row.update(overrides)
+    return row
+
+
+def test_extract_points_keeps_clean_rows():
+    payload = {"rows": [_row(16384, 1, 15.0), _row(16384, 2, 18.0)]}
+    points, rejected = verdict.extract_points(payload)
+    assert len(points) == 2
+    assert rejected == []
+
+
+def test_extract_points_drops_unmeasured_rows_with_a_reason():
+    payload = {
+        "rows": [
+            _row(16384, 1, 15.0),
+            {
+                "context_length": 131072,
+                "batch": 8,
+                "measured": False,
+                "step": None,
+                "skipped_reason": "resident KV exceeds the device budget",
+            },
+        ]
+    }
+    points, rejected = verdict.extract_points(payload)
+    assert len(points) == 1
+    assert len(rejected) == 1
+    assert "budget" in rejected[0]["reason"]
+
+
+def test_extract_points_rejects_prefill_token_mismatch():
+    """A prefill shortfall means prefix caching merged KV, so the batch is a lie.
+
+    This is the specific failure that would make compression look good for the
+    wrong reason, so it must remove the cell rather than warn about it.
+    """
+    payload = {
+        "rows": [
+            _row(16384, 1, 15.0),
+            _row(
+                16384,
+                4,
+                16.0,
+                prefill_tokens_match=False,
+                prefill_tokens_total=16384,
+                prefill_tokens_expected=65536,
+            ),
+        ]
+    }
+    points, rejected = verdict.extract_points(payload)
+    assert [point["batch"] for point in points] == [1]
+    assert "shared" in rejected[0]["reason"]
+
+
+def test_extract_points_computes_kv_tokens():
+    payload = {"rows": [_row(16384, 4, 20.0)]}
+    points, _rejected = verdict.extract_points(payload)
+    assert points[0]["kv_tokens"] == 65536
+
+
+# ---------------------------------------------------------------------------
+# Verdict logic.
+# ---------------------------------------------------------------------------
+
+
+def _payload_from(model, cells=None):
+    cells = cells or worker.enumerate_cells()
+    return {
+        "payload_sha256": "test",
+        "rows": [_row(context, batch, model(context, batch)) for context, batch in cells],
+    }
+
+
+def test_verdict_passes_when_the_stage0_model_holds():
+    report = verdict.build_report(_payload_from(lambda L, B: 13.05 + 0.000151 * L * B))
+    assert report["verdict"] == "PASS"
+    assert all(check["passed"] for check in report["checks"])
+
+
+def test_verdict_fails_on_a_large_hidden_batch_term():
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 6.0 * B + 0.000151 * L * B)
+    )
+    assert report["verdict"] == "FAIL"
+    assert "refit" in report["consequence"]
+
+
+def test_verdict_fails_when_the_step_is_superlinear_in_resident_tokens():
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 0.000151 * L * B + 2e-10 * (L * B) ** 2)
+    )
+    assert report["verdict"] == "FAIL"
+
+
+def test_verdict_is_inconclusive_with_too_few_batches():
+    report = verdict.build_report(
+        _payload_from(
+            lambda L, B: 13.05 + 0.000151 * L * B,
+            ((16384, 1), (32768, 1), (65536, 1), (131072, 1)),
+        )
+    )
+    assert report["verdict"] == "INCONCLUSIVE"
+    assert "do not proceed" in report["consequence"].lower()
+
+
+def test_verdict_is_inconclusive_with_too_few_points():
+    report = verdict.build_report({"rows": [_row(16384, 1, 15.0)]})
+    assert report["verdict"] == "INCONCLUSIVE"
+
+
+def test_verdict_reports_stage0_drift_without_hiding_it():
+    """A model that fits perfectly can still contradict the frozen constants."""
+    report = verdict.build_report(_payload_from(lambda L, B: 26.0 + 0.000302 * L * B))
+    comparison = report["stage0_comparison"]
+    assert comparison["c0_ratio"] == pytest.approx(26.0 / 13.05, rel=1e-3)
+    assert comparison["c1_ratio"] == pytest.approx(2.0, rel=1e-3)
+
+
+def test_verdict_flags_a_vacuous_collision_check():
+    report = verdict.build_report(
+        _payload_from(
+            lambda L, B: 13.05 + 0.000151 * L * B,
+            ((16384, 1), (16384, 2), (16384, 4), (16384, 8)),
+        )
+    )
+    collision_check = next(
+        check for check in report["checks"] if check["name"] == "collision_consistency"
+    )
+    assert collision_check["vacuous"] is True
+
+
+def test_report_is_json_serialisable_and_hashed():
+    report = verdict.build_report(_payload_from(lambda L, B: 13.05 + 0.000151 * L * B))
+    encoded = json.dumps(report, sort_keys=True)
+    assert report["report_sha256"] in encoded or len(report["report_sha256"]) == 64
+    assert json.loads(encoded)["verdict"] == "PASS"
+
+
+def test_report_hash_is_deterministic():
+    first = verdict.build_report(_payload_from(lambda L, B: 13.05 + 0.000151 * L * B))
+    second = verdict.build_report(_payload_from(lambda L, B: 13.05 + 0.000151 * L * B))
+    assert first["report_sha256"] == second["report_sha256"]
+
+
+def test_report_hash_changes_with_the_measurement():
+    first = verdict.build_report(_payload_from(lambda L, B: 13.05 + 0.000151 * L * B))
+    second = verdict.build_report(_payload_from(lambda L, B: 13.05 + 0.000152 * L * B))
+    assert first["report_sha256"] != second["report_sha256"]
+
+
+def test_render_mentions_the_verdict_and_both_models():
+    report = verdict.build_report(_payload_from(lambda L, B: 13.05 + 0.5 * B + 0.000151 * L * B))
+    text = verdict.render(report)
+    assert "GATE A" in text
+    assert report["verdict"] in text
+    assert "M1" in text and "M2" in text
+    assert "us/token" in text
+
+
+def test_render_lists_excluded_cells():
+    payload = _payload_from(lambda L, B: 13.05 + 0.000151 * L * B)
+    payload["rows"].append(
+        {
+            "context_length": 131072,
+            "batch": 32,
+            "measured": False,
+            "step": None,
+            "skipped_reason": "resident KV exceeds the device budget",
+        }
+    )
+    text = verdict.render(verdict.build_report(payload))
+    assert "excluded" in text
+    assert "budget" in text
+
+
+def test_thresholds_are_declared_and_within_sane_ranges():
+    assert 0.9 <= verdict.MIN_R_SQUARED < 1.0
+    assert 0.0 < verdict.MAX_COLLISION_SPREAD <= 0.25
+    assert 0.0 < verdict.MAX_BATCH_TERM_SHARE <= 0.5
+    assert verdict.STAGE0_C0_MS == 13.05
+    assert verdict.STAGE0_C1_US_PER_TOKEN == 0.151
+
+
+def test_exit_code_is_nonzero_unless_the_gate_passes(tmp_path, capsys):
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text(
+        json.dumps(_payload_from(lambda L, B: 13.05 + 6.0 * B + 0.000151 * L * B)),
+        encoding="utf-8",
+    )
+    out_path = tmp_path / "verdict.json"
+    code = verdict.main(["--payload", str(payload_path), "--out", str(out_path)])
+    capsys.readouterr()
+    assert code == 1
+    assert json.loads(out_path.read_text(encoding="utf-8"))["verdict"] == "FAIL"
+
+
+def test_exit_code_is_zero_when_the_gate_passes(tmp_path, capsys):
+    payload_path = tmp_path / "payload.json"
+    payload_path.write_text(
+        json.dumps(_payload_from(lambda L, B: 13.05 + 0.000151 * L * B)), encoding="utf-8"
+    )
+    code = verdict.main(["--payload", str(payload_path)])
+    capsys.readouterr()
+    assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# A regression guard on the physics the gate is meant to protect.
+# ---------------------------------------------------------------------------
+
+
+def test_a_realistic_gqa_step_law_would_pass():
+    """Sanity check with plausible A100 numbers for Qwen3-8B GQA decode."""
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 0.15 * B + 0.000151 * L * B)
+    )
+    assert report["verdict"] == "PASS"
+    share = report["batch_term_at_largest_batch"]
+    assert share["share"] < verdict.MAX_BATCH_TERM_SHARE
+
+
+def test_noise_does_not_flip_a_true_model():
+    rng = random.Random(7)
+    report = verdict.build_report(
+        _payload_from(
+            lambda L, B: 13.05 + 0.000151 * L * B + rng.uniform(-0.3, 0.3),
+        )
+    )
+    assert report["verdict"] == "PASS"
+
+
+def test_fit_is_not_confused_by_a_single_wild_outlier_being_excluded():
+    """An unmeasurable cell must shrink the fit, never poison it."""
+    payload = _payload_from(lambda L, B: 13.05 + 0.000151 * L * B)
+    payload["rows"][0] = {
+        "context_length": payload["rows"][0]["context_length"],
+        "batch": payload["rows"][0]["batch"],
+        "measured": False,
+        "step": None,
+        "skipped_reason": "no decode step ran at the target batch",
+    }
+    report = verdict.build_report(payload)
+    assert report["verdict"] == "PASS"
+    assert len(report["rejected_cells"]) == 1
+    assert report["model_m1"]["r_squared"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_math_import_is_not_needed_for_determinism():
+    assert math.isfinite(verdict.MIN_R_SQUARED)
+
+
+# ---------------------------------------------------------------------------
+# M3, the curvature check.
+#
+# These tests exist to record why M3 is not redundant. Deleting it would restore
+# a gate that passes data plainly violating the model it is supposed to test.
+# ---------------------------------------------------------------------------
+
+
+def test_r_squared_alone_cannot_detect_curvature():
+    """The documented reason M3 exists, asserted rather than assumed.
+
+    A step that is materially superlinear in resident tokens still fits a
+    straight line with an R^2 far above the pre-registered threshold. If this
+    test ever fails, the R^2 threshold became a sufficient curvature test and M3
+    could be reconsidered. Until then it cannot.
+    """
+    points = _points_from(
+        lambda L, B: 13.05 + 0.000151 * L * B + 2e-10 * (L * B) ** 2,
+        worker.enumerate_cells(),
+    )
+    m1, _m2 = verdict.fit_models(points)
+    assert m1["r_squared"] > verdict.MIN_R_SQUARED
+    curvature = verdict.curvature_share(verdict.fit_curvature_model(points), points)
+    assert curvature["share"] > verdict.MAX_CURVATURE_SHARE
+
+
+def test_equal_product_check_also_cannot_detect_curvature():
+    """The second reason M3 exists.
+
+    Any function of `L * B` alone leaves equal-product cells identical, so the
+    parameter-free consistency check is structurally blind to the form of the
+    law. It constrains shape dependence only.
+    """
+    points = _points_from(
+        lambda L, B: 13.05 + 0.000151 * L * B + 2e-10 * (L * B) ** 2,
+        worker.enumerate_cells(),
+    )
+    groups = verdict.collision_consistency(points)
+    assert groups
+    assert all(group["within_threshold"] for group in groups)
+
+
+def test_fit_curvature_model_recovers_a_planted_quadratic():
+    points = _points_from(
+        lambda L, B: 13.0 + 0.000151 * L * B + 3e-10 * (L * B) ** 2,
+        worker.enumerate_cells(),
+    )
+    m3 = verdict.fit_curvature_model(points)
+    assert m3["c0_ms"] == pytest.approx(13.0, abs=1e-3)
+    assert m3["c1_us_per_token"] == pytest.approx(0.151, abs=1e-4)
+    assert m3["c2_ms_per_token_squared"] == pytest.approx(3e-10, rel=1e-3)
+    assert m3["r_squared"] == pytest.approx(1.0, abs=1e-9)
+
+
+def test_fit_curvature_model_drives_c2_to_zero_on_linear_data():
+    points = _points_from(lambda L, B: 13.05 + 0.000151 * L * B, worker.enumerate_cells())
+    m3 = verdict.fit_curvature_model(points)
+    assert m3["c2_ms_per_token_squared"] == pytest.approx(0.0, abs=1e-14)
+    share = verdict.curvature_share(m3, points)
+    assert share["share"] < 1e-6
+
+
+def test_fit_curvature_model_needs_three_distinct_products():
+    """All of the largest grid cells share one product, so this can really happen."""
+    points = _points_from(lambda L, B: 13.05 + 0.000151 * L * B, ((16384, 16), (32768, 8), (65536, 4)))
+    assert len({point["kv_tokens"] for point in points}) == 1
+    assert verdict.fit_curvature_model(points) is None
+
+
+def test_curvature_share_is_none_without_a_model():
+    assert verdict.curvature_share(None, []) is None
+
+
+def test_curvature_share_uses_absolute_magnitude():
+    """A step that bends downward is just as much a model violation as upward."""
+    points = _points_from(
+        lambda L, B: 40.0 + 0.000151 * L * B - 2e-10 * (L * B) ** 2,
+        worker.enumerate_cells(),
+    )
+    share = verdict.curvature_share(verdict.fit_curvature_model(points), points)
+    assert share["curvature_term_ms"] < 0
+    assert share["share"] > 0
+
+
+def test_curvature_share_is_reported_at_the_largest_product():
+    points = _points_from(
+        lambda L, B: 13.0 + 0.000151 * L * B + 1e-10 * (L * B) ** 2,
+        worker.enumerate_cells(),
+    )
+    share = verdict.curvature_share(verdict.fit_curvature_model(points), points)
+    assert share["kv_tokens"] == max(point["kv_tokens"] for point in points)
+
+
+def test_verdict_is_inconclusive_when_every_cell_shares_one_product():
+    """Reachable with this grid: the four largest cells all sit at L*B = 262144.
+
+    The tool must decline to fit rather than raise out of the linear solver. A
+    gate that crashes is worse than a gate that says it does not know.
+    """
+    cells = ((16384, 16), (32768, 8), (65536, 4), (131072, 2))
+    assert len({context * batch for context, batch in cells}) == 1
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 0.000151 * L * B, cells)
+    )
+    assert report["verdict"] == "INCONCLUSIVE"
+    assert "same resident token count" in report["consequence"]
+
+
+def test_verdict_flags_a_vacuous_curvature_check():
+    """Two distinct products identify a slope but cannot identify curvature."""
+    cells = ((16384, 1), (16384, 2), (32768, 1))
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 0.000151 * L * B, cells)
+    )
+    assert len({point["kv_tokens"] for point in report["measured_points"]}) == 2
+    check = next(c for c in report["checks"] if c["name"] == "curvature_share")
+    assert check["vacuous"] is True
+    assert check["passed"] is True
+
+
+def test_render_mentions_m3_when_it_was_identified():
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 0.000151 * L * B, worker.enumerate_cells())
+    )
+    text = verdict.render(report)
+    assert "M3" in text
+    assert "ms/token^2" in text
+
+
+def test_all_three_models_are_reported_together():
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 0.000151 * L * B, worker.enumerate_cells())
+    )
+    assert report["model_m1"] and report["model_m2"] and report["model_m3"]
+    assert report["thresholds"]["max_curvature_share"] == verdict.MAX_CURVATURE_SHARE
+
+
+def test_curvature_threshold_is_declared_in_a_sane_range():
+    assert 0.0 < verdict.MAX_CURVATURE_SHARE <= 0.25
+
+
+def test_a_realistic_law_passes_all_three_model_checks():
+    """Plausible A100 numbers, with small per-sequence overhead and no bending."""
+    report = verdict.build_report(
+        _payload_from(
+            lambda L, B: 13.05 + 0.15 * B + 0.000151 * L * B, worker.enumerate_cells()
+        )
+    )
+    assert report["verdict"] == "PASS"
+    assert report["curvature_at_largest_product"]["share"] < verdict.MAX_CURVATURE_SHARE
+    assert report["batch_term_at_largest_batch"]["share"] < verdict.MAX_BATCH_TERM_SHARE
