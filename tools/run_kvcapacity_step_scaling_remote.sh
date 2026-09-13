@@ -226,48 +226,114 @@ REMOTE_PREFLIGHT
   exit 0
 fi
 
-REMOTE_ARGS=(
-  --out "${REMOTE_DIR}/step_scaling.json"
-  --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}"
-  --seed "${SEED}"
-  --warmup-steps "${WARMUP_STEPS}"
-  --measured-steps "${MEASURED_STEPS}"
-)
+# One process per context length, because the engine initialises a
+# torch.distributed process group on construction and refuses to do it twice in
+# the same process. The smoke run found this by losing three of six cells to
+# "trying to initialize the default process group twice". The per-context
+# artifacts are merged by the verdict tool, which re-derives whether the union of
+# cells covers the pre-registered grid.
 if [[ "${MODE}" == smoke ]]; then
-  REMOTE_ARGS+=(
-    --model-path "${SMOKE_MODEL}"
-    --grid-spec "${SMOKE_GRID}"
-    --measured-steps 8
-  )
+  MODEL_FOR_RUN="${SMOKE_MODEL}"
+  GRID_GROUPS=()
+  IFS=';' read -r -a SMOKE_GROUPS <<< "${SMOKE_GRID}"
+  for group in "${SMOKE_GROUPS[@]}"; do
+    [[ -n "${group}" ]] && GRID_GROUPS+=("${group}")
+  done
+  RUN_MEASURED_STEPS=12
 else
-  REMOTE_ARGS+=(--model-path "${TARGET_MODEL}")
+  MODEL_FOR_RUN="${TARGET_MODEL}"
+  GRID_GROUPS=(
+    "16384:1,2,4,8,16"
+    "32768:1,2,4,8"
+    "65536:1,2,4"
+    "131072:1,2"
+  )
+  RUN_MEASURED_STEPS="${MEASURED_STEPS}"
 fi
 
-printf -v REMOTE_ARGS_Q '%q ' "${REMOTE_ARGS[@]}"
-"${SSH_STREAM[@]}" \
-  "${REMOTE_ENV} REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' REMOTE_ARGS_Q='${REMOTE_ARGS_Q}' bash -s" \
-  <<'REMOTE_RUN' 2>&1 | tee "${LOCAL_OUT}/runner.log"
+# Both execution paths are measured. Decode graphs are captured for batches
+# [1,2,4,8,...] but not for every batch, and torch.compile recompiles per shape,
+# so the default path can be discontinuous in batch for reasons unrelated to KV
+# bytes. The eager path is uniform across batches and is the one the affine model
+# should be fitted against; the default path is what serving actually runs. A
+# disagreement between them is a finding, not noise.
+if [[ "${MODE}" == smoke ]]; then
+  EXECUTION_PATHS=("eager")
+else
+  EXECUTION_PATHS=("eager" "graph")
+fi
+
+VERDICT_STATUS=0
+for path_mode in "${EXECUTION_PATHS[@]}"; do
+  PAYLOAD_ARGS=()
+  for group in "${GRID_GROUPS[@]}"; do
+    context="${group%%:*}"
+    tag="${path_mode}-ctx${context}"
+    REMOTE_OUT="${REMOTE_DIR}/step_scaling-${tag}.json"
+    REMOTE_ARGS=(
+      --model-path "${MODEL_FOR_RUN}"
+      --out "${REMOTE_OUT}"
+      --grid-spec "${group}"
+      --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}"
+      --seed "${SEED}"
+      --warmup-steps "${WARMUP_STEPS}"
+      --measured-steps "${RUN_MEASURED_STEPS}"
+    )
+    if [[ "${path_mode}" == eager ]]; then
+      REMOTE_ARGS+=(--enforce-eager)
+    fi
+    printf -v REMOTE_ARGS_Q '%q ' "${REMOTE_ARGS[@]}"
+    echo "=== ${tag} ===" | tee -a "${LOCAL_OUT}/runner.log"
+    set +e
+    "${SSH_STREAM[@]}" \
+      "${REMOTE_ENV} REMOTE_DIR='${REMOTE_DIR}' REMOTE_PYTHON='${REMOTE_PYTHON}' REMOTE_ARGS_Q='${REMOTE_ARGS_Q}' bash -s" \
+      <<'REMOTE_RUN' 2>&1 | tee -a "${LOCAL_OUT}/runner.log"
 set -euo pipefail
 cd "${REMOTE_DIR}"
 eval "${REMOTE_PYTHON}" worker.py "${REMOTE_ARGS_Q}"
 REMOTE_RUN
+    RUN_STATUS="${PIPESTATUS[0]}"
+    set -e
+    if [[ "${RUN_STATUS}" != 0 ]]; then
+      echo "context group ${group} failed under ${path_mode}; continuing" >&2
+      continue
+    fi
+    LOCAL_PART="${LOCAL_OUT}/step_scaling-${tag}.json"
+    if "${SSH[@]}" "cat '${REMOTE_OUT}'" > "${LOCAL_PART}" 2>/dev/null; then
+      PAYLOAD_ARGS+=(--payload "${LOCAL_PART}")
+    else
+      rm -f "${LOCAL_PART}"
+      echo "no artifact produced for ${tag}" >&2
+    fi
+  done
 
-"${SSH[@]}" "cat '${REMOTE_DIR}/step_scaling.json'" \
-  > "${LOCAL_OUT}/step_scaling.json"
+  if [[ "${#PAYLOAD_ARGS[@]}" == 0 ]]; then
+    echo "no artifact was produced under ${path_mode}" >&2
+    VERDICT_STATUS=1
+    continue
+  fi
 
-# The verdict runs locally and deliberately decides the gate, so its exit status
-# is preserved rather than swallowed.
-set +e
-python3 "${VERDICT_LOCAL}" \
-  --payload "${LOCAL_OUT}/step_scaling.json" \
-  --out "${LOCAL_OUT}/verdict.json" \
-  | tee "${LOCAL_OUT}/verdict.txt"
-VERDICT_STATUS="${PIPESTATUS[0]}"
-set -e
+  # The verdict runs locally and deliberately decides the gate, so its exit
+  # status is preserved rather than swallowed.
+  echo
+  echo "########## verdict: ${path_mode} path ##########"
+  set +e
+  python3 "${VERDICT_LOCAL}" \
+    "${PAYLOAD_ARGS[@]}" \
+    --out "${LOCAL_OUT}/verdict-${path_mode}.json" \
+    | tee "${LOCAL_OUT}/verdict-${path_mode}.txt"
+  STATUS="${PIPESTATUS[0]}"
+  set -e
+  # The eager path is the one that decides the gate, since it is the only path
+  # that is uniform across batches.
+  if [[ "${path_mode}" == eager ]]; then
+    VERDICT_STATUS="${STATUS}"
+  fi
+done
 
 echo
 echo "artifacts: ${LOCAL_OUT}"
 if [[ "${VERDICT_STATUS}" != 0 ]]; then
-  echo "GATE A did not pass; see ${LOCAL_OUT}/verdict.txt" >&2
+  echo "GATE A did not pass; see ${LOCAL_OUT}/verdict-eager.txt" >&2
 fi
 exit "${VERDICT_STATUS}"

@@ -814,11 +814,22 @@ def test_a_narrowed_grid_cannot_produce_a_pass():
     assert all(check["passed"] for check in report["checks"])
 
 
-def test_a_narrowed_grid_still_reports_a_failure_as_a_failure():
+def test_a_narrowed_grid_cannot_produce_a_failure_either():
+    """A narrow grid decides nothing in either direction.
+
+    The smoke run made the reason concrete: a 0.6B model at contexts up to 4096
+    spends about two percent of its step on KV, so the constant dominates, R^2
+    collapses, and the checks return FAIL while establishing nothing about the
+    model. Emitting that FAIL would teach the reader to discount a FAIL on the
+    real grid, which is the verdict this gate exists to be able to deliver.
+    """
     grid = ((1024, (1, 2, 4)), (2048, (1, 2)), (4096, (1,)))
     payload = _payload_for_grid(grid, lambda L, B: 13.05 + 9.0 * B + 0.000151 * L * B)
     report = verdict.build_report(payload)
-    assert report["verdict"] == "FAIL"
+    assert report["verdict"] == "INCONCLUSIVE"
+    # The underlying failure is preserved as commentary, not discarded.
+    assert "FAIL" in report["consequence"]
+    assert any(not check["passed"] for check in report["checks"])
 
 
 def test_render_flags_a_narrowed_grid():
@@ -871,3 +882,213 @@ def test_cli_rejects_a_malformed_grid_override():
         worker.parse_args(
             ["--model-path", "/models/x", "--out", "/tmp/x.json", "--grid-spec", "512:"]
         )
+
+
+# ---------------------------------------------------------------------------
+# Merging per-context artifacts.
+#
+# One artifact per context length is forced by the engine: it initialises a
+# torch.distributed process group on construction and refuses to do so twice in
+# one process. The smoke run discovered this the direct way, with three of six
+# cells lost to "trying to initialize the default process group twice".
+# ---------------------------------------------------------------------------
+
+
+def _worker_payload(grid, model):
+    rows = [
+        _row(context, batch, model(context, batch))
+        for context, batch in worker.enumerate_cells(grid)
+    ]
+    return worker.build_payload(
+        rows,
+        [{"context_length": grid[0][0], "identity": {"num_kvcache_blocks": 100}}],
+        model_path="/models/qwen3-8b",
+        enforce_eager=False,
+        seed=1,
+        gpu_memory_utilization=0.85,
+        warmup_steps=32,
+        measured_steps=24,
+        grid=grid,
+    )
+
+
+def test_merge_payloads_reassembles_the_preregistered_grid():
+    """Per-context runs that jointly cover the grid must count as pre-registered."""
+    model = lambda L, B: 13.05 + 0.000151 * L * B  # noqa: E731
+    payloads = [
+        _worker_payload((group,), model) for group in worker.CONTEXT_BATCH_GRID
+    ]
+    merged = worker.enumerate_cells()
+    combined = verdict.merge_payloads(payloads)
+    assert combined["grid_is_preregistered"] is True
+    assert combined["missing_preregistered_cells"] == []
+    assert combined["extra_cells"] == []
+    assert len(combined["rows"]) == len(merged)
+    assert combined["source_artifact_count"] == len(worker.CONTEXT_BATCH_GRID)
+
+
+def test_merge_payloads_reports_a_lost_context_group():
+    """A context length whose engine failed must leave the grid visibly incomplete."""
+    model = lambda L, B: 13.05 + 0.000151 * L * B  # noqa: E731
+    payloads = [
+        _worker_payload((group,), model) for group in worker.CONTEXT_BATCH_GRID[:-1]
+    ]
+    combined = verdict.merge_payloads(payloads)
+    assert combined["grid_is_preregistered"] is False
+    assert (131072, 1) in combined["missing_preregistered_cells"]
+    assert (131072, 2) in combined["missing_preregistered_cells"]
+
+
+def test_merge_payloads_rejects_a_duplicated_cell():
+    """Two artifacts covering the same cell would double-weight it in the fit."""
+    model = lambda L, B: 13.05 + 0.000151 * L * B  # noqa: E731
+    payload = _worker_payload((worker.CONTEXT_BATCH_GRID[0],), model)
+    with pytest.raises(ValueError, match="more than one artifact"):
+        verdict.merge_payloads([payload, payload])
+
+
+def test_merge_payloads_rejects_an_empty_list():
+    with pytest.raises(ValueError):
+        verdict.merge_payloads([])
+
+
+def test_merge_payloads_notes_cells_outside_the_preregistered_grid():
+    payload = _worker_payload(((1024, (1, 2)),), lambda L, B: 5.0 + 0.0001 * L * B)
+    combined = verdict.merge_payloads([payload])
+    assert combined["extra_cells"] == [(1024, 1), (1024, 2)]
+    assert combined["grid_is_preregistered"] is False
+
+
+def test_merged_preregistered_grid_can_pass():
+    model = lambda L, B: 13.05 + 0.000151 * L * B  # noqa: E731
+    payloads = [
+        _worker_payload((group,), model) for group in worker.CONTEXT_BATCH_GRID
+    ]
+    report = verdict.build_report(verdict.merge_payloads(payloads))
+    assert report["grid_is_preregistered"] is True
+    assert report["verdict"] == "PASS"
+
+
+def test_merged_partial_grid_is_downgraded_not_failed():
+    model = lambda L, B: 13.05 + 0.000151 * L * B  # noqa: E731
+    payloads = [
+        _worker_payload((group,), model) for group in worker.CONTEXT_BATCH_GRID[:2]
+    ]
+    report = verdict.build_report(verdict.merge_payloads(payloads))
+    assert report["verdict"] == "INCONCLUSIVE"
+    assert report["missing_preregistered_cells"]
+
+
+def test_preregistered_cell_list_matches_the_worker_grid():
+    """The two modules must not drift apart silently."""
+    assert set(verdict.PREREGISTERED_CELLS) == set(worker.enumerate_cells())
+
+
+def test_cli_accepts_repeated_payload_arguments(tmp_path, capsys):
+    model = lambda L, B: 13.05 + 0.000151 * L * B  # noqa: E731
+    paths = []
+    for index, group in enumerate(worker.CONTEXT_BATCH_GRID):
+        path = tmp_path / f"part{index}.json"
+        path.write_text(json.dumps(_worker_payload((group,), model)), encoding="utf-8")
+        paths.append(str(path))
+    argv = []
+    for path in paths:
+        argv += ["--payload", path]
+    out = tmp_path / "verdict.json"
+    code = verdict.main(argv + ["--out", str(out)])
+    capsys.readouterr()
+    assert code == 0
+    assert json.loads(out.read_text(encoding="utf-8"))["verdict"] == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# Window stability.
+#
+# The smoke run produced 3.46 ms at batch 1 and 31.3 ms at batches 2 and 4 on a
+# 0.6B model, with torch.compile recompilation markers landing inside the timed
+# window. Those numbers may describe compilation rather than decoding, so the
+# gate must be able to say "the measurement is unsound" separately from "the
+# model is wrong".
+# ---------------------------------------------------------------------------
+
+
+def test_measurement_drift_detects_a_window_still_warming_up():
+    samples = [40.0, 38.0, 36.0, 20.0, 15.0, 15.0, 15.0, 15.0]
+    drift = worker.measurement_drift(samples)
+    assert drift["ratio"] < 1.0 - verdict.MAX_DRIFT_DEVIATION
+
+
+def test_measurement_drift_is_near_one_for_a_settled_window():
+    samples = [15.0, 15.2, 14.9, 15.1, 15.0, 14.8, 15.2, 15.0]
+    drift = worker.measurement_drift(samples)
+    assert abs(drift["ratio"] - 1.0) <= verdict.MAX_DRIFT_DEVIATION
+
+
+def test_measurement_drift_needs_enough_samples():
+    assert worker.measurement_drift([1.0, 2.0]) is None
+
+
+def _row_with_drift(context, batch, median, ratio):
+    row = _row(context, batch, median)
+    row["drift"] = {
+        "first_half_median_ms": median,
+        "second_half_median_ms": median * ratio,
+        "ratio": ratio,
+    }
+    return row
+
+
+def test_verdict_is_inconclusive_when_a_window_drifts():
+    """A drifting window must not be reported as a refutation of Stage 0."""
+    rows = [
+        _row_with_drift(context, batch, 13.05 + 0.000151 * context * batch, 1.0)
+        for context, batch in worker.enumerate_cells()
+    ]
+    rows[3] = _row_with_drift(
+        rows[3]["context_length"], rows[3]["batch"], rows[3]["step"]["median_ms"], 0.70
+    )
+    report = verdict.build_report({"rows": rows, "payload_sha256": "x"})
+    assert report["verdict"] == "INCONCLUSIVE"
+    assert "warming up" in report["consequence"]
+    check = next(c for c in report["checks"] if c["name"] == "window_stability")
+    assert check["passed"] is False
+
+
+def test_verdict_passes_when_every_window_is_stable():
+    rows = [
+        _row_with_drift(context, batch, 13.05 + 0.000151 * context * batch, 1.01)
+        for context, batch in worker.enumerate_cells()
+    ]
+    report = verdict.build_report({"rows": rows, "payload_sha256": "x"})
+    assert report["verdict"] == "PASS"
+
+
+def test_window_stability_check_is_vacuous_without_drift_data():
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 0.000151 * L * B, worker.enumerate_cells())
+    )
+    check = next(c for c in report["checks"] if c["name"] == "window_stability")
+    assert check["vacuous"] is True
+
+
+def test_a_drifting_window_does_not_mask_a_real_model_failure():
+    """Both problems can be present; the measurement complaint takes precedence.
+
+    A drifting window makes the fitted constants untrustworthy, so reporting FAIL
+    against Stage 0 on that data would be asserting more than is known.
+    """
+    rows = [
+        _row_with_drift(context, batch, 13.05 + 9.0 * batch + 0.000151 * context * batch, 0.6)
+        for context, batch in worker.enumerate_cells()
+    ]
+    report = verdict.build_report({"rows": rows, "payload_sha256": "x"})
+    assert report["verdict"] == "INCONCLUSIVE"
+
+
+def test_warmup_default_was_raised_after_the_smoke_run():
+    """Eight steps let recompilation into the window; the default is now higher."""
+    assert worker.WARMUP_STEPS >= 32
+
+
+def test_drift_threshold_is_declared_in_a_sane_range():
+    assert 0.0 < verdict.MAX_DRIFT_DEVIATION <= 0.15

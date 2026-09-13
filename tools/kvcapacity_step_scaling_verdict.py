@@ -55,6 +55,7 @@ MIN_R_SQUARED = 0.98
 MAX_COLLISION_SPREAD = 0.10
 MAX_BATCH_TERM_SHARE = 0.20
 MAX_CURVATURE_SHARE = 0.10
+MAX_DRIFT_DEVIATION = 0.05
 
 # Frozen Stage 0 constants, fit from batch-1 data in the erratum artifact.
 STAGE0_C0_MS = 13.05
@@ -118,6 +119,59 @@ def r_squared(designs, observations, coefficients):
     return 1.0 - residual / total, predictions, residual
 
 
+PREREGISTERED_CELLS = (
+    (16384, 1), (16384, 2), (16384, 4), (16384, 8), (16384, 16),
+    (32768, 1), (32768, 2), (32768, 4), (32768, 8),
+    (65536, 1), (65536, 2), (65536, 4),
+    (131072, 1), (131072, 2),
+)
+
+
+def merge_payloads(payloads):
+    """Combine per-context worker artifacts into one measurement.
+
+    One artifact per context length is not a convenience. The engine initialises
+    a `torch.distributed` process group on construction and refuses to do it
+    twice in one process, so a single process cannot build an engine per context.
+    Each context length therefore runs in its own process, and the grid is
+    reassembled here.
+
+    Pre-registration is re-derived from the union of cells attempted across all
+    artifacts, not copied from any single one, since no individual per-context run
+    covers the pre-registered grid on its own.
+    """
+    if not payloads:
+        raise ValueError("no payload was provided")
+    rows = []
+    engines = []
+    attempted = set()
+    seen = set()
+    for payload in payloads:
+        for row in payload.get("rows", []):
+            key = (row.get("context_length"), row.get("batch"))
+            if key in seen:
+                raise ValueError(f"cell {key} appears in more than one artifact")
+            seen.add(key)
+            attempted.add(key)
+            rows.append(row)
+        engines.extend(payload.get("engines", []))
+    merged = {
+        "rows": rows,
+        "engines": engines,
+        "payload_sha256": ",".join(
+            str(payload.get("payload_sha256")) for payload in payloads
+        ),
+        "grid_is_preregistered": attempted == set(PREREGISTERED_CELLS),
+        "grid_spec": ";".join(
+            f"{context}:{batch}" for context, batch in sorted(attempted)
+        ),
+        "missing_preregistered_cells": sorted(set(PREREGISTERED_CELLS) - attempted),
+        "extra_cells": sorted(attempted - set(PREREGISTERED_CELLS)),
+        "source_artifact_count": len(payloads),
+    }
+    return merged
+
+
 def extract_points(payload):
     """Pull the measured cells out of a worker artifact.
 
@@ -161,6 +215,9 @@ def extract_points(payload):
                 "step_ms": float(row["step"]["median_ms"]),
                 "step_stdev_ms": float(row["step"].get("stdev_ms") or 0.0),
                 "sample_count": int(row["step"].get("count") or 0),
+                "drift_ratio": (
+                    float(row["drift"]["ratio"]) if row.get("drift") else None
+                ),
             }
         )
     return points, rejected
@@ -415,6 +472,37 @@ def decide(m1, m2, m3, collisions, share, curvature, points):
             }
         )
 
+    drifting = [
+        point
+        for point in points
+        if point.get("drift_ratio") is not None
+        and abs(point["drift_ratio"] - 1.0) > MAX_DRIFT_DEVIATION
+    ]
+    rated = [point for point in points if point.get("drift_ratio") is not None]
+    checks.append(
+        {
+            "name": "window_stability",
+            "detail": (
+                f"{len(rated) - len(drifting)}/{len(rated)} cells held steady within "
+                f"{MAX_DRIFT_DEVIATION:.0%} across their measured window"
+                + (
+                    "; drifting: "
+                    + ", ".join(
+                        f"L={point['context_length']} B={point['batch']} "
+                        f"ratio {point['drift_ratio']:.3f}"
+                        for point in drifting[:6]
+                    )
+                    if drifting
+                    else ""
+                )
+            )
+            if rated
+            else "no cell reported a drift ratio",
+            "passed": not drifting,
+            "vacuous": not rated,
+        }
+    )
+
     coverage_ok = len({point["batch"] for point in points}) >= 3
     checks.append(
         {
@@ -433,6 +521,14 @@ def decide(m1, m2, m3, collisions, share, curvature, points):
         consequence = (
             "The Stage 0 decode-step model survives on the serving path. "
             "Proceed to GATE B, the head-slicing phi probe."
+        )
+    elif drifting:
+        verdict = "INCONCLUSIVE"
+        consequence = (
+            "At least one cell was still warming up while it was being timed, so "
+            "the numbers describe compilation as much as decoding. This refutes the "
+            "measurement, not the Stage 0 model. Raise the warmup and re-run before "
+            "concluding anything."
         )
     elif not coverage_ok:
         verdict = "INCONCLUSIVE"
@@ -490,25 +586,37 @@ def build_report(payload):
         m1, m2, m3, collisions, share, curvature, points
     )
     if preregistered is False:
-        # A narrowed grid can still be internally consistent, so a PASS here
-        # would be technically true and materially misleading. Downgrade it.
-        if verdict == "PASS":
-            verdict = "INCONCLUSIVE"
+        # A narrowed grid cannot decide the gate in either direction, so every
+        # verdict collapses to INCONCLUSIVE and the checks are kept as commentary.
+        #
+        # Both directions matter. A narrow grid can fit beautifully and be
+        # presented as though it had answered GATE A. It can equally fail for a
+        # reason that is purely an artifact of its own narrowness: the smoke grid
+        # runs a 0.6B model at contexts up to 4096, where the KV term is only a
+        # couple of percent of the step, so the constant dominates, R^2 collapses,
+        # and the run reports FAIL while establishing nothing. Emitting that FAIL
+        # would train the reader to discount a FAIL on the real grid, which is the
+        # one verdict this whole gate exists to be able to deliver.
+        previous = verdict
+        verdict = "INCONCLUSIVE"
         consequence = (
             "This run used a narrowed grid rather than the pre-registered one, so "
-            "it can only demonstrate that the measurement works. It cannot decide "
-            "GATE A. Consequence recorded from the checks: " + consequence
+            "it can only demonstrate that the measurement works and cannot decide "
+            f"GATE A in either direction. The checks would have returned {previous} "
+            "on this data, which is recorded as commentary only: " + consequence
         )
     report = {
         "schema": "kvcapacity-gate-a-verdict/1",
         "source_payload_sha256": payload.get("payload_sha256"),
         "grid_is_preregistered": preregistered,
         "grid_spec": payload.get("grid_spec"),
+        "missing_preregistered_cells": payload.get("missing_preregistered_cells"),
         "thresholds": {
             "min_r_squared": MIN_R_SQUARED,
             "max_collision_spread": MAX_COLLISION_SPREAD,
             "max_batch_term_share": MAX_BATCH_TERM_SHARE,
             "max_curvature_share": MAX_CURVATURE_SHARE,
+            "max_drift_deviation": MAX_DRIFT_DEVIATION,
         },
         "measured_points": points,
         "rejected_cells": rejected,
@@ -537,6 +645,13 @@ def render(report):
     lines.append(f"  {report['consequence']}")
     if report.get("grid_is_preregistered") is False:
         lines.append(f"  grid used: {report.get('grid_spec')} (NOT pre-registered)")
+        missing = report.get("missing_preregistered_cells") or []
+        if missing:
+            lines.append(
+                "  missing pre-registered cells: "
+                + ", ".join(f"({cell[0]},{cell[1]})" for cell in missing[:10])
+                + (" ..." if len(missing) > 10 else "")
+            )
     lines.append("")
 
     points = report.get("measured_points") or []
@@ -653,16 +768,26 @@ def render(report):
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--payload", required=True, help="worker artifact JSON")
+    parser.add_argument(
+        "--payload",
+        required=True,
+        action="append",
+        help=(
+            "worker artifact JSON; repeat once per context length, since each "
+            "context length must run in its own process"
+        ),
+    )
     parser.add_argument("--out", help="where to write the verdict JSON")
     return parser.parse_args(argv)
 
 
 def main(argv=None):
     args = parse_args(argv)
-    with open(args.payload, encoding="utf-8") as handle:
-        payload = json.load(handle)
-    report = build_report(payload)
+    payloads = []
+    for path in args.payload:
+        with open(path, encoding="utf-8") as handle:
+            payloads.append(json.load(handle))
+    report = build_report(merge_payloads(payloads))
     print(render(report))
     if args.out:
         directory = os.path.dirname(os.path.abspath(args.out))

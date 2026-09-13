@@ -67,7 +67,7 @@ CONTEXT_BATCH_GRID = (
 )
 
 KV_BYTES_PER_TOKEN = 147456
-WARMUP_STEPS = 8
+WARMUP_STEPS = 32
 MEASURED_STEPS = 24
 DEFAULT_SEED = 20260913
 
@@ -177,6 +177,30 @@ def prompt_digest(prompt):
     return hashlib.sha256(payload).hexdigest()
 
 
+def measurement_drift(samples):
+    """Compare the second half of the measured window with the first.
+
+    This is the guard against a contaminated window. `torch.compile` recompiles
+    per input shape on this engine, so a cell that changes batch can spend its
+    early decode steps paying for compilation. Averaged in, that inflates the
+    constant term and would be indistinguishable from a genuinely expensive
+    engine. A window that is still warming up shows a falling trend, so the ratio
+    below is reported and checked rather than assumed away.
+    """
+    if len(samples) < 4:
+        return None
+    midpoint = len(samples) // 2
+    first = statistics.median(samples[:midpoint])
+    second = statistics.median(samples[midpoint:])
+    if first <= 0:
+        return None
+    return {
+        "first_half_median_ms": first,
+        "second_half_median_ms": second,
+        "ratio": second / first,
+    }
+
+
 def summarise(samples):
     """Robust summary of a list of step durations in milliseconds."""
     if not samples:
@@ -231,6 +255,9 @@ def _engine_identity(engine):
         ("config.max_num_batched_tokens", "max_num_batched_tokens"),
         ("config.gpu_memory_utilization", "gpu_memory_utilization"),
         ("config.enforce_eager", "enforce_eager"),
+        ("config.multi_sequence_cuda_graphs", "multi_sequence_cuda_graphs"),
+        ("config.kv_quant_bits", "kv_quant_bits"),
+        ("config.cpu_offload", "cpu_offload"),
         ("config.hf_config.vocab_size", "vocab_size"),
         ("config.hf_config.num_hidden_layers", "num_hidden_layers"),
         ("config.hf_config.num_key_value_heads", "num_key_value_heads"),
@@ -244,6 +271,22 @@ def _engine_identity(engine):
             identity[key] = None
             continue
         identity[key] = target
+    # Which decode batch sizes have a captured graph decides whether step time is
+    # even a smooth function of batch, so it is recorded as evidence.
+    identity["captured_graph_batches"] = None
+    for path in ("model_runner.graph_bs", "llm_engine.model_runner.graph_bs"):
+        target = engine
+        try:
+            for attribute in path.split("."):
+                target = getattr(target, attribute)
+        except AttributeError:
+            continue
+        try:
+            identity["captured_graph_batches"] = sorted(int(v) for v in target)
+        except (TypeError, ValueError):
+            identity["captured_graph_batches"] = None
+        break
+
     blocks = identity.get("num_kvcache_blocks")
     block_size = identity.get("kvcache_block_size")
     if isinstance(blocks, int) and isinstance(block_size, int) and blocks > 0:
@@ -270,6 +313,7 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
     prefill_steps = 0
     decode_steps_by_batch = {}
     samples = []
+    trace = []
     observed_batches = []
     step_index = 0
     guard = (warmup_steps + measured_steps + 8) * max(1, batch) + 64
@@ -290,6 +334,8 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
         decode_steps_by_batch[observed] = decode_steps_by_batch.get(observed, 0) + 1
         if observed != batch:
             continue
+        if len(trace) < 256:
+            trace.append(elapsed_ms)
         if decode_steps_by_batch[observed] <= warmup_steps:
             continue
         if len(samples) < measured_steps:
@@ -313,6 +359,9 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
         ),
         "target_batch_step_count": decode_steps_by_batch.get(batch, 0),
         "step": summarise(samples),
+        "drift": measurement_drift(samples),
+        "target_batch_step_trace_ms": trace,
+        "warmup_steps": warmup_steps,
         "measured": bool(samples),
         "skipped_reason": None if samples else "no decode step ran at the target batch",
     }
