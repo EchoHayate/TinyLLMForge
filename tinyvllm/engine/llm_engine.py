@@ -17,6 +17,10 @@ from tinyvllm.engine.exact_greedy_decode_burst import (
     ExactGreedyDecodeBurstFallback,
     validate_exact_greedy_decode_burst_result,
 )
+from tinyvllm.engine.exact_greedy_cohort_burst import (
+    ExactGreedyCohortBurstFallback,
+    ExactGreedyCohortBurstTerminalError,
+)
 from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
     ExactBurstSplitPhaseTransaction,
     ExactGreedyDecodeBurstSplitResult,
@@ -4223,6 +4227,161 @@ class LLMEngine:
         }
         return outputs, -len(suffix_tokens)
 
+    def _execute_slo_cohort_burst(
+        self,
+        seqs: tuple[Sequence, ...],
+        *,
+        decision_now_ns: int,
+        completion_only: bool,
+        is_prefill: bool,
+        do_sample: bool,
+        batch_kind: str | None,
+        exact_burst_gate_width: int | None,
+        exact_burst_correctness_trace: bool,
+    ) -> tuple[bool, int | None, int]:
+        config = getattr(self.model_runner, "config", None)
+        enabled = bool(
+            getattr(
+                config,
+                "exact_greedy_cohort_burst",
+                False,
+            )
+        )
+        eligible = (
+            enabled
+            and completion_only
+            and exact_burst_gate_width is None
+            and bool(seqs)
+            and not is_prefill
+            and bool(do_sample)
+            and batch_kind is None
+        )
+        if not eligible:
+            return False, None, 0
+        block_table_width = max(
+            len(seq.block_table) for seq in seqs
+        )
+        capability = (
+            self.model_runner
+            .exact_greedy_cohort_burst_capability(
+                batch_size=len(seqs),
+                block_table_width=block_table_width,
+                correctness_trace=(
+                    exact_burst_correctness_trace
+                ),
+            )
+        )
+        mixed_mode_unsupported = (
+            capability.get("fallback_reason")
+            == "mixed_mode_unsupported"
+        )
+        decision = self.scheduler.select_slo_cohort_burst(
+            tuple(seqs),
+            decision_now_ns=decision_now_ns,
+            graph_capability=capability,
+            all_greedy=all(
+                float(seq.temperature) == 0.0 for seq in seqs
+            ),
+            mixed_mode_unsupported=mixed_mode_unsupported,
+        )
+        if decision.selected_width == 1:
+            return False, None, 0
+        lease = self.scheduler.prepare_exact_greedy_cohort_burst(
+            tuple(seqs),
+            decision,
+            schedule_generation=(
+                self.scheduler.schedule_generation
+            ),
+            decision_now_ns=decision_now_ns,
+            graph_capability=capability,
+        )
+        if lease is None:
+            return False, None, 0
+        result = None
+        try:
+            result = self.model_runner.call(
+                "run_exact_greedy_cohort_burst",
+                lease,
+                tuple(seqs),
+                exact_burst_correctness_trace,
+            )
+            if isinstance(
+                result,
+                ExactGreedyCohortBurstFallback,
+            ):
+                self.scheduler.cancel_exact_greedy_cohort_burst(
+                    lease,
+                    result.fallback_reason,
+                )
+                return False, None, 0
+            step_end_ns = self._clock_ns()
+            prepared = (
+                self.scheduler
+                .prepare_exact_greedy_cohort_burst_commit(
+                    tuple(seqs),
+                    lease,
+                    result,
+                    correctness_trace=(
+                        exact_burst_correctness_trace
+                    ),
+                    decision_now_ns=decision_now_ns,
+                    step_end_ns=step_end_ns,
+                )
+            )
+            self.scheduler.commit_prepared_postprocess(prepared)
+        except BaseException as error:
+            quarantine = getattr(
+                self.model_runner,
+                "quarantine_exact_greedy_cohort_burst_graph",
+                None,
+            )
+            if callable(quarantine):
+                try:
+                    quarantine(
+                        lease.graph_identity_sha256,
+                        "engine_failure:"
+                        + type(error).__name__,
+                    )
+                except BaseException:
+                    pass
+            raw_completed_replays = getattr(
+                error,
+                "completed_replays",
+                None,
+            )
+            if raw_completed_replays is None:
+                raw_completed_replays = getattr(
+                    result,
+                    "replay_count",
+                    1,
+                )
+            try:
+                completed_replays = int(raw_completed_replays)
+            except (TypeError, ValueError, OverflowError):
+                completed_replays = 1
+            completed_replays = min(
+                lease.authorized_width,
+                max(1, completed_replays),
+            )
+            try:
+                self.scheduler.fail_exact_greedy_cohort_burst(
+                    lease,
+                    terminal=True,
+                    reason=(
+                        getattr(error, "reason", None)
+                        or "engine_failure:"
+                        + type(error).__name__
+                    ),
+                    completed_replays=completed_replays,
+                )
+            except BaseException:
+                pass
+            raise
+        committed_token_count = sum(
+            len(row.output_tokens) for row in prepared.rows
+        )
+        return True, step_end_ns, committed_token_count
+
     def step(
         self,
         *,
@@ -4497,6 +4656,7 @@ class LLMEngine:
             exact_burst_host_visible_gap_ns = 0
             exact_burst_fallback_reason = None
             exact_burst_committed = False
+            cohort_burst_committed = False
             split_phase_attempted = False
             split_phase_accepted = False
             split_parent_lease_identity = None
@@ -5085,6 +5245,39 @@ class LLMEngine:
                     "config",
                     None,
                 )
+                if bool(
+                    getattr(
+                        model_runner_config,
+                        "exact_greedy_cohort_burst",
+                        False,
+                    )
+                ):
+                    (
+                        cohort_burst_committed,
+                        cohort_step_end_ns,
+                        cohort_committed_token_count,
+                    ) = self._execute_slo_cohort_burst(
+                        tuple(seqs),
+                        decision_now_ns=decision_now_ns,
+                        completion_only=completion_only,
+                        is_prefill=bool(is_prefill),
+                        do_sample=bool(do_sample),
+                        batch_kind=batch_kind,
+                        exact_burst_gate_width=(
+                            exact_burst_gate_width
+                        ),
+                        exact_burst_correctness_trace=(
+                            exact_burst_correctness_trace
+                        ),
+                    )
+                else:
+                    cohort_burst_committed = False
+                    cohort_step_end_ns = None
+                    cohort_committed_token_count = 0
+                if cohort_burst_committed:
+                    step_end_ns = cohort_step_end_ns
+                    num_tokens = -cohort_committed_token_count
+                    token_ids = ()
                 phase_stitch_enabled = bool(
                     getattr(
                         model_runner_config,
@@ -5094,6 +5287,7 @@ class LLMEngine:
                 )
                 phase_stitch_candidate = (
                     phase_stitch_enabled
+                    and not cohort_burst_committed
                     and completion_only
                     and exact_burst_gate_width is None
                     and not exact_burst_correctness_trace
@@ -5520,6 +5714,7 @@ class LLMEngine:
                 )
                 exact_burst_candidate = (
                     exact_burst_enabled
+                    and not cohort_burst_committed
                     and completion_only
                     and bool(seqs)
                     and not is_prefill
@@ -6128,6 +6323,7 @@ class LLMEngine:
                 )
                 if (
                     not exact_burst_committed
+                    and not cohort_burst_committed
                     and not phase_stitch_committed
                 ):
                     released_leases = (
@@ -6182,6 +6378,7 @@ class LLMEngine:
             if not partition.selected_sequences:
                 if (
                     not exact_burst_committed
+                    and not cohort_burst_committed
                     and not phase_stitch_committed
                 ):
                     with step_phase("ordinary_scheduler_postprocess"):

@@ -25,6 +25,16 @@ from tinyvllm.engine.exact_greedy_decode_burst_split_phase import (
     build_exact_burst_publication_tickets,
     validate_exact_burst_split_result,
 )
+from tinyvllm.engine.exact_greedy_cohort_burst import (
+    CohortWriteAuthority,
+    ExactGreedyCohortBurstFallback,
+    ExactGreedyCohortBurstLease,
+    ExactGreedyCohortBurstResult,
+    ExactGreedyCohortBurstTransaction,
+    ValidatedExactGreedyCohortBurstPublication,
+    build_exact_greedy_cohort_burst_lease,
+    validate_exact_greedy_cohort_burst_result,
+)
 from tinyvllm.engine.hybrid_state import (
     HybridStateLease,
     HybridStateSlotAllocator,
@@ -67,6 +77,7 @@ class ScheduledOutputRow:
     exact_burst: bool = False
     exact_burst_gate_only: bool = False
     exact_burst_phase: str | None = None
+    exact_cohort_burst: bool = False
 
 
 @dataclass
@@ -86,6 +97,19 @@ class PreparedSchedulerPostprocess:
     ) = None
     exact_burst_correctness_trace: bool = False
     exact_burst_host_visible_gap_ns: int = 0
+    exact_cohort_burst_lease: (
+        ExactGreedyCohortBurstLease | None
+    ) = None
+    exact_cohort_burst_result: (
+        ExactGreedyCohortBurstResult | None
+    ) = None
+    exact_cohort_burst_publication: (
+        ValidatedExactGreedyCohortBurstPublication | None
+    ) = None
+    exact_cohort_burst_transaction: (
+        ExactGreedyCohortBurstTransaction | None
+    ) = None
+    exact_cohort_burst_correctness_trace: bool = False
     phase_stitch_lease: PhaseStitchLease | None = None
     phase_stitch_prefix_result: PhaseStitchPrefixResult | None = None
     phase_stitch_suffix_result: PhaseStitchSuffixResult | None = None
@@ -1129,6 +1153,11 @@ class Scheduler:
             SLOCohortBurstDecision | None
         ) = None
         self._exact_greedy_cohort_burst_pending_lease = None
+        self._exact_greedy_cohort_burst_pending_transaction = None
+        self._exact_greedy_cohort_burst_sequence_generations: dict[
+            int,
+            int,
+        ] = {}
         self.eos = config.eos
         self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
         self.hybrid_state_allocator = hybrid_state_allocator
@@ -3009,6 +3038,391 @@ class Scheduler:
         self._last_slo_cohort_decision = decision
         return decision
 
+    def _clear_exact_greedy_cohort_burst(self) -> None:
+        self._exact_greedy_cohort_burst_pending_lease = None
+        self._exact_greedy_cohort_burst_pending_transaction = None
+
+    def _advance_exact_greedy_cohort_sequence_generations(
+        self,
+        sequence_ids: tuple[int, ...],
+    ) -> None:
+        for sequence_id in sequence_ids:
+            generation = (
+                self._exact_greedy_cohort_burst_sequence_generations
+                .get(sequence_id, 0)
+            )
+            if generation >= INT64_MAX:
+                raise OverflowError(
+                    "cohort sequence generation exhausted"
+                )
+            self._exact_greedy_cohort_burst_sequence_generations[
+                sequence_id
+            ] = generation + 1
+
+    def _validate_pending_exact_greedy_cohort_burst(
+        self,
+        lease: ExactGreedyCohortBurstLease,
+        seqs: tuple[Sequence, ...] | None = None,
+        *,
+        require_current_generation: bool = True,
+    ) -> ExactGreedyCohortBurstTransaction:
+        if not isinstance(lease, ExactGreedyCohortBurstLease):
+            raise ValueError("cohort lease has an invalid type")
+        transaction = (
+            self._exact_greedy_cohort_burst_pending_transaction
+        )
+        if (
+            transaction is None
+            or transaction.lease != lease
+            or self._exact_greedy_cohort_burst_pending_lease != lease
+            or not transaction.pending
+        ):
+            raise ValueError(
+                "cohort lease does not match the pending transaction"
+            )
+        if (
+            require_current_generation
+            and lease.schedule_generation != self.schedule_generation
+        ):
+            raise ValueError("cohort lease is stale")
+        if seqs is None:
+            return transaction
+        if not isinstance(seqs, tuple):
+            raise ValueError("cohort sequences must be a tuple")
+        sequence_ids = tuple(seq.seq_id for seq in seqs)
+        if sequence_ids != lease.ordered_sequence_ids:
+            raise ValueError(
+                "cohort sequence order changed"
+            )
+        for seq, authority in zip(seqs, lease.rows):
+            generation = (
+                self._exact_greedy_cohort_burst_sequence_generations
+                .get(seq.seq_id, 0)
+            )
+            if generation != authority.sequence_generation:
+                raise ValueError(
+                    "cohort sequence generation changed"
+                )
+            if len(seq) != authority.initial_sequence_length:
+                raise ValueError(
+                    "cohort sequence length changed"
+                )
+            if (
+                seq.num_completion_tokens
+                != authority.initial_completion_count
+            ):
+                raise ValueError(
+                    "cohort completion count changed"
+                )
+            self.block_manager.validate_block_identities(
+                authority.block_table_identity
+            )
+            current_block_ids = tuple(
+                block_id
+                for block_id, _generation
+                in authority.block_table_identity
+            )
+            if tuple(seq.block_table) != current_block_ids:
+                raise ValueError(
+                    "cohort sequence block table changed"
+                )
+        return transaction
+
+    def prepare_exact_greedy_cohort_burst(
+        self,
+        seqs: tuple[Sequence, ...],
+        decision: SLOCohortBurstDecision,
+        *,
+        schedule_generation: int,
+        decision_now_ns: int,
+        graph_capability: dict,
+    ) -> ExactGreedyCohortBurstLease | None:
+        if not isinstance(seqs, tuple) or not seqs:
+            raise ValueError(
+                "cohort burst sequences must be a non-empty tuple"
+            )
+        if not isinstance(decision, SLOCohortBurstDecision):
+            raise ValueError(
+                "cohort burst decision has an invalid type"
+            )
+        if schedule_generation != self.schedule_generation:
+            raise ValueError(
+                "cohort burst schedule generation is stale"
+            )
+        if (
+            self._exact_greedy_cohort_burst_pending_transaction
+            is not None
+        ):
+            raise RuntimeError(
+                "cohort burst transaction is already pending"
+            )
+        if decision.selected_width == 1:
+            return None
+        if decision.reason != "selected":
+            raise ValueError(
+                "multi-token cohort lease requires a selected decision"
+            )
+        sequence_ids = tuple(seq.seq_id for seq in seqs)
+        if len(sequence_ids) != len(set(sequence_ids)):
+            raise ValueError(
+                "cohort burst sequence IDs must be unique"
+            )
+        sequence_generations = {
+            sequence_id: (
+                self._exact_greedy_cohort_burst_sequence_generations
+                .get(sequence_id, 0)
+            )
+            for sequence_id in sequence_ids
+        }
+        if any(
+            generation >= INT64_MAX
+            for generation in sequence_generations.values()
+        ):
+            raise OverflowError(
+                "cohort sequence generation exhausted"
+            )
+        if tuple(
+            decision.protected_sequence_ids[:len(sequence_ids)]
+        ) != sequence_ids:
+            raise ValueError(
+                "cohort burst decision changed scheduler order"
+            )
+        if (
+            not isinstance(graph_capability, dict)
+            or graph_capability.get("available") is not True
+            or graph_capability.get("quarantined") is True
+            or graph_capability.get("shape_supported") is not True
+        ):
+            return None
+        graph_identity = graph_capability.get(
+            "graph_identity_sha256"
+        )
+        graph_generation = graph_capability.get(
+            "graph_generation"
+        )
+        capacities = []
+        for seq in seqs:
+            first_write_position = len(seq) - 1
+            write_offset = (
+                first_write_position
+                % self.block_manager.block_size
+            )
+            capacities.append(
+                min(
+                    max(
+                        0,
+                        int(seq.max_tokens)
+                        - int(seq.num_completion_tokens),
+                    ),
+                    self.block_manager.block_size - write_offset,
+                )
+            )
+        maximum_authorized_width = min(capacities)
+        authorized_width = next(
+            (
+                width
+                for width in (8, 4, 2)
+                if (
+                    width <= decision.selected_width
+                    and width <= maximum_authorized_width
+                    and width
+                    in self.exact_greedy_cohort_burst_widths
+                )
+            ),
+            1,
+        )
+        if authorized_width == 1:
+            return None
+        predicted_costs = dict(
+            decision.predicted_cost_ns_by_width
+        )
+        predicted_duration_ns = predicted_costs.get(
+            authorized_width
+        )
+        if predicted_duration_ns is None:
+            raise ValueError(
+                "cohort decision lacks the authorized width cost"
+            )
+        rows = []
+        for seq in seqs:
+            if seq.status != SequenceStatus.RUNNING:
+                raise ValueError(
+                    "cohort burst requires running sequences"
+                )
+            first_write_position = len(seq) - 1
+            write_block_index = (
+                first_write_position
+                // self.block_manager.block_size
+            )
+            if write_block_index >= len(seq.block_table):
+                raise RuntimeError(
+                    "cohort burst write block is unavailable"
+                )
+            block_table_identity = (
+                self.block_manager.block_identities(
+                    tuple(seq.block_table)
+                )
+            )
+            write_block_id = seq.block_table[write_block_index]
+            write_block_generation = self.block_manager.blocks[
+                write_block_id
+            ].generation
+            first_physical_slot = (
+                write_block_id * self.block_manager.block_size
+                + first_write_position
+                % self.block_manager.block_size
+            )
+            sequence_generation = sequence_generations[seq.seq_id]
+            rows.append(
+                CohortWriteAuthority(
+                    sequence_id=seq.seq_id,
+                    sequence_generation=sequence_generation,
+                    block_table_identity=block_table_identity,
+                    writable_block_identities=(
+                        (write_block_id, write_block_generation),
+                    ),
+                    first_write_position=first_write_position,
+                    last_write_position=(
+                        first_write_position
+                        + authorized_width
+                        - 1
+                    ),
+                    first_physical_slot=first_physical_slot,
+                    last_physical_slot=(
+                        first_physical_slot
+                        + authorized_width
+                        - 1
+                    ),
+                    initial_completion_count=(
+                        seq.num_completion_tokens
+                    ),
+                    initial_sequence_length=len(seq),
+                    remaining_output_tokens=max(
+                        0,
+                        int(seq.max_tokens)
+                        - int(seq.num_completion_tokens),
+                    ),
+                )
+            )
+        lease = build_exact_greedy_cohort_burst_lease(
+            schedule_generation=schedule_generation,
+            graph_generation=graph_generation,
+            graph_identity_sha256=graph_identity,
+            requested_width=decision.selected_width,
+            authorized_width=authorized_width,
+            decision_now_ns=decision_now_ns,
+            cost_table_sha256=self._slo_cohort_cost_table.table_sha256,
+            predicted_duration_ns=predicted_duration_ns,
+            global_slack_ns=decision.global_slack_ns,
+            rows=tuple(rows),
+        )
+        transaction = ExactGreedyCohortBurstTransaction(lease)
+        self._exact_greedy_cohort_burst_pending_lease = lease
+        self._exact_greedy_cohort_burst_pending_transaction = (
+            transaction
+        )
+        return lease
+
+    def cancel_exact_greedy_cohort_burst(
+        self,
+        lease: ExactGreedyCohortBurstLease,
+        reason: str,
+    ) -> None:
+        transaction = (
+            self._validate_pending_exact_greedy_cohort_burst(
+                lease,
+                require_current_generation=False,
+            )
+        )
+        transaction.cancel(
+            ExactGreedyCohortBurstFallback(reason)
+        )
+        self._advance_exact_greedy_cohort_sequence_generations(
+            lease.ordered_sequence_ids
+        )
+        self._clear_exact_greedy_cohort_burst()
+
+    def fail_exact_greedy_cohort_burst(
+        self,
+        lease: ExactGreedyCohortBurstLease,
+        *,
+        terminal: bool,
+        reason: str = "cohort_burst_terminal_failure",
+        completed_replays: int = 1,
+    ) -> None:
+        if not isinstance(terminal, bool):
+            raise ValueError("terminal must be a bool")
+        transaction = (
+            self._validate_pending_exact_greedy_cohort_burst(
+                lease,
+                require_current_generation=False,
+            )
+        )
+        if not terminal:
+            return
+        if transaction.state == "reserved":
+            transaction.dispatch()
+        transaction.quarantine_and_fail(
+            reason,
+            completed_replays=completed_replays,
+        )
+        self._advance_exact_greedy_cohort_sequence_generations(
+            lease.ordered_sequence_ids
+        )
+        self._clear_exact_greedy_cohort_burst()
+
+    def prepare_exact_greedy_cohort_burst_commit(
+        self,
+        seqs: tuple[Sequence, ...],
+        lease: ExactGreedyCohortBurstLease,
+        result: ExactGreedyCohortBurstResult,
+        *,
+        correctness_trace: bool = False,
+        decision_now_ns: int | None = None,
+        step_end_ns: int | None = None,
+    ) -> PreparedSchedulerPostprocess:
+        transaction = (
+            self._validate_pending_exact_greedy_cohort_burst(
+                lease,
+                seqs,
+            )
+        )
+        publication = validate_exact_greedy_cohort_burst_result(
+            lease,
+            result,
+            eos_token_id=self.eos,
+            correctness_trace=correctness_trace,
+        )
+        rows = tuple(
+            ScheduledOutputRow(
+                sequence_id=sequence_id,
+                output_tokens=tokens,
+                speculative=False,
+                exact_cohort_burst=True,
+            )
+            for sequence_id, tokens in zip(
+                publication.ordered_sequence_ids,
+                publication.commit_tokens,
+            )
+        )
+        prepared = self.prepare_postprocess(
+            seqs,
+            rows,
+            is_prefill=False,
+            do_sample=True,
+            batch_kind=None,
+            decision_now_ns=decision_now_ns,
+            step_end_ns=step_end_ns,
+        )
+        prepared.exact_cohort_burst_lease = lease
+        prepared.exact_cohort_burst_result = result
+        prepared.exact_cohort_burst_publication = publication
+        prepared.exact_cohort_burst_transaction = transaction
+        prepared.exact_cohort_burst_correctness_trace = (
+            correctness_trace
+        )
+        return prepared
+
     def add(
         self,
         seq: Sequence,
@@ -3880,6 +4294,15 @@ class Scheduler:
                     "postprocess exact burst gate-only flag "
                     "must be a bool"
                 )
+            if not isinstance(row.exact_cohort_burst, bool):
+                raise ValueError(
+                    "postprocess exact cohort burst flag "
+                    "must be a bool"
+                )
+            if row.exact_burst and row.exact_cohort_burst:
+                raise ValueError(
+                    "batch-one and cohort burst flags are exclusive"
+                )
             if row.exact_burst_phase not in (
                 None,
                 "prefix",
@@ -3988,6 +4411,42 @@ class Scheduler:
                     raise ValueError(
                         "exact burst token count does not match lease"
                     )
+            elif row.exact_cohort_burst:
+                if row.speculative:
+                    raise ValueError(
+                        "exact cohort burst output cannot be speculative"
+                    )
+                if not row.output_tokens:
+                    raise ValueError(
+                        "exact cohort burst output must contain a token"
+                    )
+                if row.accepted_draft_tokens:
+                    raise ValueError(
+                        "exact cohort burst output cannot contain "
+                        "accepted draft tokens"
+                    )
+                if not row_is_decode or not row_do_sample:
+                    raise ValueError(
+                        "exact cohort burst output requires "
+                        "decode sampling"
+                    )
+                if seq.status != SequenceStatus.RUNNING:
+                    raise ValueError(
+                        "exact cohort burst output requires "
+                        "a running sequence"
+                    )
+                lease = (
+                    self._exact_greedy_cohort_burst_pending_lease
+                )
+                if lease is None:
+                    raise ValueError(
+                        "exact cohort burst output requires "
+                        "an active lease"
+                    )
+                if len(row.output_tokens) > lease.authorized_width:
+                    raise ValueError(
+                        "exact cohort burst token count exceeds lease"
+                    )
             elif row.speculative:
                 if not row_is_decode or not row_do_sample:
                     raise ValueError(
@@ -4039,11 +4498,25 @@ class Scheduler:
             for seq, row in zip(seqs, rows)
             if row.exact_burst
         )
+        exact_cohort_rows = tuple(
+            (seq, row)
+            for seq, row in zip(seqs, rows)
+            if row.exact_cohort_burst
+        )
         if exact_rows:
             if len(exact_rows) != 1 or len(rows) != 1:
                 raise ValueError(
                     "exact burst output requires a single-row batch"
                 )
+        if exact_cohort_rows:
+            if len(exact_cohort_rows) != len(rows):
+                raise ValueError(
+                    "exact cohort burst requires every scheduled row"
+                )
+            self._validate_pending_exact_greedy_cohort_burst(
+                self._exact_greedy_cohort_burst_pending_lease,
+                seqs,
+            )
         journal = self._select_exact_burst_lease_local_journal(
             seqs,
             rows,
@@ -4078,6 +4551,25 @@ class Scheduler:
                     sequence,
                     row.output_tokens,
                     materialized_tokens=materialized_tokens,
+                )
+        if exact_cohort_rows and isinstance(
+            journal,
+            SchedulerPostprocessJournal,
+        ):
+            lease = self._exact_greedy_cohort_burst_pending_lease
+            for sequence, row, authority in zip(
+                seqs,
+                rows,
+                lease.rows,
+            ):
+                journal.capture_exact_burst_publication_hashes(
+                    self.block_manager,
+                    sequence,
+                    row.output_tokens,
+                    materialized_tokens=(
+                        authority.first_write_position
+                        + len(row.output_tokens)
+                    ),
                 )
         return PreparedSchedulerPostprocess(
             scheduled_sequence_ids=scheduled_sequence_ids,
@@ -4273,6 +4765,52 @@ class Scheduler:
                         f"{phase} tokens do not match "
                         "the phase transfer"
                     )
+        cohort_transaction = None
+        if prepared.exact_cohort_burst_lease is not None:
+            cohort_transaction = (
+                self._validate_pending_exact_greedy_cohort_burst(
+                    prepared.exact_cohort_burst_lease,
+                    seqs,
+                )
+            )
+            if (
+                prepared.exact_cohort_burst_transaction
+                is not cohort_transaction
+            ):
+                raise ValueError(
+                    "prepared cohort transaction is not pending"
+                )
+            if prepared.exact_cohort_burst_result is None:
+                raise ValueError(
+                    "cohort burst commit requires a validated result"
+                )
+            publication = validate_exact_greedy_cohort_burst_result(
+                prepared.exact_cohort_burst_lease,
+                prepared.exact_cohort_burst_result,
+                eos_token_id=self.eos,
+                correctness_trace=(
+                    prepared.exact_cohort_burst_correctness_trace
+                ),
+            )
+            if (
+                prepared.exact_cohort_burst_publication
+                != publication
+            ):
+                raise ValueError(
+                    "prepared cohort publication changed"
+                )
+            if tuple(
+                row.sequence_id for row in prepared.rows
+            ) != publication.ordered_sequence_ids:
+                raise ValueError(
+                    "prepared cohort row order changed"
+                )
+            if tuple(
+                row.output_tokens for row in prepared.rows
+            ) != publication.commit_tokens:
+                raise ValueError(
+                    "prepared cohort token prefixes changed"
+                )
         timestamp_valid = False
         try:
             timestamps_present = (
@@ -4377,6 +4915,17 @@ class Scheduler:
                 finished_progress_entries_removed,
             )
             self._maybe_reset_adaptive_mixed_controller()
+            if cohort_transaction is not None:
+                cohort_transaction.dispatch()
+                cohort_transaction.validate(
+                    prepared.exact_cohort_burst_result,
+                    eos_token_id=self.eos,
+                    correctness_trace=(
+                        prepared
+                        .exact_cohort_burst_correctness_trace
+                    ),
+                )
+                cohort_transaction.commit()
         except BaseException as commit_error:
             prefill_hook_error = (
                 self._prefill_commit_hook_error
@@ -4428,6 +4977,13 @@ class Scheduler:
                     ),
                 )
         prepared.state = "committed"
+        if prepared.exact_cohort_burst_lease is not None:
+            self._advance_exact_greedy_cohort_sequence_generations(
+                prepared.exact_cohort_burst_lease
+                .ordered_sequence_ids
+            )
+            self._clear_exact_greedy_cohort_burst()
+            return
         if prepared.phase_stitch_lease is not None:
             transaction = self._phase_stitch_transaction
             if prepared.phase_stitch_phase == "prefix":
@@ -4532,7 +5088,12 @@ class Scheduler:
     ) -> None:
         for token_id in row.output_tokens:
             seq.append_token(token_id)
-        if row.exact_burst:
+        if row.exact_cohort_burst:
+            self.block_manager.publish_full_blocks(
+                seq,
+                materialized_tokens=max(0, len(seq) - 1),
+            )
+        elif row.exact_burst:
             lease = self._exact_greedy_decode_burst_pending_lease
             self._validate_pending_exact_greedy_decode_burst(
                 lease,

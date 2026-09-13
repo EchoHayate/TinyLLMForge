@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from collections import deque
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +23,32 @@ POLICY_SPEC = importlib.util.spec_from_file_location(
 policy = importlib.util.module_from_spec(POLICY_SPEC)
 sys.modules[POLICY_SPEC.name] = policy
 POLICY_SPEC.loader.exec_module(policy)
+
+CONTRACT_PATH = (
+    REPO_ROOT
+    / "tinyvllm"
+    / "engine"
+    / "exact_greedy_cohort_burst.py"
+)
+CONTRACT_SPEC = importlib.util.spec_from_file_location(
+    "scheduler_exact_greedy_cohort_contract_under_test",
+    CONTRACT_PATH,
+)
+contract = importlib.util.module_from_spec(CONTRACT_SPEC)
+sys.modules[CONTRACT_SPEC.name] = contract
+CONTRACT_SPEC.loader.exec_module(contract)
+
+
+@dataclass(frozen=True)
+class _ScheduledOutputRow:
+    sequence_id: int
+    output_tokens: tuple[int, ...]
+    speculative: bool
+    accepted_draft_tokens: tuple[int, ...] = ()
+    exact_burst: bool = False
+    exact_burst_gate_only: bool = False
+    exact_burst_phase: str | None = None
+    exact_cohort_burst: bool = False
 
 
 def _load_scheduler_method(name: str):
@@ -56,6 +82,29 @@ def _load_scheduler_method(name: str):
         "RequestSLOState": policy.RequestSLOState,
         "ProtectedRequestSnapshot": policy.ProtectedRequestSnapshot,
         "SLOCohortBurstObservation": policy.SLOCohortBurstObservation,
+        "SLOCohortBurstDecision": policy.SLOCohortBurstDecision,
+        "CohortWriteAuthority": contract.CohortWriteAuthority,
+        "ExactGreedyCohortBurstFallback": (
+            contract.ExactGreedyCohortBurstFallback
+        ),
+        "ExactGreedyCohortBurstLease": (
+            contract.ExactGreedyCohortBurstLease
+        ),
+        "ExactGreedyCohortBurstResult": (
+            contract.ExactGreedyCohortBurstResult
+        ),
+        "ExactGreedyCohortBurstTransaction": (
+            contract.ExactGreedyCohortBurstTransaction
+        ),
+        "build_exact_greedy_cohort_burst_lease": (
+            contract.build_exact_greedy_cohort_burst_lease
+        ),
+        "validate_exact_greedy_cohort_burst_result": (
+            contract.validate_exact_greedy_cohort_burst_result
+        ),
+        "ScheduledOutputRow": _ScheduledOutputRow,
+        "SequenceStatus": SimpleNamespace(RUNNING="running"),
+        "INT64_MAX": (1 << 63) - 1,
     }
     module = ast.Module(body=[method], type_ignores=[])
     code = compile(
@@ -87,6 +136,33 @@ class FakeScheduler:
         "_remove_finished_progress"
     )
     add = _load_scheduler_method("add")
+    _clear_exact_greedy_cohort_burst = _load_scheduler_method(
+        "_clear_exact_greedy_cohort_burst"
+    )
+    _advance_exact_greedy_cohort_sequence_generations = (
+        _load_scheduler_method(
+            "_advance_exact_greedy_cohort_sequence_generations"
+        )
+    )
+    _validate_pending_exact_greedy_cohort_burst = (
+        _load_scheduler_method(
+            "_validate_pending_exact_greedy_cohort_burst"
+        )
+    )
+    prepare_exact_greedy_cohort_burst = _load_scheduler_method(
+        "prepare_exact_greedy_cohort_burst"
+    )
+    cancel_exact_greedy_cohort_burst = _load_scheduler_method(
+        "cancel_exact_greedy_cohort_burst"
+    )
+    fail_exact_greedy_cohort_burst = _load_scheduler_method(
+        "fail_exact_greedy_cohort_burst"
+    )
+    prepare_exact_greedy_cohort_burst_commit = (
+        _load_scheduler_method(
+            "prepare_exact_greedy_cohort_burst_commit"
+        )
+    )
 
     def __init__(self):
         self.slo_request_state_by_seq_id = {}
@@ -98,12 +174,20 @@ class FakeScheduler:
         self.exact_greedy_cohort_burst_target_ttft_ns = 100
         self.exact_greedy_cohort_burst_reserve_ns = 10
         self._exact_greedy_cohort_burst_pending_lease = None
+        self._exact_greedy_cohort_burst_pending_transaction = None
+        self._exact_greedy_cohort_burst_sequence_generations = {}
+        self.schedule_generation = 11
+        self.eos = 2
+        self._slo_cohort_cost_table = SimpleNamespace(
+            table_sha256="b" * 64
+        )
         self.chunked_prefill_slo_mixed = False
         self.decode_progress_ns_by_seq_id = {}
-        self.block_manager = SimpleNamespace(block_size=4)
+        self.block_manager = _BlockManager()
         self.running = deque()
         self.waiting = deque()
         self.prefilling = deque()
+        self.prepared_calls = []
 
     def _invalidate_slo_clock(self, reason: str) -> None:
         if not self.slo_clock_invalid:
@@ -113,13 +197,58 @@ class FakeScheduler:
     def _validate_admission(self, seq) -> None:
         del seq
 
+    def prepare_postprocess(self, seqs, rows, **kwargs):
+        prepared = SimpleNamespace(
+            scheduled_sequence_ids=tuple(
+                seq.seq_id for seq in seqs
+            ),
+            rows=tuple(rows),
+            **kwargs,
+        )
+        self.prepared_calls.append(prepared)
+        return prepared
+
+
+class _BlockManager:
+    block_size = 8
+
+    def __init__(self):
+        self.blocks = [
+            SimpleNamespace(generation=100 + index)
+            for index in range(64)
+        ]
+
+    def block_identities(self, block_ids):
+        return tuple(
+            (block_id, self.blocks[block_id].generation)
+            for block_id in block_ids
+        )
+
+    def validate_block_identities(self, identities):
+        if self.block_identities(
+            tuple(block_id for block_id, _ in identities)
+        ) != identities:
+            raise RuntimeError("block identity is stale")
+
 
 class FakeSequence:
-    def __init__(self, sequence_id: int, max_tokens: int = 16):
+    def __init__(
+        self,
+        sequence_id: int,
+        max_tokens: int = 16,
+        *,
+        num_tokens: int = 5,
+        block_id: int | None = None,
+    ):
         self.seq_id = sequence_id
-        self.num_tokens = 4
+        self.num_tokens = num_tokens
         self.num_prompt_tokens = 4
         self.max_tokens = max_tokens
+        self.block_table = [
+            sequence_id if block_id is None else block_id
+        ]
+        self.status = "running"
+        self.ignore_eos = False
 
     def __len__(self) -> int:
         return self.num_tokens
@@ -135,6 +264,61 @@ def _scheduler():
 
 def _sequence(sequence_id: int, *, max_tokens: int = 16):
     return FakeSequence(sequence_id, max_tokens)
+
+
+def _decision(width: int = 8):
+    return policy.SLOCohortBurstDecision(
+        selected_width=width,
+        reason="selected",
+        global_slack_ns=100,
+        predicted_cost_ns_by_width=(
+            (8, 80),
+            (4, 40),
+            (2, 20),
+        ),
+        protected_sequence_ids=(7, 9, 11, 13),
+    )
+
+
+def _graph_capability():
+    return {
+        "available": True,
+        "quarantined": False,
+        "shape_supported": True,
+        "graph_identity_sha256": "a" * 64,
+        "graph_generation": 7,
+    }
+
+
+def _cohort_result(lease, tokens):
+    rows = tuple(
+        contract.ExactGreedyCohortBurstRowResult(
+            sequence_id=authority.sequence_id,
+            sequence_generation=authority.sequence_generation,
+            tokens=tuple(row_tokens),
+            final_position=(
+                authority.first_write_position
+                + lease.authorized_width
+            ),
+            final_context_length=(
+                authority.initial_sequence_length
+                + lease.authorized_width
+            ),
+            final_physical_slot=(
+                authority.last_physical_slot + 1
+            ),
+        )
+        for authority, row_tokens in zip(lease.rows, tokens)
+    )
+    return contract.ExactGreedyCohortBurstResult(
+        lease_identity_sha256=lease.identity_sha256,
+        graph_identity_sha256=lease.graph_identity_sha256,
+        graph_generation=lease.graph_generation,
+        replay_count=lease.authorized_width,
+        rows=rows,
+        token_d2h_calls=1,
+        sampled_logit_d2h_calls=0,
+    )
 
 
 def test_slo_request_lifecycle_uses_immutable_replacement() -> None:
@@ -317,3 +501,219 @@ def test_postprocess_journals_snapshot_cohort_slo_state() -> None:
         "scheduler.slo_request_state_by_seq_id.update(\n"
         "                self.slo_request_states"
     ) == 2
+
+
+def test_cohort_lease_preserves_order_and_clips_width_to_shared_capacity():
+    scheduler = _scheduler()
+    cohort = tuple(
+        FakeSequence(sequence_id, max_tokens=16)
+        for sequence_id in (7, 9, 11, 13)
+    )
+
+    lease = scheduler.prepare_exact_greedy_cohort_burst(
+        cohort,
+        _decision(8),
+        schedule_generation=11,
+        decision_now_ns=100,
+        graph_capability=_graph_capability(),
+    )
+
+    assert lease.ordered_sequence_ids == (7, 9, 11, 13)
+    assert lease.requested_width == 8
+    assert lease.authorized_width == 4
+    assert tuple(
+        row.sequence_id for row in lease.rows
+    ) == (7, 9, 11, 13)
+    assert tuple(
+        row.block_table_identity for row in lease.rows
+    ) == (
+        ((7, 107),),
+        ((9, 109),),
+        ((11, 111),),
+        ((13, 113),),
+    )
+    assert tuple(
+        (
+            row.first_physical_slot,
+            row.last_physical_slot,
+        )
+        for row in lease.rows
+    ) == (
+        (60, 63),
+        (76, 79),
+        (92, 95),
+        (108, 111),
+    )
+
+
+@pytest.mark.parametrize(
+    ("remaining", "writable", "expected"),
+    (
+        (8, 8, 8),
+        (7, 8, 4),
+        (4, 7, 4),
+        (3, 8, 2),
+        (8, 3, 2),
+        (1, 8, 1),
+        (8, 1, 1),
+    ),
+)
+def test_cohort_lease_clips_width_over_supported_ladder(
+    remaining,
+    writable,
+    expected,
+):
+    scheduler = _scheduler()
+    num_tokens = scheduler.block_manager.block_size - writable + 1
+    sequence = FakeSequence(
+        7,
+        max_tokens=remaining,
+        num_tokens=num_tokens,
+    )
+    sequence.num_prompt_tokens = num_tokens
+
+    lease = scheduler.prepare_exact_greedy_cohort_burst(
+        (sequence,),
+        _decision(8),
+        schedule_generation=11,
+        decision_now_ns=100,
+        graph_capability=_graph_capability(),
+    )
+
+    if expected == 1:
+        assert lease is None
+        assert (
+            scheduler._exact_greedy_cohort_burst_pending_transaction
+            is None
+        )
+    else:
+        assert lease.authorized_width == expected
+
+
+def test_cohort_scheduler_allows_only_one_pending_transaction():
+    scheduler = _scheduler()
+    cohort = (FakeSequence(7), FakeSequence(9))
+    lease = scheduler.prepare_exact_greedy_cohort_burst(
+        cohort,
+        _decision(4),
+        schedule_generation=11,
+        decision_now_ns=100,
+        graph_capability=_graph_capability(),
+    )
+
+    with pytest.raises(RuntimeError, match="pending"):
+        scheduler.prepare_exact_greedy_cohort_burst(
+            cohort,
+            _decision(4),
+            schedule_generation=11,
+            decision_now_ns=100,
+            graph_capability=_graph_capability(),
+        )
+
+    scheduler.cancel_exact_greedy_cohort_burst(
+        lease,
+        "pre_replay_bind_failure",
+    )
+    assert scheduler._exact_greedy_cohort_burst_pending_lease is None
+    assert (
+        scheduler._exact_greedy_cohort_burst_pending_transaction
+        is None
+    )
+
+
+def test_cohort_lease_rejects_exhausted_generation_before_reservation():
+    scheduler = _scheduler()
+    cohort = (FakeSequence(7), FakeSequence(9))
+    scheduler._exact_greedy_cohort_burst_sequence_generations[9] = (
+        (1 << 63) - 1
+    )
+
+    with pytest.raises(
+        OverflowError,
+        match="cohort sequence generation exhausted",
+    ):
+        scheduler.prepare_exact_greedy_cohort_burst(
+            cohort,
+            _decision(4),
+            schedule_generation=11,
+            decision_now_ns=100,
+            graph_capability=_graph_capability(),
+        )
+
+    assert (
+        scheduler._exact_greedy_cohort_burst_pending_lease is None
+    )
+    assert (
+        scheduler._exact_greedy_cohort_burst_pending_transaction
+        is None
+    )
+    assert 7 not in (
+        scheduler._exact_greedy_cohort_burst_sequence_generations
+    )
+
+
+def test_terminal_cohort_failure_closes_pending_transaction():
+    scheduler = _scheduler()
+    cohort = (FakeSequence(7), FakeSequence(9))
+    lease = scheduler.prepare_exact_greedy_cohort_burst(
+        cohort,
+        _decision(4),
+        schedule_generation=11,
+        decision_now_ns=100,
+        graph_capability=_graph_capability(),
+    )
+
+    scheduler.fail_exact_greedy_cohort_burst(
+        lease,
+        terminal=True,
+        reason="graph replay failed",
+        completed_replays=2,
+    )
+
+    assert scheduler._exact_greedy_cohort_burst_pending_lease is None
+    assert (
+        scheduler._exact_greedy_cohort_burst_pending_transaction
+        is None
+    )
+
+
+def test_prepare_cohort_commit_validates_every_row_and_truncates_at_eos():
+    scheduler = _scheduler()
+    cohort = (FakeSequence(7), FakeSequence(9))
+    lease = scheduler.prepare_exact_greedy_cohort_burst(
+        cohort,
+        _decision(4),
+        schedule_generation=11,
+        decision_now_ns=100,
+        graph_capability=_graph_capability(),
+    )
+    result = _cohort_result(
+        lease,
+        (
+            (31, 2, 91, 92),
+            (41, 42, 43, 44),
+        ),
+    )
+
+    prepared = scheduler.prepare_exact_greedy_cohort_burst_commit(
+        cohort,
+        lease,
+        result,
+        decision_now_ns=100,
+        step_end_ns=140,
+    )
+
+    assert len(scheduler.prepared_calls) == 1
+    assert tuple(
+        row.sequence_id for row in prepared.rows
+    ) == (7, 9)
+    assert tuple(
+        row.output_tokens for row in prepared.rows
+    ) == ((31, 2), (41, 42, 43, 44))
+    assert all(row.exact_cohort_burst for row in prepared.rows)
+    assert prepared.exact_cohort_burst_lease is lease
+    assert prepared.exact_cohort_burst_result is result
+    assert (
+        prepared.exact_cohort_burst_transaction.state
+        == "reserved"
+    )
