@@ -899,6 +899,7 @@ def _source_tree_sha256() -> str:
     paths.extend((
         root / "tools" / "slo_cohort_burst_ceiling.py",
         root / "tools" / "profile_slo_cohort_burst_ceiling.py",
+        root / "tools" / "run_staged_inference_benchmark_remote.py",
         root / "tools" / "run_slo_cohort_burst_remote.py",
     ))
     if any(not path.is_file() for path in paths):

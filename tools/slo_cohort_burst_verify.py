@@ -105,6 +105,7 @@ QUALIFICATION_SOURCE_PATHS = (
     "tinyvllm/engine/scheduler.py",
     "tinyvllm/engine/slo_cohort_burst.py",
     "tools/profile_slo_cohort_burst_ceiling.py",
+    "tools/run_staged_inference_benchmark_remote.py",
     "tools/run_slo_cohort_burst_remote.py",
     "tools/slo_cohort_burst_ceiling.py",
     "tools/slo_cohort_burst_gate.py",
@@ -113,6 +114,7 @@ QUALIFICATION_SOURCE_PATHS = (
 SOURCE_TREE_TOOL_PATHS = (
     "tools/slo_cohort_burst_ceiling.py",
     "tools/profile_slo_cohort_burst_ceiling.py",
+    "tools/run_staged_inference_benchmark_remote.py",
     "tools/run_slo_cohort_burst_remote.py",
 )
 CEILING_PROFILE_SCHEMA_VERSION = (

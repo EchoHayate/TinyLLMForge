@@ -152,6 +152,10 @@ def test_committed_source_archive_contains_only_qualification_sources(
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as bundle:
         names = {member.name for member in bundle.getmembers()}
     assert "source/experiments/raw.trace" not in names
+    assert (
+        "source/tools/run_staged_inference_benchmark_remote.py"
+        in names
+    )
     assert all(
         any(
             name == "source/" + relative
