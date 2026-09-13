@@ -24,6 +24,30 @@ def test_direct_script_entrypoint_can_import_tools() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_gpu_identity_queries_the_controller_selected_device(
+    monkeypatch,
+) -> None:
+    observed = {}
+
+    def run(command, **kwargs):
+        observed["command"] = command
+        observed["kwargs"] = kwargs
+        return SimpleNamespace(
+            returncode=0,
+            stdout="GPU-selected, NVIDIA A100 80GB PCIe\n",
+            stderr="",
+        )
+
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3")
+    monkeypatch.setattr(profile.subprocess, "run", run)
+
+    assert profile._gpu_identity() == (
+        "GPU-selected",
+        "NVIDIA A100 80GB PCIe",
+    )
+    assert observed["command"][:3] == ["nvidia-smi", "--id", "3"]
+
+
 @dataclass(frozen=True)
 class FakeCase:
     case_id: str = "medium-b4-c2048-k4-r0"

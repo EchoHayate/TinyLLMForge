@@ -876,9 +876,20 @@ def _source_tree_sha256() -> str:
 
 
 def _gpu_identity() -> tuple[str, str]:
+    visible_device = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if (
+        not isinstance(visible_device, str)
+        or not visible_device
+        or "," in visible_device
+    ):
+        raise RuntimeError(
+            "exactly one CUDA_VISIBLE_DEVICES selector is required"
+        )
     result = subprocess.run(
         [
             "nvidia-smi",
+            "--id",
+            visible_device,
             "--query-gpu=uuid,name",
             "--format=csv,noheader",
         ],
