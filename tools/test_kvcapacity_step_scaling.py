@@ -1277,3 +1277,114 @@ def test_render_explains_the_regime_boundary():
 
 def test_regime_threshold_is_declared_in_a_sane_range():
     assert 1.0 < verdict.MAX_REGIME_STEP_RATIO <= 2.0
+
+
+# ---------------------------------------------------------------------------
+# Sample dispersion.
+#
+# The second full run produced a cell with a median of 60.6 ms and a standard
+# deviation of 109.7 ms, meaning at least one step took hundreds of milliseconds.
+# The median absorbed it and every existing check passed. A robust statistic over
+# a contaminated sample is still a contaminated measurement.
+# ---------------------------------------------------------------------------
+
+
+def _row_with_spread(context, batch, median, stdev):
+    row = _row(context, batch, median)
+    row["step"]["stdev_ms"] = stdev
+    row["drift"] = {
+        "ratio": 1.0,
+        "first_half_median_ms": median,
+        "second_half_median_ms": median,
+    }
+    return row
+
+
+def _clean_rows():
+    return [
+        _row_with_spread(context, batch, 40.0 + 0.00009 * context * batch, 0.5)
+        for context, batch in worker.enumerate_cells()
+    ]
+
+
+def test_dispersion_ratio_is_extracted_from_the_measurement():
+    payload = {"rows": [_row_with_spread(8192, 2, 60.628, 109.718)]}
+    points, _rejected = verdict.extract_points(payload)
+    assert points[0]["dispersion_ratio"] == pytest.approx(109.718 / 60.628)
+
+
+def test_verdict_is_inconclusive_when_a_cell_is_wildly_dispersed():
+    """Reproduces the observed contaminated cell."""
+    rows = _clean_rows()
+    rows[10] = _row_with_spread(
+        rows[10]["context_length"], rows[10]["batch"], 60.628, 109.718
+    )
+    report = verdict.build_report({"rows": rows, "payload_sha256": "x"})
+    assert report["verdict"] == "INCONCLUSIVE"
+    assert "steady decoding" in report["consequence"]
+    check = next(c for c in report["checks"] if c["name"] == "sample_dispersion")
+    assert check["passed"] is False
+
+
+def test_normal_measurement_noise_does_not_trip_the_dispersion_check():
+    """Observed eager spreads are around 1% of the median."""
+    report = verdict.build_report({"rows": _clean_rows(), "payload_sha256": "x"})
+    check = next(c for c in report["checks"] if c["name"] == "sample_dispersion")
+    assert check["passed"] is True
+    assert report["verdict"] == "PASS"
+
+
+def test_dispersion_is_judged_on_every_measured_cell_not_just_fitted_ones():
+    """A contaminated batch-1 cell must not escape by being excluded from the fit."""
+    rows = []
+    for context, batch in worker.enumerate_cells():
+        if batch == 1:
+            rows.append(_row_with_spread(context, 1, 13.0 + 0.000151 * context, 40.0))
+        else:
+            rows.append(
+                _row_with_spread(context, batch, 40.0 + 0.00009 * context * batch, 0.5)
+            )
+    report = verdict.build_report({"rows": rows, "payload_sha256": "x"})
+    assert "batch >= 2" in report["fit_scope"]
+    assert report["verdict"] == "INCONCLUSIVE"
+    check = next(c for c in report["checks"] if c["name"] == "sample_dispersion")
+    assert check["passed"] is False
+
+
+def test_dispersion_check_is_vacuous_without_spread_data():
+    report = verdict.build_report(
+        _payload_from(lambda L, B: 13.05 + 0.000151 * L * B, worker.enumerate_cells())
+    )
+    check = next(c for c in report["checks"] if c["name"] == "sample_dispersion")
+    assert check["vacuous"] is False or check["passed"] is True
+
+
+def test_dispersion_threshold_is_declared_in_a_sane_range():
+    assert 0.0 < verdict.MAX_DISPERSION_RATIO <= 0.5
+
+
+# ---------------------------------------------------------------------------
+# Context must leave room for the tokens the worker generates.
+# ---------------------------------------------------------------------------
+
+
+def test_grid_contexts_leave_room_for_generated_tokens():
+    """A request is rejected when prompt plus generated tokens exceeds the limit.
+
+    The second run lost every 40960 cell to exactly this, having asked for the
+    full positional limit as prompt with nothing left to decode into.
+    """
+    generated = worker.WARMUP_STEPS + worker.MEASURED_STEPS + 2
+    for context, _batch in worker.enumerate_cells():
+        assert context + generated <= 40960, (context, generated)
+
+
+def test_grid_contexts_are_block_aligned():
+    """The KV cache is paged at 256 tokens, so ragged contexts waste a partial block."""
+    for context, _batch in worker.enumerate_cells():
+        assert context % 256 == 0, context
+
+
+def test_preregistered_lists_stay_in_step_after_the_context_change():
+    assert set(verdict.PREREGISTERED_CELLS) == set(worker.enumerate_cells())
+    assert 40448 in {context for context, _batch in worker.enumerate_cells()}

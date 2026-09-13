@@ -59,6 +59,9 @@ MAX_DRIFT_DEVIATION = 0.05
 # Above this, batch 1 and batch 2 are not the same execution path and must not be
 # fitted together.
 MAX_REGIME_STEP_RATIO = 1.30
+# A cell whose spread dwarfs its own median contains something other than steady
+# decoding, even when the median survives.
+MAX_DISPERSION_RATIO = 0.25
 
 # Frozen Stage 0 constants, fit from batch-1 data in the erratum artifact.
 STAGE0_C0_MS = 13.05
@@ -154,7 +157,9 @@ PREREGISTERED_CELLS = (
     (8192, 1), (8192, 2), (8192, 4), (8192, 8), (8192, 16), (8192, 32),
     (16384, 1), (16384, 2), (16384, 4), (16384, 8), (16384, 16),
     (32768, 1), (32768, 2), (32768, 4), (32768, 8),
-    (40960, 1), (40960, 2), (40960, 4),
+    # 40448, not 40960: a request needs room for prompt plus generated tokens, and
+    # asking for the full positional limit leaves none.
+    (40448, 1), (40448, 2), (40448, 4),
 )
 
 
@@ -257,6 +262,12 @@ def extract_points(payload):
                 "step_ms": float(row["step"]["median_ms"]),
                 "step_stdev_ms": float(row["step"].get("stdev_ms") or 0.0),
                 "sample_count": int(row["step"].get("count") or 0),
+                "dispersion_ratio": (
+                    float(row["step"]["stdev_ms"]) / float(row["step"]["median_ms"])
+                    if row["step"].get("stdev_ms") is not None
+                    and float(row["step"]["median_ms"]) > 0
+                    else None
+                ),
                 "drift_ratio": (
                     float(row["drift"]["ratio"]) if row.get("drift") else None
                 ),
@@ -591,6 +602,44 @@ def decide(m1, m2, m3, collisions, share, curvature, points, coverage_points=Non
         }
     )
 
+    # A median can be robust to an outlier and still sit inside a cell that was not
+    # doing steady decoding. One cell in the second full run reported a median of
+    # 60.6 ms with a standard deviation of 109.7 ms, meaning at least one step took
+    # hundreds of milliseconds. The median was believable and the cell was not, and
+    # nothing in the gate could see it.
+    dispersed = [
+        point
+        for point in coverage_points
+        if point.get("dispersion_ratio") is not None
+        and point["dispersion_ratio"] > MAX_DISPERSION_RATIO
+    ]
+    scored = [
+        point for point in coverage_points if point.get("dispersion_ratio") is not None
+    ]
+    checks.append(
+        {
+            "name": "sample_dispersion",
+            "detail": (
+                f"{len(scored) - len(dispersed)}/{len(scored)} cells kept their spread "
+                f"under {MAX_DISPERSION_RATIO:.0%} of their median"
+                + (
+                    "; dispersed: "
+                    + ", ".join(
+                        f"L={point['context_length']} B={point['batch']} "
+                        f"stdev/median {point['dispersion_ratio']:.2f}"
+                        for point in dispersed[:6]
+                    )
+                    if dispersed
+                    else ""
+                )
+            )
+            if scored
+            else "no cell reported a dispersion ratio",
+            "passed": not dispersed,
+            "vacuous": not scored,
+        }
+    )
+
     measured_cells = {
         (point["context_length"], point["batch"]) for point in coverage_points
     }
@@ -632,6 +681,15 @@ def decide(m1, m2, m3, collisions, share, curvature, points, coverage_points=Non
         consequence = (
             "The Stage 0 decode-step model survives on the serving path. "
             "Proceed to GATE B, the head-slicing phi probe."
+        )
+    elif dispersed:
+        verdict = "INCONCLUSIVE"
+        consequence = (
+            f"{len(dispersed)} cells had a spread larger than "
+            f"{MAX_DISPERSION_RATIO:.0%} of their own median, so something other "
+            "than steady decoding happened inside them. The median can survive that "
+            "while the cell remains untrustworthy. Re-run those cells before "
+            "concluding anything."
         )
     elif drifting:
         verdict = "INCONCLUSIVE"
@@ -753,6 +811,7 @@ def build_report(payload):
             "max_batch_term_share": MAX_BATCH_TERM_SHARE,
             "max_curvature_share": MAX_CURVATURE_SHARE,
             "max_drift_deviation": MAX_DRIFT_DEVIATION,
+            "max_dispersion_ratio": MAX_DISPERSION_RATIO,
         },
         "measured_points": points_all,
         "fitted_points": points,

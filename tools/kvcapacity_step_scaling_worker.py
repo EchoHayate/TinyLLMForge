@@ -74,7 +74,10 @@ CONTEXT_BATCH_GRID = (
     (8192, (1, 2, 4, 8, 16, 32)),
     (16384, (1, 2, 4, 8, 16)),
     (32768, (1, 2, 4, 8)),
-    (40960, (1, 2, 4)),
+    # 40448 rather than 40960: a request is rejected when prompt + generated tokens
+    # exceeds max_model_len, and this worker generates warmup + measured + 2 tokens.
+    # Asking for the full 40960 leaves no room to decode and fails outright.
+    (40448, (1, 2, 4)),
 )
 
 KV_BYTES_PER_TOKEN = 147456
@@ -310,12 +313,18 @@ def _engine_identity(engine):
 
 
 def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
-                  warmup_steps, measured_steps):
+                  warmup_steps, measured_steps, engine_max_model_len):
     """Drive one grid cell and time only the steps that really ran at `batch`."""
     from tinyvllm.sampling_params import SamplingParams
 
     prompts = build_distinct_prompts(context_length, batch, vocab_size, rng)
     max_tokens = warmup_steps + measured_steps + 2
+    if context_length + max_tokens > engine_max_model_len:
+        raise ValueError(
+            f"context {context_length} plus {max_tokens} generated tokens exceeds "
+            f"max_model_len {engine_max_model_len}; the engine would reject the "
+            "request outright"
+        )
     params = SamplingParams(temperature=0.0, max_tokens=max_tokens, ignore_eos=True)
     for prompt in prompts:
         engine.add_request(prompt, params)
@@ -455,6 +464,9 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
                             rng=rng,
                             warmup_steps=warmup_steps,
                             measured_steps=measured_steps,
+                            engine_max_model_len=(
+                                identity.get("max_model_len") or context_length + 1024
+                            ),
                         )
                     )
                 except Exception as error:  # noqa: BLE001 - recorded, not swallowed
