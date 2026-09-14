@@ -53527,3 +53527,132 @@ NO_GO         4096 上 p 不达标，或 coverage < 0.60
 3. 首个 action 被排除（无前缀），这对假设有利。
 4. 子串判定严格，`#W123` vs `W123` 会被判不可抄——copy 率是下界。
 5. side-effect 分类是前缀规则声明的，fail-closed 但没逐工具核对语义。
+
+---
+
+## 2026-09-14 — SLO-aware Cohort Decode Burst Task 10 terminal handoff
+
+### Current decision
+
+Task 10 is closed as:
+
+```text
+STOP_NO_GO_CORRECTNESS_AND_PERFORMANCE
+```
+
+Do not rerun the same candidate, repair or reuse the failed canonical tag, or
+promote the runtime. The implementation remains default-disabled.
+
+### Frozen identities
+
+- authoritative source commit:
+  `960fde15f497a95e12411576d6f9e48129b2ed2d`
+- branch at launch: `feat/kv-sparse-attention`
+- model / hardware / topology: Qwen3-0.6B / A100 80GB PCIe / TP1
+- Stage-1 tag: `20260914-correctness-960fde15-r1`
+- Stage-2 tag: `20260914-canonical-960fde15-r1`
+- approved remote root:
+  `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/`
+- Stage-2 raw bundle:
+  `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/runs/20260914-canonical-960fde15-r1/`
+- remote compact diagnostic:
+  `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/diagnostics/20260914-canonical-960fde15-r1-postmortem/diagnostic.json`
+- Stage-2 manifest SHA-256:
+  `f90ccf2ac87f54024bf81958e1f0769698556b03d4239345bb2acbb156428f4e`
+- compact postmortem SHA-256:
+  `1de12128d2eb5aa06ada68a3b631f52e8fb72548d64b9b6c10972c9341dcac3d`
+- compact report SHA-256:
+  `fe89554b77a5908d985b7658a80af04b2bf33b164f9d480b28fa871636a5a041`
+
+The shared checkout advanced after launch because of unrelated KV-capacity
+work. Do not reset or overwrite those changes. Formal Task-10 evidence remains
+bound to `960fde15`, not to the later mutable checkout.
+
+### Completed evidence
+
+Stage-1 passed:
+
+- `PASS_CORRECTNESS_AND_LIFECYCLE`;
+- 16 exact correctness/lifecycle cases;
+- remote/local verifier agreement;
+- manifest SHA-256
+  `0bc041fc6a6e32c9a04e0f33935026b20ad1850e9504c75403aaa017aa0a4b5b`.
+
+Stage-2 worker completed:
+
+- 2,340 request rows;
+- 28,568 decision rows;
+- 20,407 execution rows;
+- producer classification `NO_GO_TAIL_LATENCY`.
+
+The independent remote verifier then failed closed with:
+
+```text
+ValueError: paired output correctness mismatch
+```
+
+There are 11 mismatches among 1,170 paired requests: six at medium load and
+five at high load. Three mismatched candidate requests executed a burst;
+eight never executed one. The evidence supports
+`BATCH_SCHEDULE_DEPENDENT_GREEDY_DIVERGENCE`: identical baseline prompts vary
+across load in 33 groups, and three mismatched candidate outputs equal a
+baseline output from another load. This rejects global exact token/text
+equivalence without establishing cross-request KV corruption.
+
+### Performance diagnostics
+
+These producer-side values are non-promotional diagnostics because the
+independent verifier did not pass:
+
+| Metric | Result |
+| --- | ---: |
+| aggregate throughput improvement | `+0.188106%` |
+| medium-load throughput improvement | `+0.270566%` |
+| high-load throughput improvement | `+0.223727%` |
+| worst throughput regression | `+1.229188%` |
+| worst P99 ITL regression | `+669.615134%` |
+| worst P99 TTFT regression | `+41.299007%` |
+| worst P99 E2E regression | `+83.584382%` |
+| maximum host-visible gap | `4.809370 s` |
+| peak reserved-memory regression | `0%` |
+| post-EOS wasted-forward fraction | `0.010623%` |
+| starved requests | `0` |
+
+The candidate fails both the `+10%` throughput gates and the tail-latency
+protection gates. Correctness failure alone is already terminal.
+
+### Local compact evidence
+
+Commit only these compact result files, not either raw bundle:
+
+- `artifacts/slo_cohort_burst/20260914-canonical-960fde15-r1/final_bundle/report.md`
+- `artifacts/slo_cohort_burst/20260914-canonical-960fde15-r1/final_bundle/postmortem.json`
+
+The approximately 387 MiB Stage-2 raw evidence remains remote. The
+approximately 299 MiB Stage-1 local raw bundle is intentionally not committed.
+
+### Verification already completed before final documentation
+
+- `tools/test_model_runner_spec_verify.py`: `224 passed, 1 skipped`
+- `tools/test_run_slo_cohort_burst_remote.py`: `73 passed`
+- complete ten-file Task-10 contract suite: `337 passed in 20.57s`
+- task-file `git diff --check`: pass
+- focused bits-code-guard review: no P0-P2 finding
+
+Relevant pushed implementation commits:
+
+- `22abc19fd8232929fefed404fa100cef1f1fc290`
+- `960fde15f497a95e12411576d6f9e48129b2ed2d`
+
+### Unsupported claims
+
+Do not claim:
+
+- exact-output equivalence under the canonical mixed-load workload;
+- a throughput, TPOT, TTFT, E2E, or P99 improvement;
+- production readiness or default enablement;
+- generalization to TP2, Qwen3-8B/27B, sampling, speculative decoding, or
+  joint chunked prefill.
+
+The next inference-optimization effort must use a materially different design
+and a new immutable tag. Task 10 itself has no remaining GPU work.

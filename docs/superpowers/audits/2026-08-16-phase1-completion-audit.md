@@ -4794,3 +4794,138 @@ PERFORMANCE_IMPROVEMENT_ESTABLISHED=true
 PHASE_1=ACHIEVED
 PROMOTION=STAGE0_MICROGATE_GO_WHOLE_MODEL_NOT_AUTHORIZED
 ```
+
+## 2026-09-14 reconciliation: SLO-aware Cohort Decode Burst canonical gate
+
+### Terminal result
+
+The canonical SLO-aware Cohort Decode Burst qualification is a terminal
+`STOP_NO_GO_CORRECTNESS_AND_PERFORMANCE`.
+
+The source-bound Stage-1 qualification passed its isolated 16-case
+correctness and lifecycle matrix, but the complete Stage-2 workload did not
+preserve paired exact output equality. The independent remote verifier failed
+closed with:
+
+```text
+ValueError: paired output correctness mismatch
+```
+
+The Stage-2 producer had already classified the candidate as
+`NO_GO_TAIL_LATENCY`. Its `correctness_passed=true` and
+`verifier_agreement=true` fields are not terminal evidence: the former covers
+the isolated Stage-1 matrix, and the latter was serialized before the
+independent verifier ran.
+
+The candidate remains default-disabled. The immutable failed Stage-2 tag is
+not repaired or reused, and this design is not rerun or promoted.
+
+### Source, tags, and storage boundary
+
+| Item | Frozen value |
+| --- | --- |
+| Authoritative source commit | `960fde15f497a95e12411576d6f9e48129b2ed2d` |
+| Branch at launch | `feat/kv-sparse-attention` |
+| Model / hardware / topology | Qwen3-0.6B / NVIDIA A100 80GB PCIe / TP1 |
+| Stage-1 tag | `20260914-correctness-960fde15-r1` |
+| Stage-2 tag | `20260914-canonical-960fde15-r1` |
+| Approved remote root | `/data00/home/sitian/tinyllmforge-workspaces/command-timeline-20260818/slo-cohort-burst/` |
+| Stage-2 raw bundle | `runs/20260914-canonical-960fde15-r1/` under the approved root |
+| Stage-2 compact remote diagnostic | `diagnostics/20260914-canonical-960fde15-r1-postmortem/diagnostic.json` under the approved root |
+| Stage-2 manifest SHA-256 | `f90ccf2ac87f54024bf81958e1f0769698556b03d4239345bb2acbb156428f4e` |
+| Compact postmortem SHA-256 | `1de12128d2eb5aa06ada68a3b631f52e8fb72548d64b9b6c10972c9341dcac3d` |
+
+The shared checkout later advanced to unrelated KV-capacity work. Formal
+execution and all reported evidence remain bound to `960fde15`; the later
+mutable checkout is not treated as source evidence.
+
+### Correctness and lifecycle reconciliation
+
+Stage-1 completed with:
+
+- classification `PASS_CORRECTNESS_AND_LIFECYCLE`;
+- 16 exact correctness/lifecycle cases;
+- matching remote and local independent verification;
+- manifest SHA-256
+  `0bc041fc6a6e32c9a04e0f33935026b20ad1850e9504c75403aaa017aa0a4b5b`.
+
+Stage-2 completed the GPU workload with 2,340 request rows, 28,568 decision
+rows, and 20,407 execution rows. Among 1,170 paired requests, 11
+baseline/candidate token-and-text mismatches were found:
+
+- six at medium load and five at high load;
+- one in repetition 2, seven in repetition 3, and three in repetition 4;
+- three mismatched candidate requests executed at least one cohort burst;
+- eight mismatched candidate requests never executed a cohort burst.
+
+The evidence supports
+`BATCH_SCHEDULE_DEPENDENT_GREEDY_DIVERGENCE`: Stage-1 isolated correctness
+passed, baseline output already varied across load for 33 identical-prompt
+groups, and three mismatched candidate outputs exactly matched a baseline
+output for the same prompt at another load point. Changing dynamic batch
+composition changes the BF16 batch-shape numerical path, so greedy token
+identity is not globally invariant. This rejects exact equivalence; it does
+not prove cross-request KV corruption.
+
+### Benefit and cost
+
+The producer metrics are diagnostic because independent verification failed,
+but they independently reject promotion:
+
+| Metric | Result | Frozen gate | Verdict |
+| --- | ---: | ---: | --- |
+| Aggregate throughput improvement | `+0.188106%` | at least `+10%` | `FAIL` |
+| Medium-load throughput improvement | `+0.270566%` | at least `+10%` | `FAIL` |
+| High-load throughput improvement | `+0.223727%` | at least `+10%` | `FAIL` |
+| Worst throughput regression | `+1.229188%` | at most `+2%` | `PASS` |
+| Worst P99 ITL regression | `+669.615134%` | at most `+3%` | `FAIL` |
+| Worst P99 TTFT regression | `+41.299007%` | at most `+5%` | `FAIL` |
+| Worst P99 E2E regression | `+83.584382%` | at most `+5%` | `FAIL` |
+| Maximum host-visible gap | `4.809370 s` | at most `0.040 s` | `FAIL` |
+| Peak reserved-memory regression | `0%` | at most `+5%` | `PASS` |
+| Post-EOS wasted-forward fraction | `0.010623%` | at most `10%` | `PASS` |
+| Starved requests | `0` | `0` | `PASS` |
+
+### Task-10 prompt-to-artifact checklist
+
+| Contract requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Source-bound execution | Stage-1 and Stage-2 artifacts bind to pushed source `960fde15f497a95e12411576d6f9e48129b2ed2d` | `PASS` |
+| Approved storage only | raw and diagnostic evidence are below the mounted `/data00/home/sitian/.../slo-cohort-burst/` root | `PASS` |
+| Stage-1 correctness/lifecycle before performance | 16-case Stage-1 passed before Stage-2 was accepted for execution | `PASS` |
+| Frozen paired open-loop workload | Stage-2 produced 2,340 request rows across the frozen paired arms and load points | `PASS` |
+| Exact paired output equality | 11 of 1,170 paired requests mismatch | `FAIL` |
+| Independent remote verification | verifier failed closed with `paired output correctness mismatch` | `FAIL_CLOSED` |
+| Independent local verifier agreement | no valid remote PASS receipt exists to agree with; formal agreement cannot be claimed | `NOT_ESTABLISHED` |
+| Throughput benefit | aggregate, medium, and high gains are all below `0.3%`, versus the `10%` gate | `FAIL` |
+| Tail-latency protection | P99 ITL, TTFT, and E2E regress by `669.6%`, `41.3%`, and `83.6%` at worst | `FAIL` |
+| Memory, EOS waste, and starvation | all three frozen protection gates pass | `PASS` |
+| Immutable failed tag | `20260914-canonical-960fde15-r1` is sealed as failed and is not reused | `PASS` |
+| Compact repository evidence | only `report.md` and `postmortem.json` are retained locally; hundreds of MiB of raw JSONL remain remote | `PASS` |
+| Claim boundary | no exactness, latency, throughput, production, TP2, larger-model, sampling, speculative, or joint-prefill win is claimed | `PASS_LIMITED` |
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Isolated correctness and lifecycle | Stage-1 16/16 cases pass | `PASS_STAGE1_ONLY` |
+| Canonical global exactness | 11/1,170 paired requests mismatch | `FAIL` |
+| Canonical independent verification | remote verifier fails closed; no valid agreement receipt | `FAIL` |
+| Canonical throughput | less than `0.3%` improvement at all reported aggregate load scopes | `FAIL` |
+| Canonical tail latency | severe P99 ITL/TTFT/E2E regressions and 4.809370 s host gap | `FAIL` |
+| Memory and starvation protection | no reserved-memory regression and zero starved requests | `PASS_WITHOUT_PROMOTION_VALUE` |
+| Production-default promotion | correctness and performance both fail | `NOT_AUTHORIZED` |
+
+```text
+SLO_COHORT_BURST_SOURCE=960fde15f497a95e12411576d6f9e48129b2ed2d
+SLO_COHORT_BURST_STAGE1=20260914-correctness-960fde15-r1
+SLO_COHORT_BURST_STAGE1_CLASSIFICATION=PASS_CORRECTNESS_AND_LIFECYCLE
+SLO_COHORT_BURST_STAGE2=20260914-canonical-960fde15-r1
+SLO_COHORT_BURST_STAGE2_PRODUCER_CLASSIFICATION=NO_GO_TAIL_LATENCY
+SLO_COHORT_BURST_STAGE2_REMOTE_VERIFIER=FAIL_PAIRED_OUTPUT_CORRECTNESS_MISMATCH
+SLO_COHORT_BURST_PAIRED_REQUESTS=1170
+SLO_COHORT_BURST_PAIRED_MISMATCHES=11
+SLO_COHORT_BURST_TERMINAL_DECISION=STOP_NO_GO_CORRECTNESS_AND_PERFORMANCE
+SLO_COHORT_BURST_PROMOTION=NOT_AUTHORIZED
+SLO_COHORT_BURST_NEXT_ACTION=ARCHIVE_FAILURE_DO_NOT_RERUN_SAME_DESIGN
+```
