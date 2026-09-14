@@ -11254,7 +11254,7 @@ class ModelRunner:
                 force_attention_backend=True,
             )
             graph = torch.cuda.CUDAGraph()
-            with torch.cuda.graph(graph, self.graph_pool):
+            with torch.cuda.graph(graph):
                 retained_outputs = complete_step()
             torch.cuda.synchronize()
         finally:

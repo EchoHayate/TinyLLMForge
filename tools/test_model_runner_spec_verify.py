@@ -6503,6 +6503,42 @@ def test_cohort_capture_accepts_an_exact_block_table_width():
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
+def test_cohort_capture_uses_an_isolated_cuda_graph_pool():
+    source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
+    tree = ast.parse(source)
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    capture_method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "capture_exact_greedy_cohort_burst_graph"
+    )
+    graph_calls = [
+        node
+        for node in ast.walk(capture_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "graph"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "cuda"
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "torch"
+    ]
+
+    assert len(graph_calls) == 1
+    assert len(graph_calls[0].args) == 1
+    assert not any(
+        keyword.arg == "pool"
+        for keyword in graph_calls[0].keywords
+    )
+
+
 def test_cohort_capture_failure_is_recorded_without_blocking_other_shapes():
     runner = _make_capture_runner(feature_enabled=False)
     runner.config.exact_greedy_decode_burst = False
