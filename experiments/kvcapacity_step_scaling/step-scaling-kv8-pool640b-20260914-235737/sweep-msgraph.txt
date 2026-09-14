@@ -1,0 +1,35 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading CAPACITY WEAK
+  throughput still rises but the last sequences added far less than the first; compressing KV to hold more sequences buys a shrinking return
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+L=2048
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+        8     41.579   0.388  192.40             -           -
+       16     68.383   0.481  233.98         3.350       5.197
+       32    122.339   0.224  261.57         3.372       1.724
+       48    174.703   0.387  274.75         3.273       0.824
+       64    230.097   0.674  278.14         3.462       0.212
+       70    250.314   1.699  279.65         3.369       0.251
+  peak throughput 279.65 seq/s at B=70
+  the last sequences added 4.8% of what the first ones added
+  scaling efficiency across the sweep: 0.17 of proportional
+  step_ms = 14.480 + 3.364 * B                 R^2 = 0.9999
+  step_ms = 15.378 + 3.294 * B + 8.912e-04 * B^2    R^2 = 1.0000
+  at B=70 the B^2 term is 4.367 ms of 250.298 ms, or 1.7%
+
+L=8192
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+        4     64.532   0.565   61.98             -           -
+        8    112.250   0.424   71.27        11.930       2.321
+       12    161.698   0.503   74.21        12.362       0.736
+       16    211.234   0.417   75.75        12.384       0.383
+       19    249.348   0.524   76.20        12.705       0.151
+  peak throughput 76.20 seq/s at B=19
+  the last sequences added 6.5% of what the first ones added
+  scaling efficiency across the sweep: 0.26 of proportional
+  step_ms = 14.356 + 12.327 * B                 R^2 = 0.9999
+  step_ms = 17.338 + 11.664 * B + 2.879e-02 * B^2    R^2 = 1.0000
+  at B=19 the B^2 term is 10.393 ms of 249.342 ms, or 4.2%

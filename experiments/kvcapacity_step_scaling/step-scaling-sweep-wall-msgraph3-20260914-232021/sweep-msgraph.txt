@@ -1,0 +1,11 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading INCONCLUSIVE
+  no context length carried enough batches to judge
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+cells that produced no usable measurement
+  L=8192 B=32: resident KV exceeds the device budget: 39862665216 bytes pinned in whole blocks including generated tokens, against 13249806336 available, less an 8-block scheduler reserve
+  L=8192 B=36: resident KV exceeds the device budget: 44845498368 bytes pinned in whole blocks including generated tokens, against 13249806336 available, less an 8-block scheduler reserve
+  L=8192 B=40: resident KV exceeds the device budget: 49828331520 bytes pinned in whole blocks including generated tokens, against 13249806336 available, less an 8-block scheduler reserve

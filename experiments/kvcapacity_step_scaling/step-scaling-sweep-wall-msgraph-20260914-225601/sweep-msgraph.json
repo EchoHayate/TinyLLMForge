@@ -1,0 +1,124 @@
+{
+  "batch_fits": {
+    "2048": null,
+    "8192": null
+  },
+  "capacity_reading": {
+    "detail": "no context length carried enough batches to judge",
+    "reading": "INCONCLUSIVE"
+  },
+  "contexts": {
+    "2048": [
+      {
+        "batch": 32,
+        "context_length": 2048,
+        "dispersion_ratio": 0.0035310390610801636,
+        "drift_ratio": 1.0026182226003162,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 25.965261040255427,
+        "step_stdev_ms": 0.09168435096428487,
+        "throughput_seq_per_s": 1232.4158786768432
+      },
+      {
+        "batch": 64,
+        "context_length": 2048,
+        "dispersion_ratio": 0.01283926944105708,
+        "drift_ratio": 1.001566163192279,
+        "marginal_ms_per_seq": 0.3547680753399618,
+        "marginal_throughput_per_seq": 15.080674524052704,
+        "step_ms": 37.317839451134205,
+        "step_stdev_ms": 0.4791337956712217,
+        "throughput_seq_per_s": 1714.9974634465298
+      }
+    ],
+    "8192": [
+      {
+        "batch": 16,
+        "context_length": 8192,
+        "dispersion_ratio": 0.013137315657567414,
+        "drift_ratio": 1.0103806406993094,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 34.83989229425788,
+        "step_stdev_ms": 0.45770266254531633,
+        "throughput_seq_per_s": 459.2436700109154
+      },
+      {
+        "batch": 32,
+        "context_length": 8192,
+        "dispersion_ratio": 0.01122092786324292,
+        "drift_ratio": 0.9969241668602433,
+        "marginal_ms_per_seq": 1.7984295700443909,
+        "marginal_throughput_per_seq": 2.736512551152167,
+        "step_ms": 63.61476541496813,
+        "step_stdev_ms": 0.713816693758478,
+        "throughput_seq_per_s": 503.0278708293501
+      }
+    ]
+  },
+  "excluded_cells": {
+    "2048": [],
+    "8192": []
+  },
+  "grid_is_preregistered": false,
+  "grid_spec": "2048:32;2048:64;8192:16;8192:32",
+  "kind": "kvcapacity_batch_sweep_analysis",
+  "note": "This is an exploratory sweep, not GATE A. It cannot pass or fail the pre-registered GATE A grid.",
+  "regime_boundary": {
+    "2048": null,
+    "8192": null
+  },
+  "rejected_cells": [
+    {
+      "batch": 96,
+      "context_length": 2048,
+      "reason": "resident KV exceeds the device budget: 28991029248 bytes required, 25518145536 available"
+    },
+    {
+      "batch": 128,
+      "context_length": 2048,
+      "reason": "resident KV exceeds the device budget: 38654705664 bytes required, 25518145536 available"
+    },
+    {
+      "batch": 144,
+      "context_length": 2048,
+      "reason": "resident KV exceeds the device budget: 43486543872 bytes required, 25518145536 available"
+    },
+    {
+      "batch": 160,
+      "context_length": 2048,
+      "reason": "resident KV exceeds the device budget: 48318382080 bytes required, 25518145536 available"
+    },
+    {
+      "batch": 176,
+      "context_length": 2048,
+      "reason": "resident KV exceeds the device budget: 53150220288 bytes required, 25518145536 available"
+    },
+    {
+      "batch": 192,
+      "context_length": 2048,
+      "reason": "resident KV exceeds the device budget: 57982058496 bytes required, 25518145536 available"
+    },
+    {
+      "batch": 40,
+      "context_length": 8192,
+      "reason": "resident KV exceeds the device budget: 48318382080 bytes required, 50545557504 available"
+    },
+    {
+      "batch": 44,
+      "context_length": 8192,
+      "reason": "resident KV exceeds the device budget: 53150220288 bytes required, 50545557504 available"
+    },
+    {
+      "batch": 48,
+      "context_length": 8192,
+      "reason": "resident KV exceeds the device budget: 57982058496 bytes required, 50545557504 available"
+    }
+  ],
+  "saturation": {
+    "2048": null,
+    "8192": null
+  },
+  "source_payload_sha256": "520042df0f6d23ea75ca2cfea40d7e068501bb90c97091c23cc17cac7f5fa51b,0f08f6c32188c045cbc5eb4d5208b22eb9822150c448c36f74c85889944cf2d4"
+}

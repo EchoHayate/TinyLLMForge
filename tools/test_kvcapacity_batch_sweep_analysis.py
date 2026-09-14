@@ -261,3 +261,62 @@ class CommandLineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContaminationTests(unittest.TestCase):
+    """A busy neighbour must not be reported as a property of the model."""
+
+    def _payload(self, foreign_share, *, pinned=None):
+        rows = [
+            {
+                "context_length": 8192,
+                "batch": batch,
+                "measured": True,
+                "step": {
+                    "median_ms": step,
+                    "stdev_ms": 0.4,
+                    "drift_ratio": 1.0,
+                    "dispersion_ratio": 0.01,
+                    "observed_batch": batch,
+                },
+            }
+            for batch, step in ((16, 34.6), (32, 62.3))
+        ]
+        return {
+            "rows": rows,
+            "engines": [
+                {
+                    "context_length": 8192,
+                    "identity": {
+                        "device_foreign_share": foreign_share,
+                        "kv_capacity_tokens": 89856,
+                        "kv_blocks_requested": pinned,
+                    },
+                }
+            ],
+        }
+
+    def test_a_shared_card_gets_its_own_reading(self):
+        report = sweep.build_report(self._payload(0.4479))
+        self.assertEqual(report["capacity_reading"]["reading"], "CONTAMINATED")
+        self.assertIn("89856", report["capacity_reading"]["detail"])
+        self.assertEqual(len(report["contaminated_engines"]), 1)
+
+    def test_the_suppressed_reading_is_kept_for_inspection(self):
+        """Hiding the number entirely would make the run unauditable."""
+        report = sweep.build_report(self._payload(0.4479))
+        self.assertIn("suppressed_reading", report["capacity_reading"])
+
+    def test_an_idle_card_reads_normally(self):
+        report = sweep.build_report(self._payload(0.0052))
+        self.assertNotEqual(report["capacity_reading"]["reading"], "CONTAMINATED")
+        self.assertEqual(report["contaminated_engines"], [])
+
+    def test_unknown_foreign_share_is_not_given_the_benefit_of_the_doubt(self):
+        report = sweep.build_report(self._payload(None))
+        self.assertEqual(report["capacity_reading"]["reading"], "CONTAMINATED")
+
+    def test_a_pinned_pool_is_immune_to_the_neighbour(self):
+        """Pinned pools are served in full or fail loudly, so sharing is moot."""
+        report = sweep.build_report(self._payload(0.4479, pinned=1100))
+        self.assertNotEqual(report["capacity_reading"]["reading"], "CONTAMINATED")

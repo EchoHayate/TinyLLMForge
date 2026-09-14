@@ -1,0 +1,148 @@
+{
+  "batch_fits": {
+    "2048": {
+      "linear": {
+        "a_ms_per_seq": 0.39094225139706396,
+        "c0_ms": 12.94269715435803,
+        "r_squared": 0.9965069968263313
+      },
+      "max_batch": 128,
+      "quadratic": {
+        "a_ms_per_seq": 0.35098279222439493,
+        "b_ms_per_seq2": 0.00024974661982918214,
+        "c0_ms": 14.221399847883433,
+        "predicted_at_max_batch_ms": 63.239045871887306,
+        "r_squared": 0.9968401502760781,
+        "share_at_max_batch": 0.06470446482653744,
+        "term_at_max_batch_ms": 4.09184861928132
+      }
+    },
+    "8192": null
+  },
+  "capacity_reading": {
+    "detail": "throughput was still rising usefully at the largest measured concurrency, so the capacity argument is not dead and GATE B remains worth building",
+    "reading": "CAPACITY OPEN"
+  },
+  "contexts": {
+    "2048": [
+      {
+        "batch": 32,
+        "context_length": 2048,
+        "dispersion_ratio": 0.007498533101588864,
+        "drift_ratio": 0.9954091078579158,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 26.060819160193205,
+        "step_stdev_ms": 0.19541791512723006,
+        "throughput_seq_per_s": 1227.896936136169
+      },
+      {
+        "batch": 64,
+        "context_length": 2048,
+        "dispersion_ratio": 0.009920059372341108,
+        "drift_ratio": 0.9970432320965886,
+        "marginal_ms_per_seq": 0.3309297899249941,
+        "marginal_throughput_per_seq": 16.19762763276124,
+        "step_ms": 36.650572437793016,
+        "step_stdev_ms": 0.3635758546131953,
+        "throughput_seq_per_s": 1746.2210203845286
+      },
+      {
+        "batch": 96,
+        "context_length": 2048,
+        "dispersion_ratio": 0.05606356089234841,
+        "drift_ratio": 1.0618492895593346,
+        "marginal_ms_per_seq": 0.4569852681015618,
+        "marginal_throughput_per_seq": 3.939663784019338,
+        "step_ms": 51.274101017042994,
+        "step_stdev_ms": 2.8746086845694134,
+        "throughput_seq_per_s": 1872.2902614731474
+      },
+      {
+        "batch": 128,
+        "context_length": 2048,
+        "dispersion_ratio": 0.009085092157261733,
+        "drift_ratio": 1.0151661633547293,
+        "marginal_ms_per_seq": 0.36289735726313666,
+        "marginal_throughput_per_seq": 5.097265693827673,
+        "step_ms": 62.88681644946337,
+        "step_stdev_ms": 0.5713325229201778,
+        "throughput_seq_per_s": 2035.402763675633
+      }
+    ],
+    "8192": [
+      {
+        "batch": 16,
+        "context_length": 8192,
+        "dispersion_ratio": 0.06292783653876681,
+        "drift_ratio": 0.9977700124695434,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 34.63067184202373,
+        "step_stdev_ms": 2.1792332569025437,
+        "throughput_seq_per_s": 462.0181806748627
+      },
+      {
+        "batch": 32,
+        "context_length": 8192,
+        "dispersion_ratio": 0.007887789680946973,
+        "drift_ratio": 1.0083823655024946,
+        "marginal_ms_per_seq": 1.7268345400225371,
+        "marginal_throughput_per_seq": 3.2472047541432545,
+        "step_ms": 62.260024482384324,
+        "step_stdev_ms": 0.49109397864765697,
+        "throughput_seq_per_s": 513.9734567411548
+      }
+    ]
+  },
+  "excluded_cells": {
+    "2048": [],
+    "8192": []
+  },
+  "grid_is_preregistered": false,
+  "grid_spec": "2048:32;2048:64;2048:96;2048:128;8192:16;8192:32",
+  "kind": "kvcapacity_batch_sweep_analysis",
+  "note": "This is an exploratory sweep, not GATE A. It cannot pass or fail the pre-registered GATE A grid.",
+  "regime_boundary": {
+    "2048": null,
+    "8192": null
+  },
+  "rejected_cells": [
+    {
+      "batch": 140,
+      "context_length": 2048,
+      "reason": "no decode step ran at the target batch"
+    },
+    {
+      "batch": 144,
+      "context_length": 2048,
+      "reason": "resident KV exceeds the device budget: 43486543872 bytes required, 45034242048 available"
+    },
+    {
+      "batch": 40,
+      "context_length": 8192,
+      "reason": "resident KV exceeds the device budget: 48318382080 bytes required, 50696552448 available"
+    },
+    {
+      "batch": 44,
+      "context_length": 8192,
+      "reason": "resident KV exceeds the device budget: 53150220288 bytes required, 50696552448 available"
+    }
+  ],
+  "saturation": {
+    "2048": {
+      "first_marginal_throughput_per_seq": 16.19762763276124,
+      "last_marginal_throughput_per_seq": 5.097265693827673,
+      "peak_batch": 128,
+      "peak_gain_over_smallest_batch": 1.657633229447129,
+      "peak_is_largest_batch": true,
+      "peak_throughput_seq_per_s": 2035.402763675633,
+      "retained_fraction": 0.3146921147587051,
+      "saturating": false,
+      "scaling_efficiency": 0.41440830736178225,
+      "throughput_still_rising": true
+    },
+    "8192": null
+  },
+  "source_payload_sha256": "8dedddababb4bfd40618b968fc0eabfae1e77ff51b315cb74e06b2c597c4d5b3,589dc28dfd139cf9d33a07f2e0150e04b1195ec609cac9ca6e6d8bada5a7a73e"
+}

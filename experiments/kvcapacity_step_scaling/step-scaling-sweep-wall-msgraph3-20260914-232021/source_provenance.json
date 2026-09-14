@@ -1,0 +1,8 @@
+{
+  "source_revision": "67969f7da0dc751cb933ff449bbc44fba27eaf7f",
+  "tinyvllm_dirty_paths": 1,
+  "worker_sha256": "e72238b7e89ec1afbb8de18b3bb22b3fa4bad03a289f5751458e625a3e74e722",
+  "remote_dir": "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-sweep-wall-msgraph3-20260914-232021",
+  "cuda_device": "3",
+  "mode": "sweep"
+}

@@ -270,6 +270,40 @@ def saturation(rows):
     }
 
 
+MAX_FOREIGN_DEVICE_SHARE = 0.05
+
+
+def contamination(payload):
+    """Report engines whose KV pool was carved out of a shared card.
+
+    A wall sweep answers "how much concurrency fits", and the answer is only
+    about the model when the card is idle. Two consecutive sweeps on the same
+    host produced ctx8192 capacities of 343808 and 89856 tokens because a
+    neighbour took 38 GiB in between; the second one refused every cell and
+    reported INCONCLUSIVE, which reads like the grid was too small. It was not:
+    the device was not the device under test any more. Contamination therefore
+    gets its own reading instead of being laundered into a grid complaint.
+    """
+    offenders = []
+    for engine in payload.get("engines") or []:
+        identity = engine.get("identity") or {}
+        share = identity.get("device_foreign_share")
+        pinned = identity.get("kv_blocks_requested")
+        if pinned:
+            # A pinned pool is either served in full or construction fails, so a
+            # busy neighbour cannot quietly move the wall.
+            continue
+        if share is None or float(share) > MAX_FOREIGN_DEVICE_SHARE:
+            offenders.append(
+                {
+                    "context_length": engine.get("context_length"),
+                    "device_foreign_share": share,
+                    "kv_capacity_tokens": identity.get("kv_capacity_tokens"),
+                }
+            )
+    return offenders
+
+
 def capacity_reading(contexts):
     """Turn per-context saturation into one statement about the capacity axis."""
 
@@ -375,6 +409,24 @@ def build_report(payload):
         context: fit_batch_terms(rows) for context, rows in contexts.items()
     }
     sats = {context: saturation(rows) for context, rows in contexts.items()}
+    dirty = contamination(payload)
+    reading = capacity_reading(contexts)
+    if dirty:
+        shares = ", ".join(
+            f"L={item['context_length']} foreign_share="
+            f"{'unknown' if item['device_foreign_share'] is None else item['device_foreign_share']}"
+            f" capacity={item['kv_capacity_tokens']} tokens"
+            for item in dirty
+        )
+        reading = {
+            "reading": "CONTAMINATED",
+            "detail": (
+                "the KV pool was sized against a card somebody else was already "
+                f"using, so the wall is not a property of the model: {shares}. "
+                "Rerun on an idle device or pin the pool with --kv-blocks."
+            ),
+            "suppressed_reading": reading,
+        }
     return {
         "kind": "kvcapacity_batch_sweep_analysis",
         "note": (
@@ -389,7 +441,8 @@ def build_report(payload):
         "regime_boundary": boundaries,
         "batch_fits": fits,
         "saturation": sats,
-        "capacity_reading": capacity_reading(contexts),
+        "capacity_reading": reading,
+        "contaminated_engines": dirty,
         "rejected_cells": rejected,
     }
 

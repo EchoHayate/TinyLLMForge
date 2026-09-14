@@ -1,0 +1,88 @@
+{
+  "configuration": {
+    "enforce_eager": false,
+    "gpu_memory_utilization": 0.85,
+    "kv_blocks_requested": 1100,
+    "kv_bytes_per_token": 147456,
+    "measured_steps": 24,
+    "model_path": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+    "multi_sequence_cuda_graphs": true,
+    "seed": 20260913,
+    "warmup_steps": 24
+  },
+  "engines": [
+    {
+      "context_length": 8192,
+      "error": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020",
+      "identity": null
+    }
+  ],
+  "environment": {
+    "hostname": "n232-195-203",
+    "platform": "Linux-5.15.120.bsk.6-amd64-x86_64-with-glibc2.28",
+    "python": "3.11.15"
+  },
+  "grid": [
+    [
+      8192,
+      8
+    ],
+    [
+      8192,
+      16
+    ],
+    [
+      8192,
+      24
+    ],
+    [
+      8192,
+      32
+    ]
+  ],
+  "grid_is_preregistered": false,
+  "grid_spec": "8192:8,16,24,32",
+  "payload_sha256": "5254ca5f6d79f93477857422fdcfa6a83bb6e7e816f1409f0ac07a2b5fb55dcc",
+  "preregistered_grid_spec": "8192:1,2,4,8,16,32;16384:1,2,4,8,16;32768:1,2,4,8;40448:1,2,4",
+  "product_collision_groups": {},
+  "purpose": "Validate the batch term of the Stage 0 decode-step model step_ms(L, B) = c0 + c1 * L * B on the tinyvllm serving path.",
+  "rows": [
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "kv_bytes": 9663676416,
+      "kv_tokens": 65536,
+      "measured": false,
+      "skipped_reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020",
+      "step": null
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "kv_bytes": 19327352832,
+      "kv_tokens": 131072,
+      "measured": false,
+      "skipped_reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020",
+      "step": null
+    },
+    {
+      "batch": 24,
+      "context_length": 8192,
+      "kv_bytes": 28991029248,
+      "kv_tokens": 196608,
+      "measured": false,
+      "skipped_reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020",
+      "step": null
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "kv_bytes": 38654705664,
+      "kv_tokens": 262144,
+      "measured": false,
+      "skipped_reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020",
+      "step": null
+    }
+  ],
+  "schema": "kvcapacity-gate-a-step-scaling/1"
+}

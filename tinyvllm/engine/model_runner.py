@@ -7798,8 +7798,22 @@ class ModelRunner:
         self,
         physical_slots: list[int],
     ) -> dict[str, torch.Tensor]:
-        if self.config.kv_quant_bits != 0:
-            raise RuntimeError("KV snapshot requires FP KV")
+        """Copy out the exact bytes held in the given physical KV slots.
+
+        Quantised KV used to be refused here, which quietly disabled the whole
+        multi-sequence capture path whenever kv_quant_bits was set: capture
+        borrows scratch slots and must hand them back byte-identical, so no
+        snapshot meant no capture, and a KV-compression measurement silently
+        became an eager measurement instead.
+
+        Quantised KV needs nothing conceptually new. The payload is integer, so
+        copying it is exact rather than lossy, and the only extra state is the
+        scale tensor, which lives at the same (block, offset) coordinates as the
+        payload it describes. Both are captured together, and restoring both
+        reproduces the pre-capture bytes exactly. Snapshotting the payload alone
+        would be the real hazard: the slots would come back holding integers
+        interpreted against somebody else's scales.
+        """
         if not physical_slots:
             raise ValueError("KV snapshot requires at least one physical slot")
         block_ids = torch.tensor(
@@ -7824,7 +7838,21 @@ class ModelRunner:
             .cpu()
             .clone()
         )
-        return {"keys": keys, "values": values}
+        snapshot = {"keys": keys, "values": values}
+        if getattr(self, "kv_scale", None) is not None:
+            snapshot["key_scales"] = (
+                self.kv_scale[0, :, block_ids, offsets]
+                .detach()
+                .cpu()
+                .clone()
+            )
+            snapshot["value_scales"] = (
+                self.kv_scale[1, :, block_ids, offsets]
+                .detach()
+                .cpu()
+                .clone()
+            )
+        return snapshot
 
     def restore_kv_slots(
         self,
@@ -7835,6 +7863,18 @@ class ModelRunner:
             raise ValueError("KV restore requires at least one physical slot")
         keys = snapshot["keys"].to(self.kv_cache.device)
         values = snapshot["values"].to(self.kv_cache.device)
+        quantised = getattr(self, "kv_scale", None) is not None
+        if quantised and "key_scales" not in snapshot:
+            # Restoring a payload-only snapshot into a quantised cache would
+            # leave integers paired with whatever scales happen to be resident,
+            # which reads as corrupted KV rather than as a failed restore.
+            raise RuntimeError(
+                "cannot restore a snapshot without scales into a quantised "
+                "KV cache"
+            )
+        if quantised:
+            key_scales = snapshot["key_scales"].to(self.kv_scale.device)
+            value_scales = snapshot["value_scales"].to(self.kv_scale.device)
         for slot_ordinal, physical_slot in enumerate(physical_slots):
             block_id = physical_slot // self.block_size
             offset = physical_slot % self.block_size
@@ -7844,6 +7884,13 @@ class ModelRunner:
             self.kv_cache[1, :, block_id, offset].copy_(
                 values[:, slot_ordinal]
             )
+            if quantised:
+                self.kv_scale[0, :, block_id, offset].copy_(
+                    key_scales[:, slot_ordinal]
+                )
+                self.kv_scale[1, :, block_id, offset].copy_(
+                    value_scales[:, slot_ordinal]
+                )
         torch.cuda.synchronize()
 
     def _capture_exact_multi_sequence_graph(

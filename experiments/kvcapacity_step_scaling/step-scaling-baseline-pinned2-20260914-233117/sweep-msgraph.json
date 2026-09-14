@@ -1,0 +1,141 @@
+{
+  "batch_fits": {
+    "8192": {
+      "linear": {
+        "a_ms_per_seq": 1.3546389853187153,
+        "c0_ms": 12.656653749803876,
+        "r_squared": 0.9983342987299633
+      },
+      "max_batch": 24,
+      "quadratic": {
+        "a_ms_per_seq": 1.5620750884189902,
+        "b_ms_per_seq2": -0.007372728965612154,
+        "c0_ms": 11.640966613659874,
+        "predicted_at_max_batch_ms": 44.884076851523034,
+        "r_squared": 0.9991998731302005,
+        "share_at_max_batch": 0.09461466475607148,
+        "term_at_max_batch_ms": -4.2466918841926
+      }
+    }
+  },
+  "capacity_reading": {
+    "detail": "the KV pool was sized against a card somebody else was already using, so the wall is not a property of the model: L=2048 foreign_share=unknown capacity=None tokens. Rerun on an idle device or pin the pool with --kv-blocks.",
+    "reading": "CONTAMINATED",
+    "suppressed_reading": {
+      "detail": "throughput was still rising usefully at the largest measured concurrency, so the capacity argument is not dead and GATE B remains worth building",
+      "reading": "CAPACITY OPEN"
+    }
+  },
+  "contaminated_engines": [
+    {
+      "context_length": 2048,
+      "device_foreign_share": null,
+      "kv_capacity_tokens": null
+    }
+  ],
+  "contexts": {
+    "8192": [
+      {
+        "batch": 4,
+        "context_length": 8192,
+        "dispersion_ratio": 0.02792970844436207,
+        "drift_ratio": 0.9994504786005434,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 18.007552018389106,
+        "step_stdev_ms": 0.5029456776702914,
+        "throughput_seq_per_s": 222.1290265281614
+      },
+      {
+        "batch": 8,
+        "context_length": 8192,
+        "dispersion_ratio": 0.006021737886016667,
+        "drift_ratio": 1.0005800807822887,
+        "marginal_ms_per_seq": 1.3037985772825778,
+        "marginal_throughput_per_seq": 30.59020157308418,
+        "step_ms": 23.222746327519417,
+        "step_stdev_ms": 0.1398412913777781,
+        "throughput_seq_per_s": 344.4898328204981
+      },
+      {
+        "batch": 16,
+        "context_length": 8192,
+        "dispersion_ratio": 0.012008089426646376,
+        "drift_ratio": 1.0018933128747636,
+        "marginal_ms_per_seq": 1.477414247347042,
+        "marginal_throughput_per_seq": 14.013040575601451,
+        "step_ms": 35.04206030629575,
+        "step_stdev_ms": 0.42078819385193467,
+        "throughput_seq_per_s": 456.59415742530973
+      },
+      {
+        "batch": 24,
+        "context_length": 8192,
+        "dispersion_ratio": 0.010090581453028182,
+        "drift_ratio": 1.008744561591763,
+        "marginal_ms_per_seq": 1.2191779096610844,
+        "marginal_throughput_per_seq": 9.896767578354883,
+        "step_ms": 44.79548358358443,
+        "step_stdev_ms": 0.4520124758279454,
+        "throughput_seq_per_s": 535.7682980521488
+      }
+    ]
+  },
+  "excluded_cells": {
+    "8192": []
+  },
+  "grid_is_preregistered": false,
+  "grid_spec": "8192:4;8192:8;8192:16;8192:24",
+  "kind": "kvcapacity_batch_sweep_analysis",
+  "note": "This is an exploratory sweep, not GATE A. It cannot pass or fail the pre-registered GATE A grid.",
+  "regime_boundary": {
+    "8192": null
+  },
+  "rejected_cells": [
+    {
+      "batch": 16,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=850, scratch=92, available=870"
+    },
+    {
+      "batch": 32,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=850, scratch=92, available=870"
+    },
+    {
+      "batch": 48,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=850, scratch=92, available=870"
+    },
+    {
+      "batch": 64,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=850, scratch=92, available=870"
+    },
+    {
+      "batch": 80,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=850, scratch=92, available=870"
+    },
+    {
+      "batch": 92,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=850, scratch=92, available=870"
+    }
+  ],
+  "saturation": {
+    "8192": {
+      "first_marginal_throughput_per_seq": 30.59020157308418,
+      "last_marginal_throughput_per_seq": 9.896767578354883,
+      "peak_batch": 24,
+      "peak_gain_over_smallest_batch": 2.411968874244467,
+      "peak_is_largest_batch": true,
+      "peak_throughput_seq_per_s": 535.7682980521488,
+      "retained_fraction": 0.32352737378046204,
+      "saturating": false,
+      "scaling_efficiency": 0.4019948123740778,
+      "throughput_still_rising": true
+    }
+  },
+  "source_payload_sha256": "d00be008a376a87b6870c82a969082cae3efe7694d5fb2477937fdcb6c17380c,7e121767dac5cf71428e8f9b1df0d647d1fb958d343773340a8fffe3916136ac"
+}

@@ -1,0 +1,130 @@
+=== msgraph-ctx2048 ===
+[rank0]:W0914 23:47:41.323000 140443592782848 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:47:41.467000 140443592782848 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:48:12.293000 140443592782848 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:48:12.346000 140443592782848 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:48:35.649000 140443592782848 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:48:35.784000 140443592782848 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps1 is not in var_ranges, defaulting to unknown range.
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+measured 6/6 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 5bae1a9aae263811e738f18bb0a66c2d9c4003f89a469cd5d61e6b8ad9485bfb
+=== msgraph-ctx8192 ===
+[rank0]:W0914 23:50:39.627000 139863081309184 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:50:39.748000 139863081309184 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:51:11.253000 139863081309184 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:51:11.308000 139863081309184 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:51:35.247000 139863081309184 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:51:35.373000 139863081309184 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps1 is not in var_ranges, defaulting to unknown range.
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7969, in _capture_exact_multi_sequence_graph
+    snapshot = self.snapshot_kv_slots(scratch_slots)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640-20260914-234727/source/tinyvllm/engine/model_runner.py", line 7802, in snapshot_kv_slots
+    raise RuntimeError("KV snapshot requires FP KV")
+RuntimeError: KV snapshot requires FP KV
+measured 5/5 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 daee43fa54c82492c9b399a3ff8c433249f68450b5d0cd60c4fe65e386f42411

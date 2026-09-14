@@ -1,0 +1,8 @@
+{
+  "source_revision": "960fde15f497a95e12411576d6f9e48129b2ed2d",
+  "tinyvllm_dirty_paths": 1,
+  "worker_sha256": "f0bcc575b321b5d83a3fcbe149ffe2774ded47688dae01eb4caf7fd68943d394",
+  "remote_dir": "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-kv8-pool640b-20260914-235737",
+  "cuda_device": "3",
+  "mode": "sweep"
+}

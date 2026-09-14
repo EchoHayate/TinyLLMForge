@@ -1,0 +1,27 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading INCONCLUSIVE
+  no context length carried enough batches to judge
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+L=2048
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+       32     25.965   0.092 1232.42             -           -
+       64     37.318   0.479 1715.00         0.355      15.081
+
+L=8192
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+       16     34.840   0.458  459.24             -           -
+       32     63.615   0.714  503.03         1.798       2.737
+
+cells that produced no usable measurement
+  L=2048 B=96: resident KV exceeds the device budget: 28991029248 bytes required, 25518145536 available
+  L=2048 B=128: resident KV exceeds the device budget: 38654705664 bytes required, 25518145536 available
+  L=2048 B=144: resident KV exceeds the device budget: 43486543872 bytes required, 25518145536 available
+  L=2048 B=160: resident KV exceeds the device budget: 48318382080 bytes required, 25518145536 available
+  L=2048 B=176: resident KV exceeds the device budget: 53150220288 bytes required, 25518145536 available
+  L=2048 B=192: resident KV exceeds the device budget: 57982058496 bytes required, 25518145536 available
+  L=8192 B=40: resident KV exceeds the device budget: 48318382080 bytes required, 50545557504 available
+  L=8192 B=44: resident KV exceeds the device budget: 53150220288 bytes required, 50545557504 available
+  L=8192 B=48: resident KV exceeds the device budget: 57982058496 bytes required, 50545557504 available

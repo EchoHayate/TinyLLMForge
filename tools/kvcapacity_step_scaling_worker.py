@@ -438,13 +438,46 @@ def device_memory_before_load():
         }
 
 
+MAX_FOREIGN_DEVICE_SHARE = 0.05
+
+
+def device_is_contaminated(device_memory, *, limit=MAX_FOREIGN_DEVICE_SHARE):
+    """Whether somebody else's memory is large enough to move the KV wall.
+
+    A capacity wall derived from free memory is only a property of the experiment
+    when the card is otherwise idle. This shared A100 has been observed going from
+    0 to 38 GiB of foreign memory between two consecutive sweeps, which moved
+    ctx8192 capacity from 343808 tokens to 89856 and turned every cell into a
+    skip. Unknown foreign share is not treated as clean: a run that cannot see the
+    device has not earned the benefit of the doubt.
+    """
+    share = device_memory.get("device_foreign_share")
+    if share is None:
+        return True
+    return float(share) > float(limit)
+
+
 def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utilization,
-                 max_num_seqs, multi_sequence_graph_batches=None):
+                 max_num_seqs, multi_sequence_graph_batches=None, kv_blocks=None,
+                 kv_quant_bits=0):
     from tinyvllm import LLM
 
     extra = {}
     if multi_sequence_graph_batches:
         extra = multi_sequence_graph_kwargs(multi_sequence_graph_batches)
+    if kv_blocks:
+        # Pinning the pool makes the wall a property of the experiment rather than
+        # of whoever else is on the card. It also fails loudly instead of quietly
+        # shrinking: an explicit block count larger than the device can serve
+        # raises at construction, which is the outcome worth having.
+        extra["num_kvcache_blocks"] = int(kv_blocks)
+    if kv_quant_bits:
+        # Quantised KV at a *pinned* pool holds the token count fixed and only
+        # removes bytes, which is the one arrangement that isolates whether the
+        # per-sequence slope is bound by KV memory traffic. Whether the capture
+        # path supports it is not assumed: the per-step dispatch labels will say
+        # so, and a silent eager fallback would otherwise read as a slope win.
+        extra["kv_quant_bits"] = int(kv_quant_bits)
 
     engine = LLM(
         model=model_path,
@@ -624,7 +657,7 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
 
 def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
         warmup_steps, measured_steps, grid=CONTEXT_BATCH_GRID,
-        multi_sequence_cuda_graphs=False):
+        multi_sequence_cuda_graphs=False, kv_blocks=None, kv_quant_bits=0):
     """Measure every feasible cell, one engine per context length.
 
     Context lengths are attempted in ascending order and a group that fails is
@@ -650,6 +683,8 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
                 multi_sequence_graph_batches=(
                     batches if multi_sequence_cuda_graphs else None
                 ),
+                kv_blocks=kv_blocks,
+                kv_quant_bits=kv_quant_bits,
             )
         except Exception as error:  # noqa: BLE001 - recorded, not swallowed
             reason = f"engine construction failed: {type(error).__name__}: {error}"
@@ -672,6 +707,8 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
 
         identity = _engine_identity(engine)
         identity.update(device_memory)
+        identity["kv_blocks_requested"] = int(kv_blocks) if kv_blocks else None
+        identity["device_contaminated"] = device_is_contaminated(device_memory)
         engines.append({"context_length": context_length, "identity": identity})
         vocab_size = identity.get("vocab_size") or 151936
         available = identity.get("kv_capacity_bytes")
@@ -744,6 +781,7 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
 
 def build_payload(rows, engines, *, model_path, enforce_eager, seed,
                   gpu_memory_utilization, warmup_steps, measured_steps,
+                  kv_blocks=None,
                   grid=CONTEXT_BATCH_GRID, multi_sequence_cuda_graphs=False):
     cells = enumerate_cells(grid)
     preregistered = tuple(grid) == CONTEXT_BATCH_GRID
@@ -762,6 +800,7 @@ def build_payload(rows, engines, *, model_path, enforce_eager, seed,
             "warmup_steps": warmup_steps,
             "measured_steps": measured_steps,
             "kv_bytes_per_token": KV_BYTES_PER_TOKEN,
+            "kv_blocks_requested": kv_blocks,
         },
         "grid": [list(cell) for cell in cells],
         "grid_spec": format_grid_spec(grid),
@@ -799,6 +838,28 @@ def parse_args(argv=None):
             "would pay rather than this engine's uncaptured path"
         ),
     )
+    parser.add_argument(
+        "--kv-quant-bits",
+        type=int,
+        default=0,
+        choices=(0, 4, 8),
+        help=(
+            "quantise the KV cache; at a pinned pool this holds tokens constant "
+            "and removes only bytes, which tests whether the per-sequence decode "
+            "slope is KV-memory-traffic bound"
+        ),
+    )
+    parser.add_argument(
+        "--kv-blocks",
+        type=int,
+        default=None,
+        help=(
+            "pin the KV pool to this many blocks instead of deriving it from "
+            "free memory; makes the capacity wall reproducible across devices "
+            "and across neighbours, and fails at construction rather than "
+            "silently shrinking when the device cannot serve it"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--warmup-steps", type=int, default=WARMUP_STEPS)
     parser.add_argument("--measured-steps", type=int, default=MEASURED_STEPS)
@@ -831,6 +892,8 @@ def main(argv=None):
         measured_steps=args.measured_steps,
         grid=args.grid,
         multi_sequence_cuda_graphs=args.multi_sequence_cuda_graphs,
+        kv_blocks=args.kv_blocks,
+        kv_quant_bits=args.kv_quant_bits,
     )
     payload = build_payload(
         rows,
@@ -841,6 +904,7 @@ def main(argv=None):
         gpu_memory_utilization=args.gpu_memory_utilization,
         warmup_steps=args.warmup_steps,
         measured_steps=args.measured_steps,
+        kv_blocks=args.kv_blocks,
         grid=args.grid,
         multi_sequence_cuda_graphs=args.multi_sequence_cuda_graphs,
     )

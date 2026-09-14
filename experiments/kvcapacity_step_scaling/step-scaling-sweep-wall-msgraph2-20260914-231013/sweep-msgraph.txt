@@ -1,0 +1,30 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading CAPACITY OPEN
+  throughput was still rising usefully at the largest measured concurrency, so the capacity argument is not dead and GATE B remains worth building
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+L=2048
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+       32     26.061   0.195 1227.90             -           -
+       64     36.651   0.364 1746.22         0.331      16.198
+       96     51.274   2.875 1872.29         0.457       3.940
+      128     62.887   0.571 2035.40         0.363       5.097
+  peak throughput 2035.40 seq/s at B=128
+  the last sequences added 31.5% of what the first ones added
+  scaling efficiency across the sweep: 0.41 of proportional
+  step_ms = 12.943 + 0.391 * B                 R^2 = 0.9965
+  step_ms = 14.221 + 0.351 * B + 2.497e-04 * B^2    R^2 = 0.9968
+  at B=128 the B^2 term is 4.092 ms of 63.239 ms, or 6.5%
+
+L=8192
+        B    step_ms   stdev   seq/s   marg_ms/seq  marg_seq/s
+       16     34.631   2.179  462.02             -           -
+       32     62.260   0.491  513.97         1.727       3.247
+
+cells that produced no usable measurement
+  L=2048 B=140: no decode step ran at the target batch
+  L=2048 B=144: resident KV exceeds the device budget: 43486543872 bytes required, 45034242048 available
+  L=8192 B=40: resident KV exceeds the device budget: 48318382080 bytes required, 50696552448 available
+  L=8192 B=44: resident KV exceeds the device budget: 53150220288 bytes required, 50696552448 available

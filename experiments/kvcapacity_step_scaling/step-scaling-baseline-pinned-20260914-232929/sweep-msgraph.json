@@ -1,0 +1,79 @@
+{
+  "batch_fits": {},
+  "capacity_reading": {
+    "detail": "the KV pool was sized against a card somebody else was already using, so the wall is not a property of the model: L=2048 foreign_share=unknown capacity=None tokens, L=8192 foreign_share=unknown capacity=None tokens. Rerun on an idle device or pin the pool with --kv-blocks.",
+    "reading": "CONTAMINATED",
+    "suppressed_reading": {
+      "detail": "no context length carried enough batches to judge",
+      "reading": "INCONCLUSIVE"
+    }
+  },
+  "contaminated_engines": [
+    {
+      "context_length": 2048,
+      "device_foreign_share": null,
+      "kv_capacity_tokens": null
+    },
+    {
+      "context_length": 8192,
+      "device_foreign_share": null,
+      "kv_capacity_tokens": null
+    }
+  ],
+  "contexts": {},
+  "excluded_cells": {},
+  "grid_is_preregistered": false,
+  "grid_spec": "",
+  "kind": "kvcapacity_batch_sweep_analysis",
+  "note": "This is an exploratory sweep, not GATE A. It cannot pass or fail the pre-registered GATE A grid.",
+  "regime_boundary": {},
+  "rejected_cells": [
+    {
+      "batch": 32,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011"
+    },
+    {
+      "batch": 64,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011"
+    },
+    {
+      "batch": 96,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011"
+    },
+    {
+      "batch": 112,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011"
+    },
+    {
+      "batch": 120,
+      "context_length": 2048,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011"
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020"
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020"
+    },
+    {
+      "batch": 24,
+      "context_length": 8192,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020"
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "reason": "engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020"
+    }
+  ],
+  "saturation": {},
+  "source_payload_sha256": "e770e6c9addafa59159812cf15ef5a2960d4b1d6197b8125ea8fd70a2bdb7b8a,5254ca5f6d79f93477857422fdcfa6a83bb6e7e816f1409f0ac07a2b5fb55dcc"
+}

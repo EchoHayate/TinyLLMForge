@@ -66,6 +66,13 @@ REMOTE_DIR="${REMOTE_DIR:-/data00/home/sitian/tllm/kvcapacity-runs/${RUN_TAG}}"
 LOCAL_OUT="${LOCAL_OUT:-${REPO_ROOT}/experiments/kvcapacity_step_scaling/${RUN_TAG}}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.85}"
 WARMUP_STEPS="${WARMUP_STEPS:-8}"
+# Pin the KV pool so the capacity wall belongs to the experiment rather than to
+# whoever else is on the card. Empty means derive it from free memory, which is
+# only defensible on a device confirmed idle.
+KV_BLOCKS="${KV_BLOCKS:-}"
+# 0 keeps bf16 KV. At a pinned pool, 8 or 4 removes bytes without changing the
+# token count, which is the comparison that isolates the memory-traffic term.
+KV_QUANT_BITS="${KV_QUANT_BITS:-0}"
 MEASURED_STEPS="${MEASURED_STEPS:-24}"
 SEED="${SEED:-20260913}"
 # Deliberately small and deliberately not the pre-registered grid. The worker
@@ -329,6 +336,12 @@ for path_mode in "${EXECUTION_PATHS[@]}"; do
       --warmup-steps "${WARMUP_STEPS}"
       --measured-steps "${RUN_MEASURED_STEPS}"
     )
+    if [[ -n "${KV_BLOCKS}" ]]; then
+      REMOTE_ARGS+=(--kv-blocks "${KV_BLOCKS}")
+    fi
+    if [[ "${KV_QUANT_BITS}" != 0 ]]; then
+      REMOTE_ARGS+=(--kv-quant-bits "${KV_QUANT_BITS}")
+    fi
     if [[ "${path_mode}" == eager ]]; then
       REMOTE_ARGS+=(--enforce-eager)
     fi

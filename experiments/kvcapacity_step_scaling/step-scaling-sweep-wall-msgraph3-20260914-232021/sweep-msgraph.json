@@ -1,0 +1,33 @@
+{
+  "batch_fits": {},
+  "capacity_reading": {
+    "detail": "no context length carried enough batches to judge",
+    "reading": "INCONCLUSIVE"
+  },
+  "contexts": {},
+  "excluded_cells": {},
+  "grid_is_preregistered": false,
+  "grid_spec": "8192:32,36,40",
+  "kind": "kvcapacity_batch_sweep_analysis",
+  "note": "This is an exploratory sweep, not GATE A. It cannot pass or fail the pre-registered GATE A grid.",
+  "regime_boundary": {},
+  "rejected_cells": [
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "reason": "resident KV exceeds the device budget: 39862665216 bytes pinned in whole blocks including generated tokens, against 13249806336 available, less an 8-block scheduler reserve"
+    },
+    {
+      "batch": 36,
+      "context_length": 8192,
+      "reason": "resident KV exceeds the device budget: 44845498368 bytes pinned in whole blocks including generated tokens, against 13249806336 available, less an 8-block scheduler reserve"
+    },
+    {
+      "batch": 40,
+      "context_length": 8192,
+      "reason": "resident KV exceeds the device budget: 49828331520 bytes pinned in whole blocks including generated tokens, against 13249806336 available, less an 8-block scheduler reserve"
+    }
+  ],
+  "saturation": {},
+  "source_payload_sha256": "b626a3c82105cdeb88a1ded2a5a39ae37fe114613f9251d6f467ab3fe71d9bf8"
+}

@@ -1,0 +1,17 @@
+batch sweep: does concurrency still buy throughput?
+========================================================================
+reading CONTAMINATED
+  the KV pool was sized against a card somebody else was already using, so the wall is not a property of the model: L=2048 foreign_share=unknown capacity=None tokens, L=8192 foreign_share=unknown capacity=None tokens. Rerun on an idle device or pin the pool with --kv-blocks.
+
+this is a sweep, not GATE A; it says nothing about the pre-registered grid
+
+cells that produced no usable measurement
+  L=2048 B=32: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011
+  L=2048 B=64: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011
+  L=2048 B=96: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011
+  L=2048 B=112: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011
+  L=2048 B=120: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=120, available=1011
+  L=8192 B=8: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020
+  L=8192 B=16: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020
+  L=8192 B=24: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020
+  L=8192 B=32: engine construction failed: ValueError: explicit scheduler-visible KV cache plus exact graph scratch exceeds available capacity: visible=1100, scratch=32, available=1020

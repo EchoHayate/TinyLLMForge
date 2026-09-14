@@ -1,0 +1,12 @@
+=== msgraph-ctx2048 ===
+[rank0]:W0914 23:29:41.978000 140375629145088 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:29:42.125000 140375629145088 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+measured 0/5 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 e770e6c9addafa59159812cf15ef5a2960d4b1d6197b8125ea8fd70a2bdb7b8a
+=== msgraph-ctx8192 ===
+[rank0]:W0914 23:30:25.536000 140172470154240 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 23:30:25.660000 140172470154240 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+measured 0/4 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 5254ca5f6d79f93477857422fdcfa6a83bb6e7e816f1409f0ac07a2b5fb55dcc

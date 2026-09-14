@@ -1,0 +1,210 @@
+{
+  "batch_fits": {
+    "2048": {
+      "linear": {
+        "a_ms_per_seq": 3.3636052470361575,
+        "c0_ms": 14.479659040750192,
+        "r_squared": 0.9999483430801365
+      },
+      "max_batch": 70,
+      "quadratic": {
+        "a_ms_per_seq": 3.2936139179995885,
+        "b_ms_per_seq2": 0.0008912371432906257,
+        "c0_ms": 15.377848019239643,
+        "predicted_at_max_batch_ms": 250.29788428133492,
+        "r_squared": 0.9999661491852161,
+        "share_at_max_batch": 0.017447458713696063,
+        "term_at_max_batch_ms": 4.367062002124066
+      }
+    },
+    "8192": {
+      "linear": {
+        "a_ms_per_seq": 12.326855055514459,
+        "c0_ms": 14.35554431602148,
+        "r_squared": 0.9998933606008149
+      },
+      "max_batch": 19,
+      "quadratic": {
+        "a_ms_per_seq": 11.663761570681404,
+        "b_ms_per_seq2": 0.028788659331922033,
+        "c0_ms": 17.33779493742226,
+        "predicted_at_max_batch_ms": 249.34197079919278,
+        "r_squared": 0.9999938715930424,
+        "share_at_max_batch": 0.041680532104214435,
+        "term_at_max_batch_ms": 10.392706018823853
+      }
+    }
+  },
+  "capacity_reading": {
+    "detail": "throughput still rises but the last sequences added far less than the first; compressing KV to hold more sequences buys a shrinking return",
+    "reading": "CAPACITY WEAK"
+  },
+  "contaminated_engines": [],
+  "contexts": {
+    "2048": [
+      {
+        "batch": 8,
+        "context_length": 2048,
+        "dispersion_ratio": 0.009327092635683034,
+        "drift_ratio": 0.9951355240988445,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 41.57948377542198,
+        "step_stdev_ms": 0.38781569691724055,
+        "throughput_seq_per_s": 192.40258111931814
+      },
+      {
+        "batch": 16,
+        "context_length": 2048,
+        "dispersion_ratio": 0.007039451183436506,
+        "drift_ratio": 1.002920097316625,
+        "marginal_ms_per_seq": 3.3504035673104227,
+        "marginal_throughput_per_seq": 5.19683548419064,
+        "step_ms": 68.38271231390536,
+        "step_stdev_ms": 0.4813767651247192,
+        "throughput_seq_per_s": 233.97726499284326
+      },
+      {
+        "batch": 32,
+        "context_length": 2048,
+        "dispersion_ratio": 0.0018276641278122394,
+        "drift_ratio": 1.0001873990088488,
+        "marginal_ms_per_seq": 3.372278733877465,
+        "marginal_throughput_per_seq": 1.7244145232350458,
+        "step_ms": 122.3391720559448,
+        "step_stdev_ms": 0.22359491619289984,
+        "throughput_seq_per_s": 261.567897364604
+      },
+      {
+        "batch": 48,
+        "context_length": 2048,
+        "dispersion_ratio": 0.002216087325087351,
+        "drift_ratio": 1.001279971776724,
+        "marginal_ms_per_seq": 3.2727477519074455,
+        "marginal_throughput_per_seq": 0.8239935192553673,
+        "step_ms": 174.70313608646393,
+        "step_stdev_ms": 0.3871574055342233,
+        "throughput_seq_per_s": 274.75179367268987
+      },
+      {
+        "batch": 64,
+        "context_length": 2048,
+        "dispersion_ratio": 0.002929578940483007,
+        "drift_ratio": 1.0022610787385366,
+        "marginal_ms_per_seq": 3.462143853539601,
+        "marginal_throughput_per_seq": 0.2119526699883032,
+        "step_ms": 230.09743774309754,
+        "step_stdev_ms": 0.6740886078712783,
+        "throughput_seq_per_s": 278.1430363925027
+      },
+      {
+        "batch": 70,
+        "context_length": 2048,
+        "dispersion_ratio": 0.006788931480830156,
+        "drift_ratio": 0.998533095962048,
+        "marginal_ms_per_seq": 3.369437220195929,
+        "marginal_throughput_per_seq": 0.2509427571656128,
+        "step_ms": 250.31406106427312,
+        "step_stdev_ms": 1.6993650092536858,
+        "throughput_seq_per_s": 279.6486929354964
+      }
+    ],
+    "8192": [
+      {
+        "batch": 4,
+        "context_length": 8192,
+        "dispersion_ratio": 0.008749950726675608,
+        "drift_ratio": 1.0017023450304336,
+        "marginal_ms_per_seq": null,
+        "marginal_throughput_per_seq": null,
+        "step_ms": 64.53208951279521,
+        "step_stdev_ms": 0.5646526035263778,
+        "throughput_seq_per_s": 61.98466577169941
+      },
+      {
+        "batch": 8,
+        "context_length": 8192,
+        "dispersion_ratio": 0.003777521616445526,
+        "drift_ratio": 0.9950935177829664,
+        "marginal_ms_per_seq": 11.929536529351026,
+        "marginal_throughput_per_seq": 2.321168093359443,
+        "step_ms": 112.25023563019931,
+        "step_stdev_ms": 0.4240276915441817,
+        "throughput_seq_per_s": 71.26933814513718
+      },
+      {
+        "batch": 12,
+        "context_length": 8192,
+        "dispersion_ratio": 0.003108007390363254,
+        "drift_ratio": 0.9952724927870519,
+        "marginal_ms_per_seq": 12.361867527943105,
+        "marginal_throughput_per_seq": 0.7358043980876872,
+        "step_ms": 161.69770574197173,
+        "step_stdev_ms": 0.5025576644508309,
+        "throughput_seq_per_s": 74.21255573748793
+      },
+      {
+        "batch": 16,
+        "context_length": 8192,
+        "dispersion_ratio": 0.001974127415534026,
+        "drift_ratio": 0.9988692670224082,
+        "marginal_ms_per_seq": 12.38400157308206,
+        "marginal_throughput_per_seq": 0.3832323554081398,
+        "step_ms": 211.23371203429997,
+        "step_stdev_ms": 0.41700226201193125,
+        "throughput_seq_per_s": 75.74548515912049
+      },
+      {
+        "batch": 19,
+        "context_length": 8192,
+        "dispersion_ratio": 0.002102819067600803,
+        "drift_ratio": 0.9987671190283064,
+        "marginal_ms_per_seq": 12.704904967298111,
+        "marginal_throughput_per_seq": 0.15103688366609447,
+        "step_ms": 249.3484269361943,
+        "step_stdev_ms": 0.524334626637695,
+        "throughput_seq_per_s": 76.19859581011877
+      }
+    ]
+  },
+  "excluded_cells": {
+    "2048": [],
+    "8192": []
+  },
+  "grid_is_preregistered": false,
+  "grid_spec": "2048:8;2048:16;2048:32;2048:48;2048:64;2048:70;8192:4;8192:8;8192:12;8192:16;8192:19",
+  "kind": "kvcapacity_batch_sweep_analysis",
+  "note": "This is an exploratory sweep, not GATE A. It cannot pass or fail the pre-registered GATE A grid.",
+  "regime_boundary": {
+    "2048": null,
+    "8192": null
+  },
+  "rejected_cells": [],
+  "saturation": {
+    "2048": {
+      "first_marginal_throughput_per_seq": 5.19683548419064,
+      "last_marginal_throughput_per_seq": 0.2509427571656128,
+      "peak_batch": 70,
+      "peak_gain_over_smallest_batch": 1.4534560363411795,
+      "peak_is_largest_batch": true,
+      "peak_throughput_seq_per_s": 279.6486929354964,
+      "retained_fraction": 0.048287608474235716,
+      "saturating": true,
+      "scaling_efficiency": 0.1661092612961348,
+      "throughput_still_rising": true
+    },
+    "8192": {
+      "first_marginal_throughput_per_seq": 2.321168093359443,
+      "last_marginal_throughput_per_seq": 0.15103688366609447,
+      "peak_batch": 19,
+      "peak_gain_over_smallest_batch": 1.2293136513919718,
+      "peak_is_largest_batch": true,
+      "peak_throughput_seq_per_s": 76.19859581011877,
+      "retained_fraction": 0.06506934336129777,
+      "saturating": true,
+      "scaling_efficiency": 0.2588028739772572,
+      "throughput_still_rising": true
+    }
+  },
+  "source_payload_sha256": "f86b5172a14582be1f51e0de4c8388aecd81cc4f5a3942888da0d9879c22a556,f1e383406eb95a514d49e68bcc188e75ee300e8e46626a9b26ba2f80c39ba37c"
+}
