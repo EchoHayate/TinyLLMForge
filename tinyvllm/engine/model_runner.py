@@ -10983,8 +10983,13 @@ class ModelRunner:
             ) = key
             if (
                 graph_batch_size == int(batch_size)
-                and graph_block_table_width
-                >= int(block_table_width)
+                and (
+                    graph_block_table_width
+                    == int(block_table_width)
+                    if correctness_trace
+                    else graph_block_table_width
+                    >= int(block_table_width)
+                )
                 and graph_dtype
                 == str(self.config.hf_config.torch_dtype)
                 and graph_device == str(self.kv_cache.device)
@@ -10999,6 +11004,21 @@ class ModelRunner:
         if not compatible:
             return None
         return min(compatible, key=lambda item: item[0])[1]
+
+    def _cohort_capture_block_table_width(
+        self,
+        block_table_width: int,
+        *,
+        correctness_trace: bool,
+    ) -> int:
+        if correctness_trace:
+            return int(block_table_width)
+        ordinary_width = (
+            self.config.max_model_len
+            + self.block_size
+            - 1
+        ) // self.block_size
+        return max(int(block_table_width), ordinary_width)
 
     def exact_greedy_cohort_burst_capability(
         self,
@@ -11168,13 +11188,11 @@ class ModelRunner:
         )
         if compatible_graph is not None:
             return compatible_graph
-        block_table_width = max(
-            block_table_width,
-            (
-                self.config.max_model_len
-                + self.block_size
-                - 1
-            ) // self.block_size,
+        block_table_width = (
+            self._cohort_capture_block_table_width(
+                block_table_width,
+                correctness_trace=correctness_trace,
+            )
         )
         compatible_graph = self._compatible_cohort_graph(
             batch_size=batch_size,

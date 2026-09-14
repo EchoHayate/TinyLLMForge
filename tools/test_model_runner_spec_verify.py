@@ -6574,6 +6574,55 @@ def test_cohort_capture_reuses_compatible_wider_graph():
     ) is graph
 
 
+def test_cohort_capture_width_only_promotes_non_trace_graphs():
+    runner = make_runner()
+    runner.config.max_model_len = 32768
+
+    assert runner._cohort_capture_block_table_width(
+        2,
+        correctness_trace=False,
+    ) == 128
+    assert runner._cohort_capture_block_table_width(
+        2,
+        correctness_trace=True,
+    ) == 2
+
+
+def test_cohort_trace_capability_requires_exact_static_width():
+    runner = make_runner(exact_greedy_cohort_burst=True)
+    runner.config.hf_config = SimpleNamespace(
+        torch_dtype="bfloat16",
+    )
+    runner.kv_cache = SimpleNamespace(device="cuda:0")
+    graph = SimpleNamespace(
+        capability=lambda: {
+            "available": True,
+            "quarantined": False,
+            "graph_identity_sha256": "c" * 64,
+            "graph_generation": 5,
+            "batch_size": 1,
+            "block_table_width": 128,
+            "correctness_trace": True,
+        },
+    )
+    runner.exact_greedy_cohort_burst_graphs = {
+        runner._cohort_graph_key(
+            batch_size=1,
+            block_table_width=128,
+            correctness_trace=True,
+        ): graph,
+    }
+
+    capability = runner.exact_greedy_cohort_burst_capability(
+        batch_size=1,
+        block_table_width=2,
+        correctness_trace=True,
+    )
+
+    assert capability["available"] is False
+    assert capability["fallback_reason"] == "graph_unavailable"
+
+
 def test_cohort_capture_allocates_a_dedicated_cuda_graph_pool():
     source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
     tree = ast.parse(source)
