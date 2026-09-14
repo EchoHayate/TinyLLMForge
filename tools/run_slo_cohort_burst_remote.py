@@ -1389,6 +1389,23 @@ def _run_open_loop_case(
 
 
 def _release_qualification_engine(engine):
+    cleanup = engine.exit()
+    rank_exit_codes = (
+        cleanup.get("rank_exit_codes")
+        if isinstance(cleanup, dict)
+        else None
+    )
+    if (
+        not isinstance(cleanup, dict)
+        or cleanup.get("process_group_destroyed") is not True
+        or not isinstance(rank_exit_codes, list)
+        or not rank_exit_codes
+        or any(exit_code != 0 for exit_code in rank_exit_codes)
+        or cleanup.get("owned_children_remaining") != []
+    ):
+        raise RuntimeError(
+            "qualification engine cleanup receipt is incomplete"
+        )
     del engine
     return None
 

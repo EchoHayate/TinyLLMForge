@@ -15,6 +15,18 @@ import pytest
 from tools import run_slo_cohort_burst_remote as remote
 
 
+def _successful_cleanup_receipt() -> dict:
+    return {
+        "process_group_destroyed": True,
+        "rank_exit_codes": [0],
+        "owned_children_remaining": [],
+        "rank_cleanup_receipts": [{
+            "rank": 0,
+            "process_group_destroyed": True,
+        }],
+    }
+
+
 def _gpu(
     index: int,
     *,
@@ -609,6 +621,53 @@ def test_canonical_matrix_obeys_frozen_paired_arm_order() -> None:
     assert len(rows["execution_rows"]) == 4
 
 
+def test_release_qualification_engine_requires_proven_engine_exit() -> None:
+    calls = []
+
+    class Engine:
+        def exit(self):
+            calls.append("exit")
+            return _successful_cleanup_receipt()
+
+    assert remote._release_qualification_engine(Engine()) is None
+    assert calls == ["exit"]
+
+
+@pytest.mark.parametrize(
+    "receipt",
+    (
+        None,
+        {
+            "process_group_destroyed": False,
+            "rank_exit_codes": [0],
+            "owned_children_remaining": [],
+        },
+        {
+            "process_group_destroyed": True,
+            "rank_exit_codes": [],
+            "owned_children_remaining": [],
+        },
+        {
+            "process_group_destroyed": True,
+            "rank_exit_codes": [1],
+            "owned_children_remaining": [],
+        },
+        {
+            "process_group_destroyed": True,
+            "rank_exit_codes": [0],
+            "owned_children_remaining": [123],
+        },
+    ),
+)
+def test_release_qualification_engine_rejects_incomplete_cleanup(
+    receipt,
+) -> None:
+    engine = SimpleNamespace(exit=lambda: receipt)
+
+    with pytest.raises(RuntimeError, match="cleanup"):
+        remote._release_qualification_engine(engine)
+
+
 def test_evidence_tap_retains_k1_fallback_decision() -> None:
     tap = object.__new__(remote._CohortEvidenceTap)
     tap._lease = None
@@ -781,6 +840,7 @@ def test_canonical_matrix_drops_previous_engine_before_next_creation(
     def engine_factory(*, arm):
         assert all(reference() is None for reference in prior_engines)
         engine = Engine()
+        engine.exit = _successful_cleanup_receipt
         engine.scheduler = SimpleNamespace(
             exact_greedy_cohort_burst=False,
             exact_greedy_cohort_burst_widths=(),
@@ -851,6 +911,7 @@ def test_correctness_worker_builds_and_seals_source_bound_bundle(
     correctness_rows = [{"case": "correctness"}]
     engine = SimpleNamespace(
         scheduler=SimpleNamespace(eos=2),
+        exit=_successful_cleanup_receipt,
     )
     calls = []
     monkeypatch.setattr(
