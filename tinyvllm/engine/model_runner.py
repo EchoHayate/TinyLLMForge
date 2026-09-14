@@ -11015,6 +11015,7 @@ class ModelRunner:
                 "cohort graph identity is not registered"
             )
 
+    @torch.inference_mode()
     def capture_exact_greedy_cohort_burst_graph(
         self,
         batch_size: int,

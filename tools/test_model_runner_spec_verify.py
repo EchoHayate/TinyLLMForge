@@ -6514,6 +6514,33 @@ def test_cohort_capture_uses_one_packed_result_d2h_reader():
     assert "read_eos_observations=" not in source
 
 
+def test_cohort_capture_entrypoint_runs_under_inference_mode():
+    source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
+    tree = ast.parse(source)
+    model_runner_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "ModelRunner"
+    )
+    capture_method = next(
+        node
+        for node in model_runner_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name
+        == "capture_exact_greedy_cohort_burst_graph"
+    )
+
+    assert any(
+        isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and isinstance(decorator.func.value, ast.Name)
+        and decorator.func.value.id == "torch"
+        and decorator.func.attr == "inference_mode"
+        for decorator in capture_method.decorator_list
+    )
+
+
 def test_cohort_capture_resets_attention_context_in_finally():
     source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
     tree = ast.parse(source)
