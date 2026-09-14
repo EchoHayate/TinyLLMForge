@@ -130,6 +130,39 @@ def test_ssh_command_retries_transient_proxy_connection_failures():
     assert "ConnectTimeout=20" in command
 
 
+def test_ssh_command_supports_an_explicit_jump_proxy():
+    variable = "TINYLLMFORGE_SSH_JUMP_HOST"
+    previous = os.environ.get(variable)
+    os.environ[variable] = "jump-proxy-lf"
+    try:
+        command = remote._ssh_command("printf connected")
+    finally:
+        if previous is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous
+
+    assert "ProxyCommand=ssh -qW %h:%p jump-proxy-lf" in command
+
+
+def test_ssh_command_rejects_an_unsafe_jump_proxy():
+    variable = "TINYLLMFORGE_SSH_JUMP_HOST"
+    previous = os.environ.get(variable)
+    os.environ[variable] = "jump-proxy-lf; touch /tmp/unsafe"
+    try:
+        try:
+            remote._ssh_command("printf connected")
+        except ValueError as error:
+            assert "jump host" in str(error)
+        else:
+            raise AssertionError("unsafe SSH jump host was accepted")
+    finally:
+        if previous is None:
+            os.environ.pop(variable, None)
+        else:
+            os.environ[variable] = previous
+
+
 def test_run_tag_rejects_paths_and_noncanonical_text():
     for value in (
         "",

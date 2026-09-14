@@ -405,6 +405,12 @@ def _ssh_command(remote_command: str) -> list[str]:
         "TINYLLMFORGE_SSH_CONTROL_PATH",
         "none",
     )
+    jump_host = os.environ.get("TINYLLMFORGE_SSH_JUMP_HOST")
+    if (
+        jump_host is not None
+        and re.fullmatch(r"[A-Za-z0-9.-]+", jump_host) is None
+    ):
+        raise ValueError("SSH jump host is invalid")
     command = [
         "ssh",
         "-o",
@@ -420,6 +426,11 @@ def _ssh_command(remote_command: str) -> list[str]:
         "-o",
         f"ControlPath={control_path}",
     ]
+    if jump_host is not None:
+        command.extend((
+            "-o",
+            f"ProxyCommand=ssh -qW %h:%p {jump_host}",
+        ))
     if control_path != "none":
         command.extend(("-o", "ControlPersist=600"))
     return command + [
