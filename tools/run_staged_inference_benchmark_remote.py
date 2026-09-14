@@ -408,6 +408,10 @@ def _ssh_command(remote_command: str) -> list[str]:
     command = [
         "ssh",
         "-o",
+        "ConnectionAttempts=5",
+        "-o",
+        "ConnectTimeout=20",
+        "-o",
         (
             "ControlMaster=auto"
             if control_path != "none"

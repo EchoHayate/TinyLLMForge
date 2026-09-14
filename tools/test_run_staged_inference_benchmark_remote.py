@@ -123,6 +123,13 @@ def test_ssh_command_supports_an_explicit_control_socket():
     assert "ControlPath=none" not in command
 
 
+def test_ssh_command_retries_transient_proxy_connection_failures():
+    command = remote._ssh_command("printf connected")
+
+    assert "ConnectionAttempts=5" in command
+    assert "ConnectTimeout=20" in command
+
+
 def test_run_tag_rejects_paths_and_noncanonical_text():
     for value in (
         "",
