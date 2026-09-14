@@ -128,6 +128,7 @@ class Config:
     # 动态稀疏 attention（Quest，page-level top-k）相关配置
     quest_top_k_blocks: int = -1                        # decode 时每个 query 选择的 block 数，-1 表示关闭 Quest
     quest_min_seq_len: int = 1024                       # 序列长度小于此值时退化为 full attention
+    quest_min_saved_blocks: int = 0                     # >0 时仅在 batch 累计避免反量化 block 达到门槛后启用
 
     # KV-Cartridge v0：无训练、read-side KV block 压缩。>0 表示 decode 阶段只保留这么多历史 block。
     kv_cartridge_blocks: int = 0                        # 0 表示关闭；>0 时启用 uniform cartridge block table
@@ -1002,6 +1003,14 @@ class Config:
         assert self.kv_cartridge_blocks >= 0
         assert self.kv_cartridge_min_seq_len >= 0
         assert self.kv_cartridge_mode == "uniform", "KV-Cartridge v0 仅支持 uniform 模式"
+        if (
+            isinstance(self.quest_min_saved_blocks, bool)
+            or not isinstance(self.quest_min_saved_blocks, int)
+            or self.quest_min_saved_blocks < 0
+        ):
+            raise ValueError(
+                "quest_min_saved_blocks must be a non-negative integer"
+            )
         assert not (self.kv_cartridge_blocks > 0 and self.quest_top_k_blocks > 0), \
             "KV-Cartridge v0 和 Quest 都是 decode 稀疏策略，请分开评测"
         assert self.am_compact_blocks >= 0
