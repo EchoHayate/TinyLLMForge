@@ -238,9 +238,152 @@ def summarise(samples):
 # ---------------------------------------------------------------------------
 
 
+def multi_sequence_graph_kwargs(batches):
+    """Config overrides that let decode batches above 1 replay a captured graph.
+
+    By default `model_runner.py:12557` fails every decode step with more than one
+    sequence closed to eager, because the legacy captured graphs are only
+    correctness-validated for a single sequence. Every earlier GATE A run
+    therefore measured an uncaptured path for B >= 2 and paid a per-step Python
+    cost that a production engine does not, which is why the fitted constant came
+    out near 39.8 ms against a weight-bandwidth floor closer to 13 ms.
+
+    The dynamic multi-sequence path is opt-in and dispatches only for batches on
+    an explicit allowlist, so the allowlist has to cover the grid or the run
+    silently falls back to the same eager path it is meant to replace.
+    """
+    wanted = tuple(sorted({int(batch) for batch in batches if int(batch) > 1}))
+    if not wanted:
+        return {}
+    return {
+        "multi_sequence_cuda_graphs": True,
+        "multi_sequence_cuda_graph_batch_allowlist": wanted,
+        "multi_sequence_cuda_graph_max_entries": max(8, len(wanted) * 2),
+        # The capture budgets below are a serving-safety policy, not a hardware
+        # fact, and at their defaults they silently decide the measurement. The
+        # smoke run captured batch 4 and batch 8 but rejected batch 2 with
+        # `single_capture_budget`, because the first capture in a process also
+        # pays torch.compile for the shape and overran the 2 s default. That left
+        # batch 2 on the eager path at 31.4 ms next to batch 4 at 4.8 ms, which
+        # would have read as a batch-scaling cliff rather than as a budget.
+        # One-time capture cost is not what GATE A is measuring, so it is given
+        # room and recorded.
+        "multi_sequence_cuda_graph_max_single_capture_ns": 120_000_000_000,
+        "multi_sequence_cuda_graph_max_total_capture_ns": 900_000_000_000,
+        "multi_sequence_cuda_graph_max_static_bytes": 1024 * 1024 * 1024,
+        "multi_sequence_cuda_graph_max_reserved_bytes": 4 * 1024 * 1024 * 1024,
+    }
+
+
+def resolve_model_runner(engine):
+    """Find the ModelRunner, which is the only object that knows what really ran."""
+    for path in ("model_runner", "llm_engine.model_runner", "engine.model_runner"):
+        target = engine
+        try:
+            for attribute in path.split("."):
+                target = getattr(target, attribute)
+        except AttributeError:
+            continue
+        if target is not None:
+            return target
+    return None
+
+
+def dispatch_observation(engine):
+    """Read the engine's own account of how the last step was dispatched.
+
+    Returns None when the engine does not publish the event, which is itself the
+    finding: without it a run cannot claim to have measured the graph path.
+    """
+    runner = resolve_model_runner(engine)
+    if runner is None:
+        return None
+    reader = getattr(runner, "cuda_graph_dispatch_observation", None)
+    if not callable(reader):
+        return None
+    try:
+        return reader()
+    except Exception:  # noqa: BLE001 - evidence, never control flow
+        return None
+
+
+def dispatch_label(event):
+    """Collapse a dispatch event into one countable label.
+
+    `dispatch` alone is not enough. A step that ran eager because the batch was
+    not allowlisted and a step that ran eager because the graph was still being
+    observed are the same word and different facts, and only the second one
+    disappears once the cache warms.
+    """
+    if event is None:
+        return "unobserved"
+    dispatch = str(event.get("dispatch") or "unknown")
+    if dispatch == "graph":
+        return "graph"
+    reason = event.get("fallback_reason")
+    cache_state = event.get("cache_state")
+    suffix = reason or cache_state or "unspecified"
+    return f"eager:{suffix}"
+
+
+class DispatchTracker:
+    """Label each decode step by how the engine dispatched it.
+
+    The engine keeps only the most recent dispatch event, and the legacy batch-1
+    graph path does not publish one at all. Reading the field blindly therefore
+    reports a stale label as if it described the current step, which is the same
+    class of error this whole rerun exists to correct: the batch-1 cell of the
+    first msgraph smoke run came back tagged `eager:unsupported_mode`, inherited
+    from a prefill step, while it was in fact replaying the batch-1 graph. The
+    event carries a monotonically increasing `step_id`, so an unchanged id means
+    nothing was published for this step and the label must say so.
+    """
+
+    def __init__(self):
+        self.last_step_id = None
+
+    def observe(self, engine):
+        event = dispatch_observation(engine)
+        step_id = None if event is None else event.get("step_id")
+        if event is None:
+            return "unobserved"
+        if step_id is not None and step_id == self.last_step_id:
+            return "unpublished"
+        self.last_step_id = step_id
+        return dispatch_label(event)
+
+
+def summarise_dispatch(labels):
+    """Turn per-step dispatch labels into the audit that validates the run.
+
+    The reason this worker is being rerun at all is that the previous GATE A
+    measured an eager fallback while believing it measured the serving path. The
+    replacement therefore has to be able to fail the same way out loud: if
+    `graph_share` is not close to 1 for a cell above batch 1, the cell measured
+    the old path again and its constant means the same thing it meant before.
+    """
+    if not labels:
+        return None
+    counts = {}
+    for label in labels:
+        counts[label] = counts.get(label, 0) + 1
+    graph = counts.get("graph", 0)
+    return {
+        "counts": dict(sorted(counts.items())),
+        "steps": len(labels),
+        "graph_steps": graph,
+        "graph_share": graph / len(labels),
+        "all_graph": graph == len(labels),
+    }
+
+
 def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utilization,
-                 max_num_seqs):
+                 max_num_seqs, multi_sequence_graph_batches=None):
     from tinyvllm import LLM
+
+    extra = {}
+    if multi_sequence_graph_batches:
+        extra = multi_sequence_graph_kwargs(multi_sequence_graph_batches)
 
     engine = LLM(
         model=model_path,
@@ -250,6 +393,7 @@ def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utiliza
         max_num_seqs=max_num_seqs,
         gpu_memory_utilization=gpu_memory_utilization,
         tensor_parallel_size=1,
+        **extra,
     )
     return engine
 
@@ -357,6 +501,9 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
     samples = []
     trace = []
     observed_batches = []
+    measured_dispatch = []
+    all_decode_dispatch = []
+    dispatch_tracker = DispatchTracker()
     step_index = 0
     guard = (warmup_steps + measured_steps + 8) * max(1, batch) + 64
 
@@ -373,6 +520,8 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
             continue
         observed = -num_tokens
         observed_batches.append(observed)
+        step_dispatch = dispatch_tracker.observe(engine)
+        all_decode_dispatch.append(step_dispatch)
         decode_steps_by_batch[observed] = decode_steps_by_batch.get(observed, 0) + 1
         if observed != batch:
             continue
@@ -382,6 +531,7 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
             continue
         if len(samples) < measured_steps:
             samples.append(elapsed_ms)
+            measured_dispatch.append(step_dispatch)
 
     return {
         "context_length": context_length,
@@ -402,6 +552,8 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
         "target_batch_step_count": decode_steps_by_batch.get(batch, 0),
         "step": summarise(samples),
         "drift": measurement_drift(samples),
+        "dispatch_measured": summarise_dispatch(measured_dispatch),
+        "dispatch_all_decode": summarise_dispatch(all_decode_dispatch),
         "target_batch_step_trace_ms": trace,
         "warmup_steps": warmup_steps,
         "measured": bool(samples),
@@ -410,7 +562,8 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
 
 
 def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
-        warmup_steps, measured_steps, grid=CONTEXT_BATCH_GRID):
+        warmup_steps, measured_steps, grid=CONTEXT_BATCH_GRID,
+        multi_sequence_cuda_graphs=False):
     """Measure every feasible cell, one engine per context length.
 
     Context lengths are attempted in ascending order and a group that fails is
@@ -432,6 +585,9 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
                 enforce_eager=enforce_eager,
                 gpu_memory_utilization=gpu_memory_utilization,
                 max_num_seqs=max(8, max(batches) + 4),
+                multi_sequence_graph_batches=(
+                    batches if multi_sequence_cuda_graphs else None
+                ),
             )
         except Exception as error:  # noqa: BLE001 - recorded, not swallowed
             reason = f"engine construction failed: {type(error).__name__}: {error}"
@@ -518,7 +674,7 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
 
 def build_payload(rows, engines, *, model_path, enforce_eager, seed,
                   gpu_memory_utilization, warmup_steps, measured_steps,
-                  grid=CONTEXT_BATCH_GRID):
+                  grid=CONTEXT_BATCH_GRID, multi_sequence_cuda_graphs=False):
     cells = enumerate_cells(grid)
     preregistered = tuple(grid) == CONTEXT_BATCH_GRID
     payload = {
@@ -530,6 +686,7 @@ def build_payload(rows, engines, *, model_path, enforce_eager, seed,
         "configuration": {
             "model_path": model_path,
             "enforce_eager": enforce_eager,
+            "multi_sequence_cuda_graphs": multi_sequence_cuda_graphs,
             "gpu_memory_utilization": gpu_memory_utilization,
             "seed": seed,
             "warmup_steps": warmup_steps,
@@ -563,6 +720,15 @@ def parse_args(argv=None):
     parser.add_argument("--out", required=True)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.85)
     parser.add_argument("--enforce-eager", action="store_true")
+    parser.add_argument(
+        "--multi-sequence-cuda-graphs",
+        action="store_true",
+        help=(
+            "let decode batches above 1 replay a captured graph instead of "
+            "falling back to eager; measures the constant a production engine "
+            "would pay rather than this engine's uncaptured path"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--warmup-steps", type=int, default=WARMUP_STEPS)
     parser.add_argument("--measured-steps", type=int, default=MEASURED_STEPS)
@@ -594,6 +760,7 @@ def main(argv=None):
         warmup_steps=args.warmup_steps,
         measured_steps=args.measured_steps,
         grid=args.grid,
+        multi_sequence_cuda_graphs=args.multi_sequence_cuda_graphs,
     )
     payload = build_payload(
         rows,
@@ -605,6 +772,7 @@ def main(argv=None):
         warmup_steps=args.warmup_steps,
         measured_steps=args.measured_steps,
         grid=args.grid,
+        multi_sequence_cuda_graphs=args.multi_sequence_cuda_graphs,
     )
     directory = os.path.dirname(os.path.abspath(args.out))
     if directory:

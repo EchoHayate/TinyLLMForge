@@ -1388,3 +1388,147 @@ def test_grid_contexts_are_block_aligned():
 def test_preregistered_lists_stay_in_step_after_the_context_change():
     assert set(verdict.PREREGISTERED_CELLS) == set(worker.enumerate_cells())
     assert 40448 in {context for context, _batch in worker.enumerate_cells()}
+
+
+# ---------------------------------------------------------------------------
+# Dispatch provenance. The first GATE A run measured an eager fallback while
+# believing it measured the serving path, so the rerun has to be able to prove
+# which path each step took, and to say so when it cannot.
+# ---------------------------------------------------------------------------
+
+
+class _Runner:
+    def __init__(self, events):
+        self._events = list(events)
+
+    def cuda_graph_dispatch_observation(self):
+        return self._events.pop(0) if self._events else None
+
+
+class _Engine:
+    def __init__(self, runner):
+        self.model_runner = runner
+
+
+def test_multi_sequence_graph_kwargs_allowlists_every_batch_above_one():
+    """A batch missing from the allowlist silently runs eager, which is the bug."""
+    kwargs = worker.multi_sequence_graph_kwargs([1, 2, 4, 8, 16, 32])
+    assert kwargs["multi_sequence_cuda_graphs"] is True
+    assert kwargs["multi_sequence_cuda_graph_batch_allowlist"] == (2, 4, 8, 16, 32)
+    assert kwargs["multi_sequence_cuda_graph_max_entries"] >= 5
+
+
+def test_multi_sequence_graph_kwargs_is_empty_when_only_batch_one_is_measured():
+    assert worker.multi_sequence_graph_kwargs([1]) == {}
+
+
+def test_worker_defaults_keep_the_multi_sequence_graph_path_off():
+    """The flag is opt-in, so an unflagged run must remain comparable to the old one."""
+    args = worker.parse_args(["--model-path", "m", "--out", "o"])
+    assert args.multi_sequence_cuda_graphs is False
+
+
+def test_payload_records_whether_the_graph_path_was_requested():
+    payload = worker.build_payload(
+        [], [], model_path="m", enforce_eager=False, seed=1,
+        gpu_memory_utilization=0.85, warmup_steps=1, measured_steps=1,
+        multi_sequence_cuda_graphs=True,
+    )
+    assert payload["configuration"]["multi_sequence_cuda_graphs"] is True
+
+
+def test_dispatch_label_separates_eager_reasons():
+    assert worker.dispatch_label({"dispatch": "graph"}) == "graph"
+    assert worker.dispatch_label(
+        {"dispatch": "eager", "fallback_reason": "batch_not_allowlisted"}
+    ) == "eager:batch_not_allowlisted"
+    assert worker.dispatch_label(
+        {"dispatch": "eager", "fallback_reason": None, "cache_state": "observing"}
+    ) == "eager:observing"
+
+
+def test_dispatch_label_marks_an_engine_that_publishes_nothing():
+    """Silence is not evidence of graph replay; it must be recorded as unobserved."""
+    assert worker.dispatch_label(None) == "unobserved"
+
+
+def test_dispatch_observation_survives_an_engine_without_the_hook():
+    assert worker.dispatch_observation(object()) is None
+
+
+def test_dispatch_observation_reads_through_the_model_runner():
+    engine = _Engine(_Runner([{"dispatch": "graph"}]))
+    assert worker.dispatch_observation(engine) == {"dispatch": "graph"}
+
+
+def test_summarise_dispatch_flags_a_window_that_was_not_all_graph():
+    summary = worker.summarise_dispatch(["graph"] * 20 + ["eager:observing"] * 4)
+    assert summary["steps"] == 24
+    assert summary["graph_steps"] == 20
+    assert summary["all_graph"] is False
+    assert summary["graph_share"] == pytest.approx(20 / 24)
+
+
+def test_summarise_dispatch_confirms_a_clean_graph_window():
+    summary = worker.summarise_dispatch(["graph"] * 24)
+    assert summary["all_graph"] is True
+    assert summary["graph_share"] == 1.0
+
+
+def test_summarise_dispatch_reports_a_fully_eager_window_as_such():
+    """This is the shape the previous run would have produced had it been audited."""
+    summary = worker.summarise_dispatch(["eager:feature_disabled"] * 24)
+    assert summary["graph_steps"] == 0
+    assert summary["graph_share"] == 0.0
+    assert summary["counts"] == {"eager:feature_disabled": 24}
+
+
+def test_summarise_dispatch_is_none_without_steps():
+    assert worker.summarise_dispatch([]) is None
+
+
+def test_dispatch_tracker_marks_a_step_that_published_nothing():
+    """A stale event must not be read as evidence about the current step.
+
+    The batch-1 cell of the first msgraph smoke run returned
+    `eager:unsupported_mode` left over from a prefill step while it was actually
+    replaying the batch-1 graph. A label that lies in the safe direction is still
+    a label that can validate the wrong run.
+    """
+    engine = _Engine(
+        _Runner(
+            [
+                {"step_id": 7, "dispatch": "graph"},
+                {"step_id": 7, "dispatch": "graph"},
+                {"step_id": 8, "dispatch": "eager", "fallback_reason": "capture_failed"},
+            ]
+        )
+    )
+    tracker = worker.DispatchTracker()
+    assert tracker.observe(engine) == "graph"
+    assert tracker.observe(engine) == "unpublished"
+    assert tracker.observe(engine) == "eager:capture_failed"
+
+
+def test_dispatch_tracker_reports_an_engine_that_publishes_nothing_at_all():
+    tracker = worker.DispatchTracker()
+    assert tracker.observe(object()) == "unobserved"
+
+
+def test_summarise_dispatch_does_not_count_unpublished_steps_as_graph():
+    summary = worker.summarise_dispatch(["graph"] * 4 + ["unpublished"] * 8)
+    assert summary["graph_share"] == pytest.approx(4 / 12)
+    assert summary["all_graph"] is False
+
+
+def test_multi_sequence_graph_kwargs_lifts_the_one_time_capture_budgets():
+    """The default 2 s single-capture budget rejected batch 2 in the smoke run.
+
+    The first capture in a process also pays torch.compile for the shape, so at
+    the default the cheapest measured batch is the one that gets left on the
+    eager path, which reads as a batch-scaling cliff instead of as a policy.
+    """
+    kwargs = worker.multi_sequence_graph_kwargs([2, 4, 8, 16, 32])
+    assert kwargs["multi_sequence_cuda_graph_max_single_capture_ns"] > 2_000_000_000
+    assert kwargs["multi_sequence_cuda_graph_max_total_capture_ns"] > 5_000_000_000
+    assert kwargs["multi_sequence_cuda_graph_max_reserved_bytes"] >= 512 * 1024 * 1024

@@ -278,13 +278,36 @@ else
   RUN_MEASURED_STEPS="${MEASURED_STEPS}"
 fi
 
-# Both execution paths are measured. Decode graphs are captured for batches
-# [1,2,4,8,...] but not for every batch, and torch.compile recompiles per shape,
-# so the default path can be discontinuous in batch for reasons unrelated to KV
-# bytes. The eager path is uniform across batches and is the one the affine model
-# should be fitted against; the default path is what serving actually runs. A
-# disagreement between them is a finding, not noise.
-if [[ "${MODE}" == smoke ]]; then
+# Three execution paths exist and they measure three different engines.
+#
+#   eager    every decode step runs uncaptured. Uniform across batches, which is
+#            why the affine model was fitted against it.
+#   graph    the default path. Decode graphs are captured for [1,2,4,8,...], but
+#            model_runner fails closed to eager for any decode batch above 1, so
+#            in practice only batch 1 replays and everything else is the eager
+#            path wearing the graph label.
+#   msgraph  the opt-in multi-sequence graph path, which is the only setting
+#            under which a decode batch above 1 can replay a captured graph.
+#
+# That distinction is the whole reason for this rerun. The first GATE A fitted
+# c0 = 39.789 ms while a weight-bandwidth roofline for Qwen3-8B bf16 on an A100
+# sits near 8.5-11 ms and the batch-1 graph measured 12.98 ms, so roughly 27 ms of
+# the constant was this engine's uncaptured multi-sequence path rather than
+# hardware. A gate that kills a research direction on that constant is measuring
+# the harness. Running eager and msgraph in the same session reproduces the old
+# number and the corrected one side by side.
+if [[ -n "${EXECUTION_PATHS_OVERRIDE:-}" ]]; then
+  read -r -a EXECUTION_PATHS <<< "${EXECUTION_PATHS_OVERRIDE}"
+  for candidate in "${EXECUTION_PATHS[@]}"; do
+    case "${candidate}" in
+      eager|graph|msgraph) ;;
+      *)
+        echo "unsupported execution path: ${candidate}" >&2
+        exit 2
+        ;;
+    esac
+  done
+elif [[ "${MODE}" == smoke ]]; then
   EXECUTION_PATHS=("eager")
 else
   EXECUTION_PATHS=("eager" "graph")
@@ -308,6 +331,13 @@ for path_mode in "${EXECUTION_PATHS[@]}"; do
     )
     if [[ "${path_mode}" == eager ]]; then
       REMOTE_ARGS+=(--enforce-eager)
+    fi
+    if [[ "${path_mode}" == msgraph ]]; then
+      # Without this the run is indistinguishable from the graph path: config
+      # defaults leave multi_sequence_cuda_graphs off, and every decode batch
+      # above 1 falls back to eager. The worker records per-step dispatch so an
+      # artifact that fell back anyway cannot be read as a graph measurement.
+      REMOTE_ARGS+=(--multi-sequence-cuda-graphs)
     fi
     printf -v REMOTE_ARGS_Q '%q ' "${REMOTE_ARGS[@]}"
     echo "=== ${tag} ===" | tee -a "${LOCAL_OUT}/runner.log"

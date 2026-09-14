@@ -8004,6 +8004,33 @@ class ModelRunner:
                     flash_attn_num_splits=identity.effective_num_splits,
                     force_attention_backend=True,
                 )
+                if execution_protocol == "forward_v1":
+                    # Warm the hot path *outside* the capture region before
+                    # capturing it. torch.compile guards on tensor identity and
+                    # shape, so the first forward through these freshly
+                    # allocated static buffers recompiles, and dynamo reads the
+                    # CUDA RNG state while compiling, which is illegal during
+                    # capture: "Cannot call CUDAGeneratorImpl::current_seed
+                    # during CUDA graph capture".
+                    #
+                    # capture_cudagraph() already runs this warmup forward for
+                    # the legacy graphs. This path only recorded the receipt for
+                    # it, so on this box every multi-sequence capture failed at
+                    # its first attempt, the cache rejected the identity, and the
+                    # engine served every decode batch above 1 eager while
+                    # reporting that the feature was enabled. The KV capacity
+                    # GATE A fitted its 39.8 ms constant on that path.
+                    #
+                    # The forward writes KV into the scratch slots, which are
+                    # snapshotted above and restored in the finally block below,
+                    # so it cannot disturb a live sequence.
+                    tensors["outputs"].copy_(
+                        self.model(
+                            tensors["input_ids"],
+                            tensors["positions"],
+                        )
+                    )
+                    torch.cuda.synchronize()
                 capture_receipt.record(
                     "hot_path_eager_prerequisite"
                 )
