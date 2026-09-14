@@ -933,7 +933,9 @@ def _run_correctness_case(
     _set_cohort_arm(
         engine,
         enabled=enabled,
-        widths=(burst_width,),
+        widths=(1, 2, 4, 8)[
+            :(1, 2, 4, 8).index(burst_width) + 1
+        ],
     )
     if enabled and burst_width > 1:
         engine.scheduler.exact_greedy_cohort_burst_target_itl_ns = (

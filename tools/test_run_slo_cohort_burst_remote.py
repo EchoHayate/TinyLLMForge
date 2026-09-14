@@ -903,6 +903,35 @@ def test_correctness_case_collects_ordered_k1_logits_and_tokens() -> None:
     assert result["pending_leases_after_case"] == 0
 
 
+def test_correctness_candidate_width_contract_retains_k1(
+    monkeypatch,
+) -> None:
+    engine = _CorrectnessEngine()
+    captured_widths = []
+
+    class StopAfterArmConfiguration(Exception):
+        pass
+
+    def capture_arm(_engine, *, enabled, widths):
+        assert enabled is True
+        captured_widths.append(tuple(widths))
+        raise StopAfterArmConfiguration
+
+    monkeypatch.setattr(remote, "_set_cohort_arm", capture_arm)
+
+    with pytest.raises(StopAfterArmConfiguration):
+        remote._run_correctness_case(
+            engine=engine,
+            sampling_params_factory=lambda **kwargs: kwargs,
+            source_commit="a" * 40,
+            batch_size=2,
+            burst_width=4,
+            arm="candidate",
+        )
+
+    assert captured_widths == [(1, 2, 4)]
+
+
 class _OpenLoopEngine:
     def __init__(self):
         self.scheduler = SimpleNamespace(
