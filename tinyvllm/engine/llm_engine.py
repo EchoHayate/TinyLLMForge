@@ -4272,9 +4272,11 @@ class LLMEngine:
         )
         if not eligible:
             return False, None, 0
-        block_table_width = max(
-            len(seq.block_table) for seq in seqs
-        )
+        block_table_width = (
+            int(config.max_model_len)
+            + int(self.model_runner.block_size)
+            - 1
+        ) // int(self.model_runner.block_size)
         capability = (
             self.model_runner
             .exact_greedy_cohort_burst_capability(

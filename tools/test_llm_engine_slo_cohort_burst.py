@@ -240,16 +240,20 @@ class _Scheduler:
 class _ModelRunner:
     world_size = 1
     rank = 0
+    block_size = 16
 
     def __init__(self, outcome):
         self.config = SimpleNamespace(
             exact_greedy_cohort_burst=True,
+            max_model_len=2_048,
         )
         self.outcome = outcome
         self.replay_count = 0
         self.ordinary_forward_count = 0
+        self.capability_calls = []
 
     def exact_greedy_cohort_burst_capability(self, **kwargs):
+        self.capability_calls.append(dict(kwargs))
         return {
             "available": True,
             "quarantined": False,
@@ -415,6 +419,24 @@ def test_pre_replay_fallback_cancels_and_returns_k1_eligibility():
     )
     assert engine.scheduler.cancel_count == 1
     assert engine.scheduler.pending_cohort_lease is None
+
+
+def test_engine_queries_the_fixed_captured_block_table_width():
+    seq = _Sequence(7)
+    engine = _Engine(_result(((31, 32),)), decision_width=1)
+
+    committed, step_end_ns, committed_tokens = _run(engine, (seq,))
+
+    assert (committed, step_end_ns, committed_tokens) == (
+        False,
+        None,
+        0,
+    )
+    assert engine.model_runner.capability_calls == [{
+        "batch_size": 1,
+        "block_table_width": 128,
+        "correctness_trace": False,
+    }]
 
 
 def test_step_calls_cohort_orchestration_only_on_non_speculative_path():
