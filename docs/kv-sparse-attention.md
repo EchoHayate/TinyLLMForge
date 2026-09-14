@@ -13,6 +13,55 @@
 
 ---
 
+## 2026-09-14：KV8 + Quest 自适应摊销策略正式 GO
+
+固定开启 Quest top-16 的旧结论仍是 `NO_GO_KV8_QUEST`：它在 B=4
+会被 selector/launch 固定成本拖慢。新的策略不是推翻旧证据，而是在每个
+decode batch 上先计算可避免的 KV8 反量化 block 数：
+
+```python
+saved_blocks = sum(max(0, seq.num_blocks - 16) for seq in seqs)
+activate_quest = saved_blocks >= 128
+```
+
+冻结配置是 `quest_top_k_blocks=16`、`quest_min_seq_len=512`、
+`quest_min_saved_blocks=128`。B=4/6 回退到 KV8 full，B>=8 才开启
+Quest；threshold=0 保持旧固定 Quest 行为。默认仍关闭。
+
+Qwen3-8B / A100 80GB PCIe / TP1 / eager / context 8192 / 640 KV blocks
+的 source-bound 七点 gate：
+
+| B | KV8 ms | 固定 Quest ms | 自适应 ms | 自适应相对 KV8 | 自适应相对固定 Quest |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 66.060 | 82.802 | 67.054 | `+1.505%` | `-19.019%` |
+| 6 | 89.942 | 83.230 | 90.904 | `+1.070%` | `+9.220%` |
+| 8 | 114.480 | 86.366 | 83.939 | `-26.678%` | `-2.811%` |
+| 10 | 139.320 | 86.521 | 85.971 | `-38.292%` | `-0.636%` |
+| 12 | 165.244 | 97.399 | 98.050 | `-40.663%` | `+0.669%` |
+| 16 | 215.172 | 122.898 | 123.538 | `-42.586%` | `+0.521%` |
+| 19 | 252.341 | 142.405 | 142.566 | `-43.503%` | `+0.113%` |
+
+B19 回收 KV8 相对 bf16 的额外延迟 `54.874%`。B>=8 相对固定 Quest
+的最坏回归只有 `0.669%`，低于冻结的 3% gate。固定 needle workload
+中 KV8 与 adaptive 均为 25/25，overall 和每个 depth 都是 `0.0 pp`
+差异；质量 workload 吞吐从 `22.83` 到 `25.60 tok/s`（诊断性
+`+12.16%`）。
+
+最终分类：
+
+```text
+GO_KV8_QUEST_AMORTIZATION_POLICY
+```
+
+代价与边界：新增 host-side policy、事件 telemetry 和配置/审计复杂度；
+启用后的 Quest selector/launch 成本仍存在。证据只覆盖上述 Qwen3-8B、
+A100、TP1、eager、合成 8192 context 和固定 needle prompts，不支持
+graph、TP2/TP4、其他模型、采样、真实服务 P99 或生产默认开启的结论。
+
+紧凑证据位于
+`artifacts/kvcapacity_kv8_quest_adaptive/20260914-75b743a3-r1/`；
+原始 run 仅保留在未跟踪实验目录和远端挂载盘。
+
 ## 0. 为什么做这条路线
 
 之前完成的工作（int8/int4 weight-only 量化、cpu-offload、fused GEMM）都集中在 **算子 + 权重** 层面。

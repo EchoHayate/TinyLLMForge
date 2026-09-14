@@ -1,0 +1,117 @@
+{
+  "claim_boundary": "Qwen3-8B, A100 80GB PCIe, TP1, eager decode, 8192-token synthetic contexts, 640 KV blocks, fixed needle prompts; default remains disabled",
+  "classification": "GO_KV8_QUEST_AMORTIZATION_POLICY",
+  "identity_failures": [],
+  "kind": "kvcapacity_kv8_quest_adaptive_gate",
+  "performance_cells": [
+    {
+      "adaptive_step_ms": 67.05433432944119,
+      "adaptive_vs_fixed_ratio": 0.8098116878805937,
+      "adaptive_vs_kv8_ratio": 1.0150495215583328,
+      "batch": 4,
+      "bf16_step_ms": 43.80183480679989,
+      "context_length": 8192,
+      "fixed_quest_step_ms": 82.80237903818488,
+      "kv8_step_ms": 66.06016051955521
+    },
+    {
+      "adaptive_step_ms": 90.90399765409529,
+      "adaptive_vs_fixed_ratio": 1.0921998646681548,
+      "adaptive_vs_kv8_ratio": 1.0107001996524687,
+      "batch": 6,
+      "bf16_step_ms": 44.26248325034976,
+      "context_length": 8192,
+      "fixed_quest_step_ms": 83.2301857881248,
+      "kv8_step_ms": 89.94160452857614
+    },
+    {
+      "adaptive_step_ms": 83.93862401135266,
+      "adaptive_vs_fixed_ratio": 0.9718938112295538,
+      "adaptive_vs_kv8_ratio": 0.7332195864333934,
+      "batch": 8,
+      "bf16_step_ms": 45.395479537546635,
+      "context_length": 8192,
+      "fixed_quest_step_ms": 86.36604435741901,
+      "kv8_step_ms": 114.47951686568558
+    },
+    {
+      "adaptive_step_ms": 85.97121085040271,
+      "adaptive_vs_fixed_ratio": 0.9936415783013666,
+      "adaptive_vs_kv8_ratio": 0.6170781874204884,
+      "batch": 10,
+      "bf16_step_ms": 47.0873168669641,
+      "context_length": 8192,
+      "fixed_quest_step_ms": 86.52135008014739,
+      "kv8_step_ms": 139.31980193592608
+    },
+    {
+      "adaptive_step_ms": 98.05017802864313,
+      "adaptive_vs_fixed_ratio": 1.0066865474217703,
+      "adaptive_vs_kv8_ratio": 0.5933669844909202,
+      "batch": 12,
+      "bf16_step_ms": 48.98903635330498,
+      "context_length": 8192,
+      "fixed_quest_step_ms": 97.39891556091607,
+      "kv8_step_ms": 165.24373716674745
+    },
+    {
+      "adaptive_step_ms": 123.5382433515042,
+      "adaptive_vs_fixed_ratio": 1.0052132922334256,
+      "adaptive_vs_kv8_ratio": 0.5741384439319179,
+      "batch": 16,
+      "bf16_step_ms": 51.6940550878644,
+      "context_length": 8192,
+      "fixed_quest_step_ms": 122.89754254743457,
+      "kv8_step_ms": 215.17152292653918
+    },
+    {
+      "adaptive_step_ms": 142.5657595973462,
+      "adaptive_vs_fixed_ratio": 1.001129847319179,
+      "adaptive_vs_kv8_ratio": 0.5649720536297587,
+      "batch": 19,
+      "bf16_step_ms": 52.29072947986424,
+      "context_length": 8192,
+      "fixed_quest_step_ms": 142.40486384369433,
+      "kv8_step_ms": 252.3412595037371
+    }
+  ],
+  "quality": {
+    "adaptive_overall_accuracy": 1.0,
+    "adaptive_vs_full_delta_pp": 0.0,
+    "kv8_full_overall_accuracy": 1.0,
+    "per_depth": [
+      {
+        "adaptive_accuracy": 1.0,
+        "delta_pp": 0.0,
+        "depth": 0.0,
+        "kv8_full_accuracy": 1.0
+      },
+      {
+        "adaptive_accuracy": 1.0,
+        "delta_pp": 0.0,
+        "depth": 0.25,
+        "kv8_full_accuracy": 1.0
+      },
+      {
+        "adaptive_accuracy": 1.0,
+        "delta_pp": 0.0,
+        "depth": 0.5,
+        "kv8_full_accuracy": 1.0
+      },
+      {
+        "adaptive_accuracy": 1.0,
+        "delta_pp": 0.0,
+        "depth": 0.75,
+        "kv8_full_accuracy": 1.0
+      },
+      {
+        "adaptive_accuracy": 1.0,
+        "delta_pp": 0.0,
+        "depth": 1.0,
+        "kv8_full_accuracy": 1.0
+      }
+    ]
+  },
+  "threshold_failures": [],
+  "wall_excess_latency_recovery": 0.5487388605933258
+}

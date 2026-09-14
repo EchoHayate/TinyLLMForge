@@ -1,0 +1,86 @@
+{
+  "artifact_kind": "kvcapacity_kv8_quest_adaptive_compact_receipt",
+  "classification": "GO_KV8_QUEST_AMORTIZATION_POLICY",
+  "controller_date": "2026-09-14",
+  "source_revision": "75b743a3212c3fe72b26fa0cab4e410536e68ff6",
+  "branch": "feat/kv-sparse-attention",
+  "remote_root": "/data00/home/sitian/tllm/kvcapacity-runs",
+  "environment": {
+    "model": "Qwen3-8B",
+    "hardware": "NVIDIA A100 80GB PCIe",
+    "cuda_device": 2,
+    "tensor_parallel_size": 1,
+    "decode_path": "eager",
+    "context_length": 8192,
+    "kv_blocks": 640,
+    "batches": [4, 6, 8, 10, 12, 16, 19],
+    "warmup_steps": 24,
+    "measured_steps": 24
+  },
+  "policy": {
+    "quest_top_k_blocks": 16,
+    "quest_min_seq_len": 512,
+    "quest_min_saved_blocks": 128,
+    "activation_rule": "sum(max(0, seq.num_blocks - top_k) for seq in seqs) >= quest_min_saved_blocks",
+    "expected_fallback_batches": [4, 6],
+    "expected_active_batches": [8, 10, 12, 16, 19],
+    "default_enabled": false
+  },
+  "immutable_tags": {
+    "bf16": "20260914-kv8quest-final-75b743a3-bf16-r1",
+    "kv8": "20260914-kv8quest-final-75b743a3-kv8-r1",
+    "fixed_quest": "20260914-kv8quest-final-75b743a3-fixed-r1",
+    "adaptive_quest": "20260914-kv8quest-final-75b743a3-adaptive-r1",
+    "quality": "20260914-kv8quest-final-75b743a3-quality-r1",
+    "gate": "20260914-kv8quest-final-75b743a3-gate-r1"
+  },
+  "raw_local_remote_sha256": {
+    "bf16": "d92988db78a393c483fa50a1a278dc1581e8adc89c122585ff99c0f64a37899d",
+    "kv8": "42d5b88f9fa44a8a8deb7d586b35288a9ca05eaed0ce30b2f9ab00959374a621",
+    "fixed_quest": "37ddb3dc759aba3de9661305616554330ce38be21758f4109411bf5017b274c0",
+    "adaptive_quest": "aa9c9bf4848ee80c80b012b1961c4be4e8cf60db88795cceedfa2d30fc133b9f",
+    "quality": "095d32dfe7081f12cd5631fbf3095ebec1363dd4cc3ee6d4bc8731ca2c8103c1"
+  },
+  "embedded_performance_payload_sha256": {
+    "bf16": "627091aacb20e4131b7e9a652096e6121b0a2be054078c7f989c4dcd1e0964c0",
+    "kv8": "c4f5342550134fd26feec3a21991d0462bc7136ec73e8778f30d542f95c5078e",
+    "fixed_quest": "1787e69d5fe4c97cabc1ad2199e5b26055272630b79b22e091ce3f8babaed62c",
+    "adaptive_quest": "6d0c49d24a94b01ffe85ad6e5458b9c5d19ce959c7908cde4536cf6256e64373"
+  },
+  "source_provenance_sha256": {
+    "bf16": "c66429e454bb79e4c5001c85adc902ff6793635f84c6be95f25324a9357901c6",
+    "kv8": "0f77e4353e889b7418448cf129b2d1dadf811ba8429297f8d5fa00710afba8ab",
+    "fixed_quest": "bd18f17b23c27668891adfbeb54967697a52803f5c2b445530b4a1eb64592c03",
+    "adaptive_quest": "8272f54d23f1c5734865654e7bfdcda8b0b3deb5b696d9ec5b993a6d605fdcfe",
+    "quality": "c96d94df1c0c06aa9f32b1111cb12fba25fd0e6bda53d5a684d56192d9b4597e"
+  },
+  "dual_verifier": {
+    "current_analyzer_git_blob": "125fb572442695673dd2f2b12506b429bf13c194",
+    "frozen_analyzer_git_blob": "125fb572442695673dd2f2b12506b429bf13c194",
+    "gate_json_sha256": "45a16cd9843950c8609dccdf519a3ada46cba57b89dd3510bf77cb7dba872624",
+    "gate_markdown_sha256": "81c6eaf5cacd9a623887177f9af6cfda39d6b187fe80efbe39ac2d52d35aaf6c",
+    "byte_identical": true
+  },
+  "benefit_and_cost": {
+    "batch_4_fallback_regression_vs_kv8_percent": 1.504952,
+    "batch_6_fallback_regression_vs_kv8_percent": 1.070020,
+    "worst_active_regression_vs_fixed_percent": 0.668655,
+    "batch_19_step_time_reduction_vs_kv8_percent": 43.502795,
+    "batch_19_excess_latency_recovery_percent": 54.873886,
+    "quality_overall_delta_pp": 0.0,
+    "quality_every_depth_delta_pp": 0.0,
+    "kv8_quality_throughput_tok_s": 22.82502501509994,
+    "adaptive_quality_throughput_tok_s": 25.60116138081032,
+    "quality_throughput_diagnostic_gain_percent": 12.157599,
+    "runtime_cost": "host policy, activation telemetry, selector launches, and eager-only validation; the policy remains default-disabled"
+  },
+  "review": {
+    "unresolved_p0_p2_findings": 0,
+    "report_path_outside_repository": "/tmp/TinyLLMForge_adaptive_quest_review.Sumah2/report.html"
+  },
+  "excluded_from_commit": [
+    "experiments/kvcapacity_step_scaling/20260914-kv8quest-final-266b74e0-*",
+    "experiments/kvcapacity_step_scaling/20260914-kv8quest-final-75b743a3-*",
+    "runner logs and full raw performance/quality JSON"
+  ]
+}

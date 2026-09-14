@@ -5069,3 +5069,118 @@ KV8_QUEST_QUALITY_DELTA=0_0_PP
 KV8_QUEST_PROMOTION=NOT_AUTHORIZED
 KV8_QUEST_NEXT_ACTION=NEW_AMORTIZATION_AWARE_OR_FUSED_DESIGN
 ```
+
+## 2026-09-14 reconciliation: KV8 + Quest amortization-aware activation
+
+### Terminal result
+
+The follow-up design that was opened by the fixed-Quest `NO_GO` is complete:
+
+```text
+GO_KV8_QUEST_AMORTIZATION_POLICY
+```
+
+This does not reclassify unconditional KV8 + Quest top-16. The new
+default-disabled host policy enables Quest only when the current batch can
+avoid at least 128 KV-block dequantizations:
+
+```text
+sum(max(0, seq.num_blocks - 16) for seq in seqs) >= 128
+```
+
+Under the frozen 8192-token/32-block sequence shape, B=4/6 fall back and
+B>=8 activate.
+
+### Source, tags, and storage boundary
+
+| Item | Frozen value |
+| --- | --- |
+| Source revision | `75b743a3212c3fe72b26fa0cab4e410536e68ff6` |
+| Branch | `feat/kv-sparse-attention` |
+| Model / hardware / topology | Qwen3-8B / NVIDIA A100 80GB PCIe / TP1 |
+| Decode / pool / context | eager / 640 KV blocks / 8192 tokens |
+| Batches | `4,6,8,10,12,16,19` |
+| Samples | 24 warmup + 24 measured steps per cell |
+| Policy | top-k 16 / min seq 512 / min saved blocks 128 |
+| bf16 tag | `20260914-kv8quest-final-75b743a3-bf16-r1` |
+| KV8 tag | `20260914-kv8quest-final-75b743a3-kv8-r1` |
+| fixed Quest tag | `20260914-kv8quest-final-75b743a3-fixed-r1` |
+| adaptive tag | `20260914-kv8quest-final-75b743a3-adaptive-r1` |
+| quality tag | `20260914-kv8quest-final-75b743a3-quality-r1` |
+| gate tag | `20260914-kv8quest-final-75b743a3-gate-r1` |
+| Remote root | `/data00/home/sitian/tllm/kvcapacity-runs/` |
+| Compact tracked evidence | `artifacts/kvcapacity_kv8_quest_adaptive/20260914-75b743a3-r1/` |
+
+All five raw local files matched their remote SHA-256 receipts. The four
+embedded canonical performance payload hashes independently recomputed.
+Current-source and frozen-source analyzers used the same git blob
+`125fb572442695673dd2f2b12506b429bf13c194`; their JSON and Markdown outputs
+were byte-identical with SHA-256
+`45a16cd9843950c8609dccdf519a3ada46cba57b89dd3510bf77cb7dba872624`
+and
+`81c6eaf5cacd9a623887177f9af6cfda39d6b187fe80efbe39ac2d52d35aaf6c`.
+
+### Benefit and cost
+
+| Metric | Result | Frozen gate | Verdict |
+| --- | ---: | ---: | --- |
+| B=4 fallback regression vs KV8 | `+1.504952%` | at most `+3%` | `PASS` |
+| B=6 fallback regression vs KV8 | `+1.070020%` | at most `+3%` | `PASS` |
+| Worst B>=8 regression vs fixed Quest | B12 `+0.668655%` | at most `+3%` | `PASS` |
+| B19 adaptive vs KV8 step time | `-43.502795%` | diagnostic | `POSITIVE` |
+| B19 excess-latency recovery | `54.873886%` | at least `50%` | `PASS` |
+| KV8/adaptive overall quality | `25/25` / `25/25` | loss at most `5 pp` | `PASS` |
+| Every-depth quality delta | `0.0 pp` | loss at most `20 pp` | `PASS` |
+| Quality workload throughput | `22.83 -> 25.60 tok/s` (`+12.16%`) | diagnostic | `POSITIVE` |
+
+The cost is a host policy decision, activation telemetry and associated
+configuration/evidence complexity. When active, the selector and additional
+kernel launches still exist; the policy wins by avoiding them where the
+saved-dequantization work is too small. Default-disabled `prepare_decode()`
+does not build the policy decision or publish telemetry.
+
+### Prompt-to-artifact checklist
+
+| Contract requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Pushed source-bound execution | every arm records exact revision `75b743a3...` and zero dirty source paths | `PASS` |
+| Mounted remote storage only | all final tags are below `/data00/home/sitian/tllm/kvcapacity-runs/` | `PASS` |
+| Immutable fresh rerun | all five `75b743a3` arms were rerun after the disabled-identity fix | `PASS` |
+| Four-arm identity | model, prompt digest, hardware, topology, dispatch, worker hash and registered Quest settings agree | `PASS` |
+| Seven complete performance cells | all arms contain B=4,6,8,10,12,16,19 with 24 measured eager steps | `PASS` |
+| Policy transition | B=4/6 fallback and B>=8 active; event settings match registered values | `PASS` |
+| Paired quality grid | exact 25-case grid; answer/magic recomputation and activation transitions pass | `PASS` |
+| Dual verifier | current and frozen outputs are byte-identical and both return GO | `PASS` |
+| Review | post-fix focused review has zero unresolved P0-P2 findings | `PASS` |
+| Compact evidence only | gate reports and receipt tracked; raw JSON/log directories excluded | `PASS` |
+| Claim boundary | no graph, TP>1, other-model, sampling, production-P99 or universal-threshold claim | `PASS_LIMITED` |
+
+The first `266b74e0` diagnostic is retained but not promoted. It correctly
+failed closed because disabled bf16/KV8 engine identity resolved
+`quest_min_seq_len=1024` while the payload registered 512. Commit `75b743a3`
+fixed the runner identity, and every arm was rerun under fresh immutable tags.
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| Low-work fallback | B=4/6 return to KV8 full within 1.505% | `PASS` |
+| High-work activation | B>=8 telemetry is complete and active | `PASS` |
+| Active-path parity with fixed Quest | worst regression is 0.669% | `PASS` |
+| High-batch KV8 recovery | B19 step time improves 43.503%; excess recovery is 54.874% | `PASS` |
+| Frozen needle quality | 25/25 in both arms, zero loss at every depth | `PASS_LIMITED` |
+| Adaptive policy promotion | all identity and threshold failures are empty | `AUTHORIZED_WITHIN_TESTED_BOUNDARY` |
+| Production/default enablement | not measured and remains disabled | `NOT_AUTHORIZED` |
+
+```text
+KV8_QUEST_ADAPTIVE_SOURCE=75b743a3212c3fe72b26fa0cab4e410536e68ff6
+KV8_QUEST_ADAPTIVE_POLICY=TOP16_MINSEQ512_MINSAVED128
+KV8_QUEST_ADAPTIVE_CLASSIFICATION=GO_KV8_QUEST_AMORTIZATION_POLICY
+KV8_QUEST_ADAPTIVE_B4_FALLBACK_REGRESSION=1_504952_PERCENT
+KV8_QUEST_ADAPTIVE_B6_FALLBACK_REGRESSION=1_070020_PERCENT
+KV8_QUEST_ADAPTIVE_B19_STEP_REDUCTION=43_502795_PERCENT
+KV8_QUEST_ADAPTIVE_B19_EXCESS_RECOVERY=54_873886_PERCENT
+KV8_QUEST_ADAPTIVE_QUALITY_DELTA=0_0_PP
+KV8_QUEST_ADAPTIVE_DEFAULT=DISABLED
+KV8_QUEST_ADAPTIVE_NEXT_ACTION=TEST_GRAPH_OR_TP2_UNDER_SEPARATE_GATE
+```

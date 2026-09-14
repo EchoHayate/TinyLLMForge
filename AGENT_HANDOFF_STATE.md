@@ -53757,3 +53757,115 @@ KV8_QUEST_CLASSIFICATION=NO_GO_KV8_QUEST
 KV8_QUEST_PROMOTION=NOT_AUTHORIZED
 KV8_QUEST_NEXT_ACTION=DESIGN_NEW_AMORTIZATION_AWARE_OR_FUSED_GATE
 ```
+
+## 2026-09-14 — KV8 + Quest amortization-aware activation terminal handoff
+
+### Current decision
+
+The source-bound adaptive follow-up is complete:
+
+```text
+GO_KV8_QUEST_AMORTIZATION_POLICY
+```
+
+The old unconditional top-16 result remains `NO_GO_KV8_QUEST`. The new
+default-disabled policy activates Quest only when:
+
+```text
+sum(max(0, seq.num_blocks - 16) for seq in seqs) >= 128
+```
+
+For the frozen 8192-token shape this means B=4/6 fallback and B>=8 activation.
+
+### Frozen evidence
+
+- source: `75b743a3212c3fe72b26fa0cab4e410536e68ff6`;
+- branch: `feat/kv-sparse-attention`;
+- model / hardware / topology:
+  Qwen3-8B / NVIDIA A100 80GB PCIe / TP1;
+- path / pool / context:
+  eager / 640 KV blocks / 8192 tokens;
+- batches: `4,6,8,10,12,16,19`;
+- samples: 24 warmup + 24 measured steps per cell;
+- policy: top-16 / min-seq 512 / min-saved-blocks 128;
+- performance tags:
+  `20260914-kv8quest-final-75b743a3-{bf16,kv8,fixed,adaptive}-r1`;
+- quality tag:
+  `20260914-kv8quest-final-75b743a3-quality-r1`;
+- gate tag:
+  `20260914-kv8quest-final-75b743a3-gate-r1`;
+- remote root:
+  `/data00/home/sitian/tllm/kvcapacity-runs/`;
+- compact tracked evidence:
+  `artifacts/kvcapacity_kv8_quest_adaptive/20260914-75b743a3-r1/`.
+
+Raw local/remote SHA-256:
+
+```text
+bf16     d92988db78a393c483fa50a1a278dc1581e8adc89c122585ff99c0f64a37899d
+kv8      42d5b88f9fa44a8a8deb7d586b35288a9ca05eaed0ce30b2f9ab00959374a621
+fixed    37ddb3dc759aba3de9661305616554330ce38be21758f4109411bf5017b274c0
+adaptive aa9c9bf4848ee80c80b012b1961c4be4e8cf60db88795cceedfa2d30fc133b9f
+quality  095d32dfe7081f12cd5631fbf3095ebec1363dd4cc3ee6d4bc8731ca2c8103c1
+```
+
+Current and frozen verifier use git blob
+`125fb572442695673dd2f2b12506b429bf13c194`. Both return GO, with
+byte-identical JSON
+`45a16cd9843950c8609dccdf519a3ada46cba57b89dd3510bf77cb7dba872624`
+and Markdown
+`81c6eaf5cacd9a623887177f9af6cfda39d6b187fe80efbe39ac2d52d35aaf6c`.
+
+### Benefit and cost
+
+| Metric | Result |
+| --- | ---: |
+| B=4 fallback vs KV8 | `+1.504952%` |
+| B=6 fallback vs KV8 | `+1.070020%` |
+| worst B>=8 vs fixed Quest | B12 `+0.668655%` |
+| B19 adaptive vs KV8 step time | `-43.502795%` |
+| B19 excess-latency recovery | `54.873886%` |
+| KV8/adaptive quality | `25/25` / `25/25` |
+| overall and every-depth quality delta | `0.0 pp` |
+| quality throughput | `22.83 -> 25.60 tok/s` (`+12.16%`, diagnostic) |
+
+Costs: a host-side policy decision, telemetry and configuration/evidence
+surface; active Quest still pays selector/launch overhead. The
+default-disabled fast path does not construct a decision or publish telemetry.
+
+### Verification and review
+
+- focused adaptive/classifier suite: `227 passed`;
+- native verifier attention suite: `6 passed`;
+- model-runner spec suite: `223 passed, 1 skipped, 1 pre-existing stale
+  quantized-snapshot test failed`;
+- Python compilation, shell syntax and `git diff --check`: pass;
+- focused post-fix review: zero unresolved P0-P2 findings;
+- all identity failures: none;
+- all threshold failures: none.
+
+The sole adjacent test failure expects quantized KV snapshot rejection even
+though production supports quantized payload plus scale. It predates and is
+unrelated to adaptive Quest; do not revert supported quantized behavior to
+make that stale assertion pass.
+
+### Exclusions and next action
+
+Do not commit raw experiment directories, runner logs, the invalid
+`266b74e0` diagnostic tags, or unrelated untracked artifacts. The invalid
+diagnostic remains useful only as evidence that the hardened analyzer failed
+closed before the disabled-arm identity fix.
+
+This GO authorizes only the tested adaptive policy boundary. It does not
+authorize graph mode, TP2/TP4, other models, sampling, real-service P99,
+production default enablement, or a universal threshold. A next optimization
+must use a separate predeclared gate, with graph-path validation or TP2 as the
+most direct extension.
+
+```text
+KV8_QUEST_ADAPTIVE_CLASSIFICATION=GO_KV8_QUEST_AMORTIZATION_POLICY
+KV8_QUEST_ADAPTIVE_SOURCE=75b743a3212c3fe72b26fa0cab4e410536e68ff6
+KV8_QUEST_ADAPTIVE_PROMOTION=AUTHORIZED_WITHIN_TESTED_BOUNDARY
+KV8_QUEST_ADAPTIVE_DEFAULT=DISABLED
+KV8_QUEST_ADAPTIVE_NEXT_ACTION=SEPARATE_GRAPH_OR_TP2_GATE
+```

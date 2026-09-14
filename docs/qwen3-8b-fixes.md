@@ -404,6 +404,32 @@ baseline / quest / cpu_offload / cuda_graph 这些不动的路径冲坏。
 
 ---
 
+## 2026-09-14 KV8 + Quest 自适应激活
+
+Qwen3-8B 的 KV8 selective-dequant 路径现在支持默认关闭的
+amortization-aware gate。策略按当前 batch 统计 Quest 能跳过的 KV block：
+少于 128 个时走 KV8 full，达到 128 个时才启用 top-16 Quest。
+
+冻结 gate 在 A100 80GB PCIe、TP1、eager、context 8192、640 KV blocks
+上得到 `GO_KV8_QUEST_AMORTIZATION_POLICY`：
+
+- B=4/6 正确回退，分别仅比 KV8 full 慢 `1.505%` 和 `1.070%`；
+- B>=8 正确激活，相对固定 Quest 的最坏回归为 `0.669%`；
+- B=19 相对 KV8 full 的 step time 降低 `43.503%`，额外延迟回收
+  `54.874%`；
+- KV8 full 与 adaptive 的固定 needle 质量均为 25/25，所有 depth
+  差异都是 `0.0 pp`；
+- quality workload 吞吐为 `22.83 -> 25.60 tok/s`，仅作为诊断性
+  `+12.16%` 结果。
+
+这与旧的固定开启结论并不冲突：`NO_GO_KV8_QUEST` 仍适用于
+unconditional top-16；新的 GO 只授权当前自适应策略及其已测边界。
+默认仍关闭，不宣称 graph、TP>1、其他模型、采样或生产服务收益。
+
+源 revision：`75b743a3212c3fe72b26fa0cab4e410536e68ff6`。紧凑报告与
+哈希 receipt：
+`artifacts/kvcapacity_kv8_quest_adaptive/20260914-75b743a3-r1/`。
+
 ## 20. SmoothQuant 落地修 W4A8 复读（2026-05-31）
 
 ### 20.1 问题（§16.5 历史欠账）
