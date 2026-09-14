@@ -6530,7 +6530,6 @@ def test_cohort_capture_uses_an_isolated_cuda_graph_pool():
         and isinstance(node.func.value.value, ast.Name)
         and node.func.value.value.id == "torch"
     ]
-
     assert len(graph_calls) == 1
     assert len(graph_calls[0].args) == 1
     assert not any(
@@ -9813,8 +9812,8 @@ def test_capture_without_legacy_pool_restores_scratch_and_context():
     assert observed["snapshot_slots"] == tuple(scratch_slots)
     assert observed["restore_slots"] == tuple(scratch_slots)
     assert observed["restore_count"] == 1
-    assert observed["model_calls"] == 1
-    assert observed["force_attention_backend"] == [True]
+    assert observed["model_calls"] == 2
+    assert observed["force_attention_backend"] == [True, True]
     assert scratch_state == before
     current = context.get_context()
     assert current.is_prefill is False
