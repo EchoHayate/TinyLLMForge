@@ -144,10 +144,14 @@ Resolution reasons are frozen as:
 - `below_saved_blocks`;
 - `active`.
 
-The worker records one observation per decode step, including warmup, and
-summarizes the measured window by reason, resolved top-k, and saved-block
-range. Missing, repeated, or internally inconsistent observations make the
-cell inconclusive. Telemetry must not add a GPU-to-host synchronization.
+The runner also maintains cumulative counters by reason and resolved top-k,
+plus the observed saved-block range. The step-scaling worker records one
+latest observation per decode step, including warmup, and summarizes the
+measured window. The quality runner snapshots cumulative counters before and
+after each setting because `LLM.generate()` owns its internal engine-step
+loop. Missing, repeated, or internally inconsistent observations make the
+affected evidence inconclusive. Telemetry must not add a GPU-to-host
+synchronization.
 
 ## Frozen performance experiment
 
@@ -187,15 +191,17 @@ Use the same 25 source-bound fixed needle prompts as the completed Quest gate:
 - greedy decoding;
 - KV8 full and adaptive Quest arms built from the same source commit.
 
-Run scored prompts in decode batches of eight so the adaptive arm reaches the
-128-block threshold. For the final partial batch, add deterministic,
-source-bound filler prompts until the physical decode batch is eight; filler
-outputs are excluded from accuracy. Both arms receive the same batch grouping
-and fillers.
+Submit all 25 scored prompts through the existing single `LLM.generate()`
+call. The scheduler may reduce the live batch as requests finish, so this
+workload intentionally exercises both sides of the policy: Quest while
+`saved_blocks >= 128`, then KV8 full attention if the remaining batch falls
+below the threshold.
 
-Every scored adaptive decode step must resolve to top-k 16 with reason
-`active`. A fallback step, missing observation, prompt/hash mismatch, or
-different batch grouping makes quality evidence inconclusive.
+The adaptive run must contain at least one telemetry-confirmed `active` step,
+and every active or fallback observation must agree with an independent
+recomputation from its recorded batch/block inputs. Missing observations,
+prompt/hash mismatch, or an inconsistent decision makes quality evidence
+inconclusive.
 
 The primary comparison remains adaptive Quest versus KV8 full on identical
 scored prompts. No quality claim is inferred from the performance workload.
@@ -221,7 +227,8 @@ following hold:
 8. adaptive Quest needle accuracy is no more than five percentage points
    below KV8 full overall;
 9. no individual depth loses more than twenty percentage points;
-10. all scored adaptive quality steps are telemetry-confirmed active.
+10. the adaptive quality run contains at least one telemetry-confirmed active
+    step and every recorded transition agrees with the frozen policy.
 
 An identity, telemetry, dispatch, completeness, or source-binding failure
 yields `INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY`. A measured performance or
