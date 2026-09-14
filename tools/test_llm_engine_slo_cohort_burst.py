@@ -444,6 +444,42 @@ def test_step_calls_cohort_orchestration_only_on_non_speculative_path():
     assert len(calls) == 1
 
 
+def test_cohort_mode_suppresses_legacy_single_request_burst_fallthrough():
+    tree = ast.parse(
+        ENGINE_PATH.read_text(encoding="utf-8"),
+        filename=str(ENGINE_PATH),
+    )
+    engine_class = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+        and node.name == "LLMEngine"
+    )
+    step = next(
+        node
+        for node in engine_class.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "step"
+    )
+    candidate_assignment = next(
+        node
+        for node in ast.walk(step)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == "exact_burst_candidate"
+            for target in node.targets
+        )
+    )
+    assert any(
+        isinstance(node, ast.UnaryOp)
+        and isinstance(node.op, ast.Not)
+        and isinstance(node.operand, ast.Name)
+        and node.operand.id == "cohort_burst_enabled"
+        for node in ast.walk(candidate_assignment.value)
+    )
+
+
 def test_step_observation_exposes_closed_cohort_telemetry() -> None:
     source = ENGINE_PATH.read_text(encoding="utf-8")
     for key in (

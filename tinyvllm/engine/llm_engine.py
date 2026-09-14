@@ -5449,13 +5449,14 @@ class LLMEngine:
                     "config",
                     None,
                 )
-                if bool(
+                cohort_burst_enabled = bool(
                     getattr(
                         model_runner_config,
                         "exact_greedy_cohort_burst",
                         False,
                     )
-                ):
+                )
+                if cohort_burst_enabled:
                     (
                         cohort_burst_committed,
                         cohort_step_end_ns,
@@ -5918,6 +5919,7 @@ class LLMEngine:
                 )
                 exact_burst_candidate = (
                     exact_burst_enabled
+                    and not cohort_burst_enabled
                     and not cohort_burst_committed
                     and completion_only
                     and bool(seqs)

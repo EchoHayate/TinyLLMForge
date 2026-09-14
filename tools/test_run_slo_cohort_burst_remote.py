@@ -362,12 +362,18 @@ def test_frozen_arrival_traces_are_open_loop_balanced_and_deterministic() -> Non
 def test_qualification_config_keeps_the_baseline_free_of_single_request_burst(
     tmp_path: Path,
 ) -> None:
-    config = remote._qualification_engine_config(
+    candidate = remote._qualification_engine_config(
         cost_table_path=tmp_path / "cost_table.json",
     )
+    baseline = remote._qualification_engine_config(
+        cost_table_path=tmp_path / "cost_table.json",
+        cohort_enabled=False,
+    )
 
-    assert config["exact_greedy_decode_burst"] is False
-    assert config["exact_greedy_cohort_burst"] is True
+    assert candidate["exact_greedy_decode_burst"] is True
+    assert candidate["exact_greedy_cohort_burst"] is True
+    assert baseline["exact_greedy_decode_burst"] is False
+    assert baseline["exact_greedy_cohort_burst"] is False
 
 
 def test_correctness_matrix_executes_every_bxk_pair_in_baseline_candidate_order(
