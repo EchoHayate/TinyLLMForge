@@ -286,6 +286,12 @@ def quest_activation_summary_delta(before, after):
     last_observation_id = int(
         after.get("last_observation_id", 0)
     )
+    events = [
+        dict(event)
+        for event in after.get("events", [])
+        if int(event.get("observation_id", 0))
+        >= first_observation_id
+    ]
     return {
         "steps": int(after.get("steps", 0))
         - int(before.get("steps", 0)),
@@ -306,6 +312,12 @@ def quest_activation_summary_delta(before, after):
         ),
         "cumulative_saved_blocks_max": after.get(
             "saved_blocks_max"
+        ),
+        "events": events,
+        "events_dropped": max(
+            0,
+            int(after.get("events_dropped", 0))
+            - int(before.get("events_dropped", 0)),
         ),
     }
 

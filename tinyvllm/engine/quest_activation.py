@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import asdict, dataclass
 from typing import Sequence
+
+
+QUEST_ACTIVATION_EVENT_CAPACITY = 4096
 
 
 @dataclass(frozen=True)
@@ -12,6 +16,8 @@ class QuestActivationDecision:
     min_saved_blocks: int
     saved_blocks: int | None
     batch_size: int
+    sequence_lengths: tuple[int, ...]
+    sequence_block_counts: tuple[int, ...]
     reason: str
 
 
@@ -23,6 +29,9 @@ class QuestActivationTelemetry:
         self._resolved_top_k_counts = {}
         self._saved_blocks_min = None
         self._saved_blocks_max = None
+        self._events = deque(
+            maxlen=QUEST_ACTIVATION_EVENT_CAPACITY,
+        )
 
     def publish(
         self,
@@ -34,6 +43,7 @@ class QuestActivationTelemetry:
             **asdict(decision),
         }
         self._latest = event
+        self._events.append(dict(event))
         self._reason_counts[decision.reason] = (
             self._reason_counts.get(decision.reason, 0) + 1
         )
@@ -75,6 +85,13 @@ class QuestActivationTelemetry:
             "saved_blocks_min": self._saved_blocks_min,
             "saved_blocks_max": self._saved_blocks_max,
             "last_observation_id": self._observation_id,
+            "events": [
+                dict(event) for event in self._events
+            ],
+            "events_dropped": max(
+                0,
+                self._observation_id - len(self._events),
+            ),
         }
 
 
@@ -86,6 +103,8 @@ def _decision(
     min_saved_blocks: int,
     saved_blocks: int | None,
     batch_size: int,
+    sequence_lengths: tuple[int, ...],
+    sequence_block_counts: tuple[int, ...],
     reason: str,
 ) -> QuestActivationDecision:
     return QuestActivationDecision(
@@ -97,6 +116,8 @@ def _decision(
             None if saved_blocks is None else int(saved_blocks)
         ),
         batch_size=int(batch_size),
+        sequence_lengths=tuple(sequence_lengths),
+        sequence_block_counts=tuple(sequence_block_counts),
         reason=str(reason),
     )
 
@@ -127,6 +148,8 @@ def resolve_quest_activation(
         "min_saved_blocks": min_saved_blocks,
         "saved_blocks": None,
         "batch_size": len(lengths),
+        "sequence_lengths": lengths,
+        "sequence_block_counts": block_counts,
     }
     if requested_top_k <= 0 or not lengths:
         return _decision(**common, reason="disabled")

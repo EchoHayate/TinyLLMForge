@@ -363,6 +363,8 @@ def _quest_activation_event_is_valid(event):
         "min_saved_blocks",
         "saved_blocks",
         "batch_size",
+        "sequence_lengths",
+        "sequence_block_counts",
         "reason",
     }
     if not isinstance(event, dict) or not required.issubset(event):
@@ -371,20 +373,39 @@ def _quest_activation_event_is_valid(event):
     resolved = event["resolved_top_k"]
     threshold = event["min_saved_blocks"]
     saved = event["saved_blocks"]
+    lengths = event["sequence_lengths"]
+    block_counts = event["sequence_block_counts"]
     reason = event["reason"]
+    if (
+        not isinstance(lengths, (list, tuple))
+        or not isinstance(block_counts, (list, tuple))
+        or len(lengths) != len(block_counts)
+        or len(lengths) != event["batch_size"]
+    ):
+        return False
     if reason == "active":
+        expected_saved = sum(
+            max(0, int(blocks) - int(requested))
+            for blocks in block_counts
+        )
         return (
             requested > 0
             and resolved == requested
             and saved is not None
+            and int(saved) == expected_saved
             and (threshold == 0 or saved >= threshold)
         )
     if reason == "below_saved_blocks":
+        expected_saved = sum(
+            max(0, int(blocks) - int(requested))
+            for blocks in block_counts
+        )
         return (
             requested > 0
             and resolved == -1
             and threshold > 0
             and saved is not None
+            and int(saved) == expected_saved
             and saved < threshold
         )
     return resolved == -1 and reason in {

@@ -1546,6 +1546,8 @@ def _quest_event(
         "min_saved_blocks": 128,
         "saved_blocks": saved_blocks,
         "batch_size": batch_size,
+        "sequence_lengths": [8192] * batch_size,
+        "sequence_block_counts": [32] * batch_size,
         "reason": reason,
     }
 
@@ -1573,6 +1575,16 @@ def test_quest_activation_tracker_marks_contradictory_event_invalid():
         reason="active",
         resolved_top_k=-1,
     )
+    tracker = worker.QuestActivationTracker()
+
+    observed = tracker.observe(_Engine(_Runner([], [event])))
+
+    assert observed["status"] == "invalid"
+
+
+def test_quest_activation_tracker_recomputes_saved_blocks():
+    event = _quest_event(1)
+    event["saved_blocks"] = 129
     tracker = worker.QuestActivationTracker()
 
     observed = tracker.observe(_Engine(_Runner([], [event])))

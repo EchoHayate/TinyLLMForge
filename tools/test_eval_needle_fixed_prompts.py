@@ -207,6 +207,11 @@ def test_quest_activation_summary_delta_subtracts_counters():
         "saved_blocks_min": 128,
         "saved_blocks_max": 256,
         "last_observation_id": 2,
+        "events": [
+            {"observation_id": 1, "reason": "active"},
+            {"observation_id": 2, "reason": "active"},
+        ],
+        "events_dropped": 0,
     }
     after = {
         "steps": 10,
@@ -218,6 +223,11 @@ def test_quest_activation_summary_delta_subtracts_counters():
         "saved_blocks_min": 64,
         "saved_blocks_max": 400,
         "last_observation_id": 10,
+        "events": [
+            {"observation_id": value, "reason": "active"}
+            for value in range(1, 11)
+        ],
+        "events_dropped": 0,
     }
 
     delta = eval_needle.quest_activation_summary_delta(
@@ -238,6 +248,10 @@ def test_quest_activation_summary_delta_subtracts_counters():
     assert delta["last_observation_id"] == 10
     assert delta["cumulative_saved_blocks_min"] == 64
     assert delta["cumulative_saved_blocks_max"] == 400
+    assert [event["observation_id"] for event in delta["events"]] == list(
+        range(3, 11)
+    )
+    assert delta["events_dropped"] == 0
 
 
 def test_adaptive_quality_remote_runner_is_source_bound():

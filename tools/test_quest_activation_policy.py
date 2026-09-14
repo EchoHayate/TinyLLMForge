@@ -225,6 +225,8 @@ def test_activation_telemetry_publishes_latest_event_and_summary():
         "min_saved_blocks": 128,
         "saved_blocks": 128,
         "batch_size": 8,
+        "sequence_lengths": (8192,) * 8,
+        "sequence_block_counts": (32,) * 8,
         "reason": "active",
     }
     assert telemetry.observation() == latest
@@ -241,6 +243,22 @@ def test_activation_telemetry_publishes_latest_event_and_summary():
         "saved_blocks_min": 64,
         "saved_blocks_max": 128,
         "last_observation_id": 2,
+        "events": [
+            {
+                "observation_id": 1,
+                "requested_top_k": 16,
+                "resolved_top_k": -1,
+                "min_seq_len": 512,
+                "min_saved_blocks": 128,
+                "saved_blocks": 64,
+                "batch_size": 4,
+                    "sequence_lengths": (8192,) * 4,
+                    "sequence_block_counts": (32,) * 4,
+                "reason": "below_saved_blocks",
+            },
+            latest,
+        ],
+        "events_dropped": 0,
     }
 
 
@@ -252,9 +270,11 @@ def test_activation_telemetry_returns_defensive_copies():
     summary = telemetry.summary()
     event["reason"] = "mutated"
     summary["reason_counts"]["active"] = 999
+    summary["events"][0]["reason"] = "mutated"
 
     assert telemetry.observation()["reason"] == "active"
     assert telemetry.summary()["reason_counts"]["active"] == 1
+    assert telemetry.summary()["events"][0]["reason"] == "active"
 
 
 def test_model_runner_wires_adaptive_policy_without_device_reads():
