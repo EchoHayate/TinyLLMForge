@@ -1532,3 +1532,99 @@ def test_multi_sequence_graph_kwargs_lifts_the_one_time_capture_budgets():
     assert kwargs["multi_sequence_cuda_graph_max_single_capture_ns"] > 2_000_000_000
     assert kwargs["multi_sequence_cuda_graph_max_total_capture_ns"] > 5_000_000_000
     assert kwargs["multi_sequence_cuda_graph_max_reserved_bytes"] >= 512 * 1024 * 1024
+
+
+# ---------------------------------------------------------------------------
+# Device provenance. The first graph-path wall sweep got 676 KV blocks where the
+# same settings yield 1145 on an idle card, because roughly 25 GiB belonged to
+# another process. The artifact recorded nothing about it.
+# ---------------------------------------------------------------------------
+
+
+def test_device_memory_snapshot_reports_all_three_fields():
+    snapshot = worker.device_memory_before_load()
+    assert set(snapshot) == {
+        "device_free_bytes_before_load",
+        "device_total_bytes",
+        "device_foreign_share",
+    }
+
+
+def test_device_memory_snapshot_degrades_without_cuda_instead_of_raising():
+    """Runs on this laptop, where importing torch or querying CUDA fails."""
+    snapshot = worker.device_memory_before_load()
+    if snapshot["device_total_bytes"] is None:
+        assert snapshot["device_free_bytes_before_load"] is None
+        assert snapshot["device_foreign_share"] is None
+    else:
+        assert snapshot["device_total_bytes"] > 0
+
+
+def test_payload_identity_can_carry_the_device_snapshot():
+    """A contaminated run has to be recognisable from the artifact alone."""
+    identity = {"kv_capacity_tokens": 173056}
+    identity.update(
+        {
+            "device_free_bytes_before_load": 55 * 2**30,
+            "device_total_bytes": 80 * 2**30,
+            "device_foreign_share": 0.3125,
+        }
+    )
+    payload = worker.build_payload(
+        [], [{"context_length": 2048, "identity": identity}],
+        model_path="m", enforce_eager=False, seed=1,
+        gpu_memory_utilization=0.85, warmup_steps=1, measured_steps=1,
+    )
+    recorded = payload["engines"][0]["identity"]
+    assert recorded["device_foreign_share"] == pytest.approx(0.3125)
+
+
+# ---------------------------------------------------------------------------
+# The KV feasibility guard. Its message read as a contradiction in the sweep
+# artifact ("43486543872 required, 45034242048 available" followed by a refusal),
+# because it compared a figure it had not actually used.
+# ---------------------------------------------------------------------------
+
+
+def test_resident_bytes_charge_whole_blocks_and_generated_tokens():
+    """A sequence at L=8192 decoding 34 more tokens pins 33 blocks, not 32."""
+    per_token = worker.KV_BYTES_PER_TOKEN
+    naive = 8192 * per_token
+    real = worker.cell_resident_kv_bytes(8192, 1, generated_tokens=34)
+    assert real == 33 * 256 * per_token
+    assert real > naive
+
+
+def test_resident_bytes_scale_with_batch():
+    one = worker.cell_resident_kv_bytes(2048, 1, generated_tokens=34)
+    assert worker.cell_resident_kv_bytes(2048, 144, generated_tokens=34) == 144 * one
+
+
+def test_cell_fits_matches_what_the_engine_actually_did_at_the_wall():
+    """Measured against the graph-path wall sweep, which is the only arbiter.
+
+    With 305408 tokens of visible capacity, L=2048 B=128 measured cleanly at
+    24/24 steps on the target batch, B=140 could not form the batch at all, and
+    B=144 pins more blocks than exist. A guard that disagrees with any of those
+    three is either skipping measurable cells or admitting unmeasurable ones.
+    """
+    available = 305408 * worker.KV_BYTES_PER_TOKEN
+    assert worker.cell_fits(2048, 128, available, generated_tokens=34) is True
+    assert worker.cell_fits(2048, 140, available, generated_tokens=34) is False
+    assert worker.cell_fits(2048, 144, available, generated_tokens=34) is False
+
+
+def test_cell_fits_admits_the_8192_wall_cell_the_percentage_guard_refused():
+    """L=8192 B=40 pins 1320 of 1343 blocks; the old 5% headroom rejected it.
+
+    That cell is the eager run's wall point, so refusing it silently removed the
+    one measurement the capacity ratio needs.
+    """
+    available = 343808 * worker.KV_BYTES_PER_TOKEN
+    assert worker.cell_fits(8192, 40, available, generated_tokens=34) is True
+    assert worker.cell_fits(8192, 44, available, generated_tokens=34) is False
+
+
+def test_cell_fits_is_permissive_when_capacity_is_unknown():
+    """Provenance may be missing; a missing budget must not silently skip cells."""
+    assert worker.cell_fits(8192, 32, None) is True

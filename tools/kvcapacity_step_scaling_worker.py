@@ -81,6 +81,8 @@ CONTEXT_BATCH_GRID = (
 )
 
 KV_BYTES_PER_TOKEN = 147456
+# The KV cache is paged, so residency is charged in whole blocks of this size.
+KVCACHE_BLOCK_SIZE = 256
 WARMUP_STEPS = 32
 MEASURED_STEPS = 24
 DEFAULT_SEED = 20260913
@@ -156,12 +158,43 @@ def kv_bytes_for_cell(context_length, batch, bytes_per_token=KV_BYTES_PER_TOKEN)
     return int(context_length) * int(batch) * int(bytes_per_token)
 
 
-def cell_fits(context_length, batch, available_kv_bytes, *, headroom=0.95):
-    """Whether a cell's resident KV fits, keeping a little headroom."""
+def cell_resident_kv_bytes(context_length, batch, *, generated_tokens=0,
+                           block_size=KVCACHE_BLOCK_SIZE):
+    """Bytes the cell really pins, in whole blocks and including generated tokens.
+
+    A sequence pins whole 256-token blocks, and it keeps growing while it decodes,
+    so `L * B * bytes_per_token` understates residency twice over. At L=8192 with
+    34 generated tokens each sequence pins 33 blocks rather than 32, which is a
+    3% error, and at the wall 3% is the difference between running and being
+    preempted mid-measurement.
+    """
+    blocks_per_sequence = -(-(int(context_length) + int(generated_tokens)) // int(block_size))
+    return int(batch) * blocks_per_sequence * int(block_size) * KV_BYTES_PER_TOKEN
+
+
+def cell_fits(context_length, batch, available_kv_bytes, *, reserve_blocks=8,
+              generated_tokens=0, block_size=KVCACHE_BLOCK_SIZE):
+    """Whether a cell's resident KV fits, leaving a few blocks for the scheduler.
+
+    The reserve is counted in blocks rather than as a percentage. A percentage was
+    tried first and was wrong in both directions at once: 5% of a 1193-block pool
+    is 59 blocks, which refused L=2048 B=128 even though it measured cleanly with
+    41 blocks to spare, while on a larger pool the same 5% would wave through a
+    cell that pins every block it can see. Once residency is charged in whole
+    blocks the only thing still needed is a small fixed cushion for the
+    scheduler's own churn, which does not scale with the pool.
+    """
     if available_kv_bytes is None:
         return True
-    required = kv_bytes_for_cell(context_length, batch)
-    return required <= float(available_kv_bytes) * headroom
+    bytes_per_block = int(block_size) * KV_BYTES_PER_TOKEN
+    available_blocks = int(float(available_kv_bytes) // bytes_per_block)
+    required_blocks = cell_resident_kv_bytes(
+        context_length,
+        batch,
+        generated_tokens=generated_tokens,
+        block_size=block_size,
+    ) // bytes_per_block
+    return required_blocks + int(reserve_blocks) <= available_blocks
 
 
 def build_distinct_prompts(context_length, batch, vocab_size, rng):
@@ -377,6 +410,34 @@ def summarise_dispatch(labels):
     }
 
 
+def device_memory_before_load():
+    """Record what the device already holds before this run allocates anything.
+
+    The first graph-path wall sweep refused nearly every cell because its engine
+    got 676 KV blocks where the same settings yield 1145 on an idle device: about
+    25 GiB of the card belonged to somebody else at that moment. Nothing in the
+    artifact said so, so the natural reading was that the graph path costs KV
+    capacity, which it does only to the tune of the capture scratch blocks. KV
+    capacity is derived from free memory at construction time, so free memory at
+    construction time has to be in the artifact.
+    """
+    try:
+        import torch
+
+        free, total = torch.cuda.mem_get_info()
+        return {
+            "device_free_bytes_before_load": int(free),
+            "device_total_bytes": int(total),
+            "device_foreign_share": round(1.0 - free / total, 4),
+        }
+    except Exception:  # noqa: BLE001 - evidence, never control flow
+        return {
+            "device_free_bytes_before_load": None,
+            "device_total_bytes": None,
+            "device_foreign_share": None,
+        }
+
+
 def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utilization,
                  max_num_seqs, multi_sequence_graph_batches=None):
     from tinyvllm import LLM
@@ -579,6 +640,7 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
     for context_length, batches in sorted(grid, key=lambda group: group[0]):
         engine = None
         try:
+            device_memory = device_memory_before_load()
             engine = _load_engine(
                 model_path=model_path,
                 max_model_len=context_length + 1024,
@@ -609,13 +671,19 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
             continue
 
         identity = _engine_identity(engine)
+        identity.update(device_memory)
         engines.append({"context_length": context_length, "identity": identity})
         vocab_size = identity.get("vocab_size") or 151936
         available = identity.get("kv_capacity_bytes")
         rng = random.Random(seed + context_length)
         try:
             for batch in batches:
-                if not cell_fits(context_length, batch, available):
+                if not cell_fits(
+                    context_length,
+                    batch,
+                    available,
+                    generated_tokens=warmup_steps + measured_steps + 2,
+                ):
                     rows.append(
                         {
                             "context_length": context_length,
@@ -626,8 +694,10 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
                             "step": None,
                             "skipped_reason": (
                                 "resident KV exceeds the device budget: "
-                                f"{kv_bytes_for_cell(context_length, batch)} bytes "
-                                f"required, {available} available"
+                                f"{cell_resident_kv_bytes(context_length, batch, generated_tokens=warmup_steps + measured_steps + 2)} bytes "
+                                f"pinned in whole blocks including generated tokens, "
+                                f"against {available} available, less an 8-block "
+                                f"scheduler reserve"
                             ),
                         }
                     )
