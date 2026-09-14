@@ -99,6 +99,18 @@ QUALIFICATION_WORKLOADS = ("decode_heavy", "mixed", "bursty_eos")
 QUALIFICATION_LOADS = ("low", "medium", "high")
 QUALIFICATION_REPETITIONS = 5
 REQUESTS_PER_REPETITION = 26
+CORRECTNESS_GRAPH_SHAPES = tuple(
+    (batch_size, 2, True)
+    for batch_size in (1, 2, 4, 8)
+)
+CANONICAL_GRAPH_SHAPES = tuple(
+    (batch_size, block_table_width, False)
+    for block_table_width in (2, 9, 33)
+    for batch_size in range(1, 9)
+)
+QUALIFICATION_GRAPH_SHAPES = (
+    CANONICAL_GRAPH_SHAPES + CORRECTNESS_GRAPH_SHAPES
+)
 LOAD_FRACTIONS = {
     "low": 0.40,
     "medium": 0.70,
@@ -594,11 +606,14 @@ def build_correctness_matrix(*, run_case) -> list[dict]:
                 })
             matrix.append({
                 "schema_version": (
-                    "slo-cohort-burst.correctness-case.v1"
+                    "slo-cohort-burst.correctness-case.v2"
                 ),
                 "batch_size": batch_size,
                 "burst_width": burst_width,
                 "rows": rows,
+                "candidate_execution": candidate[
+                    "execution_evidence"
+                ],
                 "duplicate_forwards": int(
                     candidate["duplicate_forwards"]
                 ),
@@ -758,18 +773,30 @@ def _set_cohort_arm(engine, *, enabled: bool, widths=(1, 2, 4, 8)):
     engine.model_runner.config.exact_greedy_cohort_burst = bool(enabled)
 
 
-def _graph_identity_by_batch(engine) -> dict[str, str]:
+def _cohort_graph_shape_key(
+    *,
+    batch_size: int,
+    block_table_width: int,
+    correctness_trace: bool,
+) -> str:
+    return (
+        f"b{int(batch_size)}-w{int(block_table_width)}"
+        f"-trace{int(bool(correctness_trace))}"
+    )
+
+
+def _graph_identity_by_shape(
+    engine,
+    *,
+    shapes=QUALIFICATION_GRAPH_SHAPES,
+) -> dict[str, str]:
     identities = {}
-    for batch_size in (1, 2, 4, 8):
+    for batch_size, block_table_width, correctness_trace in shapes:
         capability = (
             engine.model_runner.exact_greedy_cohort_burst_capability(
                 batch_size=batch_size,
-                block_table_width=(
-                    engine.model_runner.config.max_model_len
-                    + engine.model_runner.block_size
-                    - 1
-                )
-                // engine.model_runner.block_size,
+                block_table_width=block_table_width,
+                correctness_trace=correctness_trace,
             )
         )
         identity = capability.get("graph_identity_sha256")
@@ -778,9 +805,18 @@ def _graph_identity_by_batch(engine) -> dict[str, str]:
             or not isinstance(identity, str)
         ):
             raise RuntimeError(
-                f"cohort graph unavailable for batch {batch_size}"
+                "cohort graph unavailable for "
+                + _cohort_graph_shape_key(
+                    batch_size=batch_size,
+                    block_table_width=block_table_width,
+                    correctness_trace=correctness_trace,
+                )
             )
-        identities[str(batch_size)] = identity
+        identities[_cohort_graph_shape_key(
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            correctness_trace=correctness_trace,
+        )] = identity
     return identities
 
 
@@ -799,11 +835,11 @@ def _source_manifest(
 def _environment(
     *,
     source_identity: Mapping[str, object],
-    graph_identity_sha256_by_batch: Mapping[str, str],
+    graph_identity_sha256_by_shape: Mapping[str, str],
     eos_token_id: int,
 ) -> dict[str, object]:
     return {
-        "schema_version": "slo-cohort-burst.environment.v1",
+        "schema_version": "slo-cohort-burst.environment.v2",
         "source_commit": source_identity["source_commit"],
         "model": source_identity["model"],
         "checkpoint_sha256": source_identity["checkpoint_sha256"],
@@ -816,8 +852,8 @@ def _environment(
         "target_itl_ns": 40_000_000,
         "target_ttft_ns": 1_000_000_000,
         "reserve_ns": 2_000_000,
-        "graph_identity_sha256_by_batch": dict(
-            graph_identity_sha256_by_batch
+        "graph_identity_sha256_by_shape": dict(
+            graph_identity_sha256_by_shape
         ),
     }
 
@@ -845,20 +881,33 @@ def _qualification_sampling_params_factory():
     return SamplingParams
 
 
-def _capture_qualification_graphs(engine) -> None:
-    for batch_size in (1, 2, 4, 8):
+def _capture_graph_shapes(engine, shapes) -> None:
+    for batch_size, block_table_width, correctness_trace in shapes:
         graph = (
             engine.model_runner
             .capture_exact_greedy_cohort_burst_graph(
                 batch_size,
-                correctness_trace=True,
+                block_table_width=block_table_width,
+                correctness_trace=correctness_trace,
             )
         )
         if graph is None:
             raise RuntimeError(
-                "correctness cohort graph unavailable for "
-                f"batch {batch_size}"
+                "qualification cohort graph unavailable for "
+                + _cohort_graph_shape_key(
+                    batch_size=batch_size,
+                    block_table_width=block_table_width,
+                    correctness_trace=correctness_trace,
+                )
             )
+
+
+def _capture_canonical_graphs(engine) -> None:
+    _capture_graph_shapes(engine, CANONICAL_GRAPH_SHAPES)
+
+
+def _capture_qualification_graphs(engine) -> None:
+    _capture_graph_shapes(engine, QUALIFICATION_GRAPH_SHAPES)
 
 
 def _logits_rows(value, *, batch_size: int) -> list[list[float]]:
@@ -905,6 +954,27 @@ def _pending_cohort_inventory(engine) -> int:
         )
         is not None
     )
+
+
+def _count_unauthorized_kv_publications(
+    evidence: Mapping[str, object],
+) -> int:
+    unauthorized = 0
+    result_rows = evidence["result"]["rows"]
+    publication_rows = evidence["publication"]["rows"]
+    for result_row, published_row in zip(
+        result_rows,
+        publication_rows,
+    ):
+        commit_tokens = list(published_row["commit_tokens"])
+        if (
+            result_row["sequence_id"]
+            != published_row["sequence_id"]
+            or list(result_row["tokens"][:len(commit_tokens)])
+            != commit_tokens
+        ):
+            unauthorized += 1
+    return unauthorized
 
 
 def _run_correctness_case(
@@ -1008,6 +1078,8 @@ def _run_correctness_case(
                         "load": "correctness",
                         "repetition": 0,
                         "arm": arm,
+                        "batch_size": batch_size,
+                        "burst_width": burst_width,
                     },
                     observation=observation,
                 )
@@ -1112,25 +1184,18 @@ def _run_correctness_case(
         publication = evidence["publication"]
         published_ids = publication["ordered_sequence_ids"]
         duplicate_commits = len(published_ids) - len(set(published_ids))
-        for result_row, published_row in zip(
-            evidence["result"]["rows"],
-            publication["rows"],
-        ):
-            if (
-                result_row["sequence_id"]
-                != published_row["sequence_id"]
-                or result_row["tokens"][
-                    :len(published_row["commit_tokens"])
-                ]
-                != published_row["commit_tokens"]
-            ):
-                unauthorized_publications += 1
+        unauthorized_publications = (
+            _count_unauthorized_kv_publications(evidence)
+        )
     return {
         "rows": rows,
         "duplicate_forwards": duplicate_forwards,
         "duplicate_commits": duplicate_commits,
         "unauthorized_kv_publications": unauthorized_publications,
         "pending_leases_after_case": _pending_cohort_inventory(engine),
+        "execution_evidence": (
+            evidence_rows[0] if evidence_rows else None
+        ),
     }
 
 
@@ -1360,14 +1425,23 @@ def _run_canonical_matrix_with_engine_factory(
                 active_engine,
                 enabled=arm == "candidate",
             )
-            if (
-                arm == "candidate"
-                and _graph_identity_by_batch(active_engine)
-                != dict(expected_graph_identities)
-            ):
-                raise RuntimeError(
-                    "candidate graph identity changed across repetitions"
-                )
+            if arm == "candidate":
+                _capture_canonical_graphs(active_engine)
+                if (
+                    _graph_identity_by_shape(
+                        active_engine,
+                        shapes=CANONICAL_GRAPH_SHAPES,
+                    )
+                    != {
+                        key: value
+                        for key, value in expected_graph_identities.items()
+                        if key.endswith("-trace0")
+                    }
+                ):
+                    raise RuntimeError(
+                        "candidate graph identity changed across "
+                        "repetitions"
+                    )
         return _run_open_loop_case(
             engine=active_engine,
             sampling_params_factory=sampling_params_factory,
@@ -2464,13 +2538,13 @@ def run_qualification_worker(args) -> dict[str, object]:
             _qualification_sampling_params_factory()
         )
         _capture_qualification_graphs(engine)
-        graph_identities = _graph_identity_by_batch(engine)
+        graph_identities = _graph_identity_by_shape(engine)
         source_manifest = _source_manifest(
             source_identity=source_identity,
         )
         environment = _environment(
             source_identity=source_identity,
-            graph_identity_sha256_by_batch=graph_identities,
+            graph_identity_sha256_by_shape=graph_identities,
             eos_token_id=engine.scheduler.eos,
         )
         correctness_rows = _run_correctness_matrix_on_engine(

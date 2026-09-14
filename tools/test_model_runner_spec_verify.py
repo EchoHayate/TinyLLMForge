@@ -9,6 +9,7 @@ import copy
 import hashlib
 import importlib.util
 import io
+import inspect
 import json
 import os
 import re
@@ -6461,6 +6462,45 @@ def test_capture_cudagraph_initializes_all_cohort_batch_graphs():
         (3, 1),
         (4, 1),
     ]
+
+
+def test_cohort_split_policy_uses_exact_visible_page_table_width(
+    monkeypatch,
+):
+    runner = make_runner()
+    runner.world_size = 1
+    runner.kv_cache = SimpleNamespace(device="cuda:0")
+    runner.config.hf_config = SimpleNamespace(
+        num_attention_heads=16,
+        num_key_value_heads=8,
+        head_dim=128,
+    )
+    monkeypatch.setattr(
+        model_runner.torch.cuda,
+        "get_device_properties",
+        lambda _device: SimpleNamespace(
+            multi_processor_count=108,
+        ),
+    )
+
+    assert runner._exact_greedy_cohort_burst_num_splits(
+        batch_size=2,
+        block_table_width=2,
+    ) == 4
+    assert runner._exact_greedy_cohort_burst_num_splits(
+        batch_size=2,
+        block_table_width=128,
+    ) == 12
+
+
+def test_cohort_capture_accepts_an_exact_block_table_width():
+    parameter = inspect.signature(
+        model_runner.ModelRunner
+        .capture_exact_greedy_cohort_burst_graph
+    ).parameters["block_table_width"]
+
+    assert parameter.default is None
+    assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
 def test_cohort_capture_failure_is_recorded_without_blocking_other_shapes():

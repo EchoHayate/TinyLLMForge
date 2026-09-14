@@ -478,12 +478,17 @@ def _lease_payload(
         context_buckets,
         remaining_output_tokens,
     ):
+        block_table_width = context_bucket // 256 + 1
+        block_table = [
+            [row_index * 100 + block_index, 1]
+            for block_index in range(block_table_width)
+        ]
         first_slot = row_index * 16
         rows.append({
             "sequence_id": sequence_id,
             "sequence_generation": 1,
-            "block_table_identity": [[row_index, 1]],
-            "writable_block_identities": [[row_index, 1]],
+            "block_table_identity": block_table,
+            "writable_block_identities": [block_table[0]],
             "first_write_position": context_bucket - 1,
             "last_write_position": context_bucket + 6,
             "first_physical_slot": first_slot,
@@ -694,7 +699,7 @@ def _execution_row(
     }
 
 
-def _correctness_rows() -> list[dict]:
+def _correctness_rows(*, cost_table_sha256: str) -> list[dict]:
     rows = []
     for batch_size in (1, 2, 4, 8):
         for width in (1, 2, 4, 8):
@@ -716,17 +721,97 @@ def _correctness_rows() -> list[dict]:
                 })
             rows.append({
                 "schema_version": (
-                    "slo-cohort-burst.correctness-case.v1"
+                    "slo-cohort-burst.correctness-case.v2"
                 ),
                 "batch_size": batch_size,
                 "burst_width": width,
                 "rows": row_results,
+                "candidate_execution": (
+                    None
+                    if width == 1
+                    else _correctness_execution_row(
+                        batch_size=batch_size,
+                        burst_width=width,
+                        cost_table_sha256=cost_table_sha256,
+                    )
+                ),
                 "duplicate_forwards": 0,
                 "duplicate_commits": 0,
                 "unauthorized_kv_publications": 0,
                 "pending_leases_after_case": 0,
             })
     return rows
+
+
+def _correctness_execution_row(
+    *,
+    batch_size: int,
+    burst_width: int,
+    cost_table_sha256: str,
+) -> dict:
+    sequence_ids = list(range(10_000, 10_000 + batch_size))
+    case = {
+        "workload": "correctness",
+        "load": "correctness",
+        "repetition": 0,
+        "arm": "candidate",
+        "batch_size": batch_size,
+        "burst_width": burst_width,
+    }
+    wrapper = _execution_row(
+        case=case,
+        sequence_ids=sequence_ids,
+        context_buckets=[256] * batch_size,
+        remaining_output_tokens=[burst_width] * batch_size,
+        eos_sequence_id=None,
+        cost_table_sha256=cost_table_sha256,
+        decision_now_ns=100,
+        global_slack_ns=1_000_000_000,
+    )
+    wrapper["lease"]["requested_width"] = burst_width
+    wrapper["lease"]["authorized_width"] = burst_width
+    wrapper["result"]["replay_count"] = burst_width
+    wrapper["result"]["sampled_logit_d2h_calls"] = 1
+    wrapper["execution"]["requested_width"] = burst_width
+    wrapper["execution"]["authorized_width"] = burst_width
+    wrapper["execution"]["completed_replay_count"] = burst_width
+    wrapper["execution"]["sampled_logit_d2h_calls"] = 1
+    wrapper["execution"]["generated_token_counts"] = {
+        str(sequence_id): burst_width
+        for sequence_id in sequence_ids
+    }
+    wrapper["execution"]["committed_token_counts"] = dict(
+        wrapper["execution"]["generated_token_counts"]
+    )
+    wrapper["execution"]["token_d2h_bytes"] = (
+        batch_size * burst_width * 8
+    )
+    for lease_row in wrapper["lease"]["rows"]:
+        lease_row["last_write_position"] = (
+            lease_row["first_write_position"] + burst_width - 1
+        )
+        lease_row["last_physical_slot"] = (
+            lease_row["first_physical_slot"] + burst_width - 1
+        )
+    for row_index, (result_row, publication_row) in enumerate(zip(
+        wrapper["result"]["rows"],
+        wrapper["publication"]["rows"],
+    )):
+        tokens = [1] * burst_width
+        result_row["tokens"] = tokens
+        result_row["sampled_logits"] = [[0.1, 0.9]] * burst_width
+        result_row["final_position"] = 256 + burst_width - 1
+        result_row["final_context_length"] = 256 + burst_width
+        result_row["final_physical_slot"] = (
+            row_index * 16 + burst_width
+        )
+        publication_row["commit_tokens"] = tokens
+    graph_identity = GRAPH_SHA
+    wrapper["lease"]["graph_identity_sha256"] = graph_identity
+    wrapper["result"]["graph_identity_sha256"] = graph_identity
+    wrapper["execution"]["graph_identity_sha256"] = graph_identity
+    _refresh_execution_identities(wrapper)
+    return wrapper
 
 
 def complete_synthetic_bundle() -> dict:
@@ -753,7 +838,7 @@ def complete_synthetic_bundle() -> dict:
         },
     }
     environment = {
-        "schema_version": "slo-cohort-burst.environment.v1",
+        "schema_version": "slo-cohort-burst.environment.v2",
         "source_commit": SOURCE_COMMIT,
         "model": "Qwen3-0.6B",
         "checkpoint_sha256": MODEL_SHA,
@@ -766,8 +851,15 @@ def complete_synthetic_bundle() -> dict:
         "target_itl_ns": 40_000_000,
         "target_ttft_ns": 1_000_000_000,
         "reserve_ns": 2_000_000,
-        "graph_identity_sha256_by_batch": {
-            str(batch_size): GRAPH_SHA
+        "graph_identity_sha256_by_shape": {
+            (
+                f"b{batch_size}-w{block_table_width}"
+                "-trace0"
+            ): GRAPH_SHA
+            for batch_size in range(1, 9)
+            for block_table_width in (2, 9, 33)
+        } | {
+            f"b{batch_size}-w2-trace1": GRAPH_SHA
             for batch_size in (1, 2, 4, 8)
         },
     }
@@ -962,7 +1054,9 @@ def complete_synthetic_bundle() -> dict:
         "decision_rows": decision_rows,
         "execution_rows": execution_rows,
         "request_rows": request_rows,
-        "correctness_rows": _correctness_rows(),
+        "correctness_rows": _correctness_rows(
+            cost_table_sha256=cost_table["table_sha256"],
+        ),
         "summary": summary,
     }
     bundle["manifest"] = {
@@ -1151,6 +1245,28 @@ def _mutate(bundle: dict, mutation: str) -> None:
         row["baseline_output_text_sha256"] = "not-a-digest"
         row["candidate_output_text_sha256"] = "not-a-digest"
         _refresh_artifact_hash(bundle, "correctness_rows.jsonl")
+    elif mutation == "correctness_graph_identity":
+        row = next(
+            row
+            for row in bundle["correctness_rows"]
+            if row["candidate_execution"] is not None
+        )
+        wrapper = row["candidate_execution"]
+        wrapper["lease"]["graph_identity_sha256"] = "e" * 64
+        wrapper["result"]["graph_identity_sha256"] = "e" * 64
+        wrapper["execution"]["graph_identity_sha256"] = "e" * 64
+        _refresh_execution_identities(wrapper)
+        _refresh_artifact_hash(bundle, "correctness_rows.jsonl")
+    elif mutation == "graph_shape_inventory":
+        bundle["environment"][
+            "graph_identity_sha256_by_shape"
+        ].pop("b8-w33-trace0")
+        _refresh_artifact_hash(bundle, "environment.json")
+    elif mutation == "graph_shape_identity":
+        bundle["environment"][
+            "graph_identity_sha256_by_shape"
+        ]["b2-w2-trace0"] = "e" * 64
+        _refresh_artifact_hash(bundle, "environment.json")
     elif mutation == "duplicate_lease_block_identity":
         row = bundle["execution_rows"][0]
         authority = row["lease"]["rows"][0]
@@ -1201,6 +1317,9 @@ def _mutate(bundle: dict, mutation: str) -> None:
         "execution_duration_disagreement",
         "correctness_boolean_row_index",
         "correctness_output_text_digest",
+        "correctness_graph_identity",
+        "graph_shape_inventory",
+        "graph_shape_identity",
         "duplicate_lease_block_identity",
         "source_sha",
         "artifact_hash",

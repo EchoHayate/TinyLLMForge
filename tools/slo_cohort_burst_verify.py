@@ -90,6 +90,15 @@ FROZEN_ARM_ORDER = (
 WIDTHS = (1, 2, 4, 8)
 BURST_WIDTHS_DESCENDING = (8, 4, 2)
 CONTEXT_BUCKETS = (256, 2048, 8192)
+CANONICAL_BLOCK_TABLE_WIDTHS = (2, 9, 33)
+EXPECTED_GRAPH_SHAPES = tuple(
+    (batch_size, block_table_width, False)
+    for block_table_width in CANONICAL_BLOCK_TABLE_WIDTHS
+    for batch_size in range(1, 9)
+) + tuple(
+    (batch_size, 2, True)
+    for batch_size in WIDTHS
+)
 PROFILE_CONTEXT_BUCKETS = (512, 4096, 16384)
 PROFILE_MEASURED_STEPS = 16
 PROFILE_ARRIVAL_GAP_NS = {
@@ -306,6 +315,18 @@ def _require_fields(
     return payload
 
 
+def _cohort_graph_shape_key(
+    *,
+    batch_size: int,
+    block_table_width: int,
+    correctness_trace: bool,
+) -> str:
+    return (
+        f"b{int(batch_size)}-w{int(block_table_width)}"
+        f"-trace{int(bool(correctness_trace))}"
+    )
+
+
 def _validate_manifest(
     bundle: Mapping[str, object],
     *,
@@ -422,11 +443,11 @@ def _validate_source_and_environment(
             "target_itl_ns",
             "target_ttft_ns",
             "reserve_ns",
-            "graph_identity_sha256_by_batch",
+            "graph_identity_sha256_by_shape",
         },
         "environment",
     )
-    if environment["schema_version"] != "slo-cohort-burst.environment.v1":
+    if environment["schema_version"] != "slo-cohort-burst.environment.v2":
         raise ValueError("environment schema mismatch")
     for field in (
         "source_commit",
@@ -470,14 +491,23 @@ def _validate_source_and_environment(
         2_000_000,
     ):
         raise ValueError("qualification SLO policy mismatch")
-    graph_identities = environment["graph_identity_sha256_by_batch"]
+    graph_identities = environment["graph_identity_sha256_by_shape"]
+    expected_graph_keys = {
+        _cohort_graph_shape_key(
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            correctness_trace=correctness_trace,
+        )
+        for batch_size, block_table_width, correctness_trace
+        in EXPECTED_GRAPH_SHAPES
+    }
     if (
         not isinstance(graph_identities, Mapping)
-        or set(graph_identities) != {str(value) for value in WIDTHS}
+        or set(graph_identities) != expected_graph_keys
     ):
         raise ValueError("graph identity inventory mismatch")
-    for batch_size, digest in graph_identities.items():
-        _digest(digest, f"graph identity for batch {batch_size}")
+    for shape, digest in graph_identities.items():
+        _digest(digest, f"graph identity for shape {shape}")
     return dict(identity), dict(environment)
 
 
@@ -1866,11 +1896,7 @@ def _validate_executions(
             raise ValueError("lease/decision identity mismatch")
         seen_decisions.add(decision_key)
         if (
-            lease["graph_identity_sha256"]
-            != environment["graph_identity_sha256_by_batch"][
-                str(len(sequence_ids))
-            ]
-            or lease["cost_table_sha256"] != cost_table_sha256
+            lease["cost_table_sha256"] != cost_table_sha256
             or lease["requested_width"] != decision["selected_width"]
             or lease["authorized_width"] != decision["selected_width"]
             or lease["decision_now_ns"] != decision["decision_now_ns"]
@@ -1885,6 +1911,22 @@ def _validate_executions(
         if lease["requested_width"] not in BURST_WIDTHS_DESCENDING:
             raise ValueError("lease burst width is unsupported")
         lease_rows = _validate_lease_rows(lease)
+        block_table_width = max(
+            len(row["block_table_identity"])
+            for row in lease_rows
+        )
+        graph_shape_key = _cohort_graph_shape_key(
+            batch_size=len(sequence_ids),
+            block_table_width=block_table_width,
+            correctness_trace=False,
+        )
+        if (
+            lease["graph_identity_sha256"]
+            != environment["graph_identity_sha256_by_shape"].get(
+                graph_shape_key
+            )
+        ):
+            raise ValueError("lease graph shape identity mismatch")
         lease_row_by_sequence = {
             row["sequence_id"]: row for row in lease_rows
         }
@@ -2173,7 +2215,285 @@ def _validate_executions(
     return list(rows), total_wasted_forwards, total_forward_slots
 
 
-def _validate_correctness(rows: object) -> bool:
+def _validate_correctness_execution(
+    wrapper: object,
+    *,
+    batch_size: int,
+    burst_width: int,
+    expected_rows: Sequence[Mapping[str, object]],
+    environment: Mapping[str, object],
+    cost_table_sha256: str,
+) -> None:
+    wrapper = _require_fields(
+        wrapper,
+        {
+            "schema_version",
+            "case",
+            "lease",
+            "lease_identity_sha256",
+            "result",
+            "result_identity_sha256",
+            "publication",
+            "execution",
+        },
+        "correctness execution evidence",
+    )
+    if (
+        wrapper["schema_version"]
+        != "slo-cohort-burst.execution-evidence.v1"
+    ):
+        raise ValueError("correctness execution evidence schema mismatch")
+    case = _require_fields(
+        wrapper["case"],
+        {
+            "workload",
+            "load",
+            "repetition",
+            "arm",
+            "batch_size",
+            "burst_width",
+        },
+        "correctness execution case",
+    )
+    if case != {
+        "workload": "correctness",
+        "load": "correctness",
+        "repetition": 0,
+        "arm": "candidate",
+        "batch_size": batch_size,
+        "burst_width": burst_width,
+    }:
+        raise ValueError("correctness execution case mismatch")
+
+    lease = _require_fields(
+        wrapper["lease"],
+        {
+            "schema_version",
+            "schedule_generation",
+            "graph_generation",
+            "graph_identity_sha256",
+            "ordered_sequence_ids",
+            "requested_width",
+            "authorized_width",
+            "decision_now_ns",
+            "cost_table_sha256",
+            "predicted_duration_ns",
+            "global_slack_ns",
+            "rows",
+        },
+        "correctness lease",
+    )
+    sequence_ids = lease["ordered_sequence_ids"]
+    if (
+        lease["schema_version"]
+        != "exact-greedy-cohort-burst.lease.v1"
+        or not isinstance(sequence_ids, list)
+        or len(sequence_ids) != batch_size
+        or len(set(sequence_ids)) != batch_size
+        or lease["requested_width"] != burst_width
+        or lease["authorized_width"] != burst_width
+        or lease["cost_table_sha256"] != cost_table_sha256
+    ):
+        raise ValueError("correctness lease authority mismatch")
+    _integer(lease["schedule_generation"], "schedule generation", minimum=1)
+    _integer(lease["graph_generation"], "graph generation", minimum=1)
+    _integer(lease["decision_now_ns"], "decision timestamp")
+    _integer(lease["predicted_duration_ns"], "predicted duration", minimum=1)
+    _integer(lease["global_slack_ns"], "global slack", minimum=1)
+    lease_rows = _validate_lease_rows(lease)
+    block_table_width = max(
+        len(row["block_table_identity"])
+        for row in lease_rows
+    )
+    graph_shape_key = _cohort_graph_shape_key(
+        batch_size=batch_size,
+        block_table_width=block_table_width,
+        correctness_trace=True,
+    )
+    if (
+        lease["graph_identity_sha256"]
+        != environment["graph_identity_sha256_by_shape"].get(
+            graph_shape_key
+        )
+    ):
+        raise ValueError("correctness graph shape identity mismatch")
+    lease_identity = _sha256_payload(lease)
+    if wrapper["lease_identity_sha256"] != lease_identity:
+        raise ValueError("correctness lease identity mismatch")
+
+    result = _require_fields(
+        wrapper["result"],
+        {
+            "schema_version",
+            "lease_identity_sha256",
+            "graph_identity_sha256",
+            "graph_generation",
+            "replay_count",
+            "rows",
+            "token_d2h_calls",
+            "sampled_logit_d2h_calls",
+        },
+        "correctness result",
+    )
+    result_rows = result["rows"]
+    if (
+        result["schema_version"]
+        != "exact-greedy-cohort-burst.result-identity.v1"
+        or result["lease_identity_sha256"] != lease_identity
+        or result["graph_identity_sha256"]
+        != lease["graph_identity_sha256"]
+        or result["graph_generation"] != lease["graph_generation"]
+        or result["replay_count"] != burst_width
+        or result["token_d2h_calls"] != 1
+        or result["sampled_logit_d2h_calls"] != 1
+        or not isinstance(result_rows, list)
+        or len(result_rows) != batch_size
+        or [row.get("sequence_id") for row in result_rows]
+        != sequence_ids
+    ):
+        raise ValueError("correctness result identity mismatch")
+    result_identity = _sha256_payload(result)
+    if wrapper["result_identity_sha256"] != result_identity:
+        raise ValueError("correctness result digest mismatch")
+
+    publication = _require_fields(
+        wrapper["publication"],
+        {"ordered_sequence_ids", "rows"},
+        "correctness publication",
+    )
+    publication_rows = publication["rows"]
+    if (
+        publication["ordered_sequence_ids"] != sequence_ids
+        or not isinstance(publication_rows, list)
+        or len(publication_rows) != batch_size
+    ):
+        raise ValueError("correctness publication inventory mismatch")
+    lease_by_sequence = {
+        row["sequence_id"]: row for row in lease_rows
+    }
+    generated_counts = {}
+    committed_counts = {}
+    discarded_counts = {}
+    for expected, result_row, publication_row in zip(
+        expected_rows,
+        result_rows,
+        publication_rows,
+    ):
+        if set(result_row) != {
+            "sequence_id",
+            "sequence_generation",
+            "tokens",
+            "final_position",
+            "final_context_length",
+            "final_physical_slot",
+            "sampled_logits",
+        }:
+            raise ValueError("correctness result row fields mismatch")
+        sequence_id = _integer(
+            result_row["sequence_id"],
+            "correctness result sequence ID",
+        )
+        authority = lease_by_sequence.get(sequence_id)
+        tokens = result_row["tokens"]
+        sampled_logits = result_row["sampled_logits"]
+        if (
+            authority is None
+            or not isinstance(tokens, list)
+            or len(tokens) != burst_width
+            or tokens != expected["candidate_output_token_ids"]
+            or _sha256_payload(sampled_logits)
+            != expected["candidate_sampled_logits_sha256"]
+            or result_row["sequence_generation"]
+            != authority["sequence_generation"]
+            or result_row["final_position"]
+            != authority["first_write_position"] + burst_width
+            or result_row["final_context_length"]
+            != authority["initial_sequence_length"] + burst_width
+            or result_row["final_physical_slot"]
+            != authority["last_physical_slot"] + 1
+            or publication_row != {
+                "sequence_id": sequence_id,
+                "commit_tokens": tokens,
+            }
+        ):
+            raise ValueError("correctness execution row mismatch")
+        generated_counts[str(sequence_id)] = burst_width
+        committed_counts[str(sequence_id)] = burst_width
+        discarded_counts[str(sequence_id)] = 0
+
+    execution = _require_fields(
+        wrapper["execution"],
+        {
+            "schema_version",
+            "lease_identity_sha256",
+            "result_identity_sha256",
+            "graph_identity_sha256",
+            "requested_width",
+            "authorized_width",
+            "completed_replay_count",
+            "predicted_duration_ns",
+            "actual_duration_ns",
+            "host_visible_publication_gap_ns",
+            "token_d2h_calls",
+            "token_d2h_bytes",
+            "sampled_logit_d2h_calls",
+            "generated_token_counts",
+            "committed_token_counts",
+            "eos_discarded_token_counts",
+            "post_eos_wasted_tokens",
+            "post_eos_wasted_forwards",
+            "post_eos_wasted_forward_fraction",
+            "fallback_reason",
+            "failure_reason",
+            "rollback_reason",
+            "quarantined",
+            "quarantine_reason",
+            "pending_inventory",
+        },
+        "correctness execution telemetry",
+    )
+    if (
+        execution["schema_version"]
+        != "exact-greedy-cohort-burst.execution.v1"
+        or execution["lease_identity_sha256"] != lease_identity
+        or execution["result_identity_sha256"] != result_identity
+        or execution["graph_identity_sha256"]
+        != lease["graph_identity_sha256"]
+        or execution["requested_width"] != burst_width
+        or execution["authorized_width"] != burst_width
+        or execution["completed_replay_count"] != burst_width
+        or execution["predicted_duration_ns"]
+        != lease["predicted_duration_ns"]
+        or execution["actual_duration_ns"]
+        != execution["host_visible_publication_gap_ns"]
+        or execution["token_d2h_calls"] != 1
+        or execution["token_d2h_bytes"]
+        != batch_size * burst_width * 8
+        or execution["sampled_logit_d2h_calls"] != 1
+        or execution["generated_token_counts"] != generated_counts
+        or execution["committed_token_counts"] != committed_counts
+        or execution["eos_discarded_token_counts"] != discarded_counts
+        or execution["post_eos_wasted_tokens"] != 0
+        or execution["post_eos_wasted_forwards"] != 0
+        or execution["post_eos_wasted_forward_fraction"] != 0.0
+        or execution["fallback_reason"] is not None
+        or execution["failure_reason"] is not None
+        or execution["rollback_reason"] is not None
+        or execution["quarantined"] is not False
+        or execution["quarantine_reason"] is not None
+        or execution["pending_inventory"]
+        != {"leases": 0, "transactions": 0}
+    ):
+        raise ValueError("correctness execution lifecycle mismatch")
+    _integer(execution["actual_duration_ns"], "actual duration", minimum=1)
+
+
+def _validate_correctness(
+    rows: object,
+    *,
+    environment: Mapping[str, object],
+    cost_table_sha256: str,
+) -> bool:
     if not isinstance(rows, list):
         raise ValueError("correctness rows must be a list")
     identities = set()
@@ -2186,6 +2506,7 @@ def _validate_correctness(rows: object) -> bool:
                 "batch_size",
                 "burst_width",
                 "rows",
+                "candidate_execution",
                 "duplicate_forwards",
                 "duplicate_commits",
                 "unauthorized_kv_publications",
@@ -2195,7 +2516,7 @@ def _validate_correctness(rows: object) -> bool:
         )
         if (
             case["schema_version"]
-            != "slo-cohort-burst.correctness-case.v1"
+            != "slo-cohort-burst.correctness-case.v2"
         ):
             raise ValueError("correctness schema mismatch")
         identity = (
@@ -2284,6 +2605,21 @@ def _validate_correctness(rows: object) -> bool:
                 "pending_leases_after_case",
             )
         )
+        candidate_execution = case["candidate_execution"]
+        if identity[1] == 1:
+            if candidate_execution is not None:
+                raise ValueError(
+                    "K1 correctness case must not contain execution"
+                )
+        else:
+            _validate_correctness_execution(
+                candidate_execution,
+                batch_size=identity[0],
+                burst_width=identity[1],
+                expected_rows=case_rows,
+                environment=environment,
+                cost_table_sha256=cost_table_sha256,
+            )
     if identities != {
         (batch_size, width)
         for batch_size in WIDTHS
@@ -2613,7 +2949,11 @@ def verify_slo_cohort_burst_bundle(
         request_by_sequence=request_by_sequence,
     )
     correctness_rows = bundle["correctness_rows"]
-    correctness_passed = _validate_correctness(correctness_rows)
+    correctness_passed = _validate_correctness(
+        correctness_rows,
+        environment=environment,
+        cost_table_sha256=cost_table["table_sha256"],
+    )
     lifecycle_closed = all(
         row["execution"]["pending_inventory"]
         == {"leases": 0, "transactions": 0}
@@ -2665,7 +3005,7 @@ def verify_correctness_bundle(
         artifact_keys=CORRECTNESS_ARTIFACT_KEYS,
         authoritative_artifacts=CORRECTNESS_AUTHORITATIVE_ARTIFACTS,
     )
-    source_identity, _environment = _validate_source_and_environment(
+    source_identity, environment = _validate_source_and_environment(
         bundle,
         Path(source_root),
     )
@@ -2675,7 +3015,11 @@ def verify_correctness_bundle(
         bundle["cost_profile_rows"],
     )
     correctness_rows = bundle["correctness_rows"]
-    correctness_passed = _validate_correctness(correctness_rows)
+    correctness_passed = _validate_correctness(
+        correctness_rows,
+        environment=environment,
+        cost_table_sha256=cost_table["table_sha256"],
+    )
     if not correctness_passed:
         raise ValueError("correctness evidence is not exact")
     return {

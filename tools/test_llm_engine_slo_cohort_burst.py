@@ -421,7 +421,7 @@ def test_pre_replay_fallback_cancels_and_returns_k1_eligibility():
     assert engine.scheduler.pending_cohort_lease is None
 
 
-def test_engine_queries_the_fixed_captured_block_table_width():
+def test_engine_queries_the_exact_active_block_table_width():
     seq = _Sequence(7)
     engine = _Engine(_result(((31, 32),)), decision_width=1)
 
@@ -434,7 +434,7 @@ def test_engine_queries_the_fixed_captured_block_table_width():
     )
     assert engine.model_runner.capability_calls == [{
         "batch_size": 1,
-        "block_table_width": 128,
+        "block_table_width": 1,
         "correctness_trace": False,
     }]
 

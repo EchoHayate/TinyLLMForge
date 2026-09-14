@@ -378,6 +378,105 @@ def test_qualification_config_keeps_the_baseline_free_of_single_request_burst(
     assert baseline["autoregressive_draft_command_timeline"] is False
 
 
+def test_qualification_graph_capture_covers_exact_runtime_shapes() -> None:
+    calls = []
+
+    class ModelRunner:
+        def capture_exact_greedy_cohort_burst_graph(
+            self,
+            batch_size,
+            *,
+            block_table_width,
+            correctness_trace=False,
+        ):
+            calls.append((
+                batch_size,
+                block_table_width,
+                correctness_trace,
+            ))
+            return object()
+
+    remote._capture_qualification_graphs(
+        SimpleNamespace(model_runner=ModelRunner()),
+    )
+
+    expected = {
+        (batch_size, block_table_width, False)
+        for batch_size in range(1, 9)
+        for block_table_width in (2, 9, 33)
+    } | {
+        (batch_size, 2, True)
+        for batch_size in (1, 2, 4, 8)
+    }
+    assert set(calls) == expected
+    assert len(calls) == len(expected)
+
+
+def test_qualification_graph_identity_inventory_is_shape_bound() -> None:
+    class ModelRunner:
+        def exact_greedy_cohort_burst_capability(
+            self,
+            *,
+            batch_size,
+            block_table_width,
+            correctness_trace=False,
+        ):
+            suffix = (
+                batch_size * 100
+                + block_table_width * 2
+                + int(correctness_trace)
+            )
+            return {
+                "shape_supported": True,
+                "graph_identity_sha256": f"{suffix:064x}",
+            }
+
+    identities = remote._graph_identity_by_shape(
+        SimpleNamespace(model_runner=ModelRunner()),
+    )
+
+    assert set(identities) == {
+        remote._cohort_graph_shape_key(
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            correctness_trace=correctness_trace,
+        )
+        for batch_size, block_table_width, correctness_trace
+        in remote.QUALIFICATION_GRAPH_SHAPES
+    }
+    assert len(set(identities.values())) == len(identities)
+
+
+def test_qualification_environment_binds_exact_graph_shapes() -> None:
+    source_identity = {
+        "source_commit": "a" * 40,
+        "model": "Qwen3-0.6B",
+        "checkpoint_sha256": "b" * 64,
+        "gpu_uuid": "GPU-0",
+        "gpu_name": "NVIDIA A100 80GB PCIe",
+        "tensor_parallel_size": 1,
+    }
+    graph_identities = {
+        "b2-w2-trace0": "c" * 64,
+        "b2-w2-trace1": "d" * 64,
+    }
+
+    environment = remote._environment(
+        source_identity=source_identity,
+        graph_identity_sha256_by_shape=graph_identities,
+        eos_token_id=2,
+    )
+
+    assert environment["schema_version"] == (
+        "slo-cohort-burst.environment.v2"
+    )
+    assert (
+        environment["graph_identity_sha256_by_shape"]
+        == graph_identities
+    )
+    assert "graph_identity_sha256_by_batch" not in environment
+
+
 def test_cohort_arm_switches_base_exact_burst_with_candidate_state():
     engine = SimpleNamespace(
         scheduler=SimpleNamespace(
@@ -422,6 +521,15 @@ def test_correctness_matrix_executes_every_bxk_pair_in_baseline_candidate_order(
             "duplicate_commits": 0,
             "unauthorized_kv_publications": 0,
             "pending_leases_after_case": 0,
+            "execution_evidence": (
+                {
+                    "lease_identity_sha256": (
+                        f"{batch_size * 100 + burst_width:064x}"
+                    ),
+                }
+                if arm == "candidate" and burst_width > 1
+                else None
+            ),
         }
 
     rows = remote.build_correctness_matrix(run_case=run_case)
@@ -440,6 +548,13 @@ def test_correctness_matrix_executes_every_bxk_pair_in_baseline_candidate_order(
     assert rows[-1]["batch_size"] == 8
     assert rows[-1]["burst_width"] == 8
     assert len(rows[-1]["rows"]) == 8
+    assert rows[-1]["schema_version"] == (
+        "slo-cohort-burst.correctness-case.v2"
+    )
+    assert rows[-1]["candidate_execution"] == {
+        "lease_identity_sha256": f"{808:064x}",
+    }
+    assert rows[0]["candidate_execution"] is None
 
 
 def test_canonical_matrix_obeys_frozen_paired_arm_order() -> None:
@@ -577,8 +692,15 @@ def test_canonical_matrix_uses_separate_engine_per_repetition_arm(
 
     monkeypatch.setattr(
         remote,
-        "_graph_identity_by_batch",
-        lambda _engine: {"1": "a" * 64},
+        "_graph_identity_by_shape",
+        lambda _engine, **_kwargs: {
+            "b1-w2-trace0": "a" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        remote,
+        "_capture_canonical_graphs",
+        lambda _engine: None,
     )
     monkeypatch.setattr(
         remote,
@@ -607,7 +729,9 @@ def test_canonical_matrix_uses_separate_engine_per_repetition_arm(
         sampling_params_factory=object,
         source_commit="a" * 40,
         arrival_traces=traces,
-        expected_graph_identities={"1": "a" * 64},
+        expected_graph_identities={
+            "b1-w2-trace0": "a" * 64,
+        },
     )
 
     assert [arm for arm, _engine in created] == [
@@ -671,8 +795,15 @@ def test_canonical_matrix_drops_previous_engine_before_next_creation(
 
     monkeypatch.setattr(
         remote,
-        "_graph_identity_by_batch",
-        lambda _engine: {"1": "a" * 64},
+        "_graph_identity_by_shape",
+        lambda _engine, **_kwargs: {
+            "b1-w2-trace0": "a" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        remote,
+        "_capture_canonical_graphs",
+        lambda _engine: None,
     )
     monkeypatch.setattr(
         remote,
@@ -689,7 +820,9 @@ def test_canonical_matrix_drops_previous_engine_before_next_creation(
         sampling_params_factory=object,
         source_commit="a" * 40,
         arrival_traces=traces,
-        expected_graph_identities={"1": "a" * 64},
+        expected_graph_identities={
+            "b1-w2-trace0": "a" * 64,
+        },
     )
 
     assert all(reference() is None for reference in prior_engines)
@@ -746,8 +879,10 @@ def test_correctness_worker_builds_and_seals_source_bound_bundle(
     )
     monkeypatch.setattr(
         remote,
-        "_graph_identity_by_batch",
-        lambda _engine: {"1": "f" * 64},
+        "_graph_identity_by_shape",
+        lambda _engine, **_kwargs: {
+            "b1-w2-trace0": "f" * 64,
+        },
     )
     monkeypatch.setattr(
         remote,
@@ -930,6 +1065,29 @@ def test_correctness_candidate_width_contract_retains_k1(
         )
 
     assert captured_widths == [(1, 2, 4)]
+
+
+def test_publication_authority_accepts_tuple_result_tokens() -> None:
+    evidence = {
+        "result": {
+            "rows": [{
+                "sequence_id": 10,
+                "tokens": (101, 102, 103, 104),
+            }],
+        },
+        "publication": {
+            "ordered_sequence_ids": [10],
+            "rows": [{
+                "sequence_id": 10,
+                "commit_tokens": [101, 102, 103, 104],
+            }],
+        },
+    }
+
+    assert (
+        remote._count_unauthorized_kv_publications(evidence)
+        == 0
+    )
 
 
 class _OpenLoopEngine:

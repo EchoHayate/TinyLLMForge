@@ -44,6 +44,7 @@ from tinyvllm.engine.spec_verify_exact_cuda_graph_cache import (
 from tinyvllm.engine.flash_attn_split_policy import (
     FlashAttentionSplitInputs,
     build_flash_attn_263_graph_identity,
+    flash_attn_263_decode_num_splits,
 )
 from tinyvllm.engine.sequence import Sequence
 from tinyvllm.engine.hybrid_state import HybridStateLease
@@ -10997,6 +10998,42 @@ class ModelRunner:
             "correctness_trace": correctness_trace,
         }
 
+    def _exact_greedy_cohort_burst_num_splits(
+        self,
+        *,
+        batch_size: int,
+        block_table_width: int,
+    ) -> int:
+        hf_config = self.config.hf_config
+        model_config = getattr(
+            hf_config,
+            "text_config",
+            hf_config,
+        )
+        properties = torch.cuda.get_device_properties(
+            self.kv_cache.device
+        )
+        return flash_attn_263_decode_num_splits(
+            FlashAttentionSplitInputs(
+                batch_size=int(batch_size),
+                num_query_heads=int(
+                    model_config.num_attention_heads
+                    // self.world_size
+                ),
+                num_kv_heads=int(
+                    model_config.num_key_value_heads
+                    // self.world_size
+                ),
+                head_dim=int(model_config.head_dim),
+                page_block_size=int(self.block_size),
+                page_table_width=int(block_table_width),
+                max_seqlen_q=1,
+                multi_processor_count=int(
+                    properties.multi_processor_count
+                ),
+            )
+        )
+
     def quarantine_exact_greedy_cohort_burst_graph(
         self,
         graph_identity_sha256: str,
@@ -11020,6 +11057,7 @@ class ModelRunner:
         self,
         batch_size: int,
         *,
+        block_table_width: int | None = None,
         correctness_trace: bool = False,
     ):
         if not getattr(
@@ -11050,11 +11088,26 @@ class ModelRunner:
         )
         if len(scratch_ids) != batch_size:
             return None
-        block_table_width = (
-            self.config.max_model_len
-            + self.block_size
-            - 1
-        ) // self.block_size
+        if block_table_width is None:
+            block_table_width = (
+                self.config.max_model_len
+                + self.block_size
+                - 1
+            ) // self.block_size
+        if (
+            isinstance(block_table_width, bool)
+            or not isinstance(block_table_width, int)
+            or block_table_width <= 0
+        ):
+            raise ValueError(
+                "cohort graph block table width is invalid"
+            )
+        flash_attn_num_splits = (
+            self._exact_greedy_cohort_burst_num_splits(
+                batch_size=batch_size,
+                block_table_width=block_table_width,
+            )
+        )
         device = self.kv_cache.device
         result_bundle = torch.full(
             (batch_size, 8, 2),
@@ -11185,6 +11238,8 @@ class ModelRunner:
                 slot_mapping=tensors["slot_mappings"],
                 context_lens=tensors["context_lengths"],
                 block_tables=tensors["block_tables"],
+                flash_attn_num_splits=flash_attn_num_splits,
+                force_attention_backend=True,
             )
             complete_step()
             torch.cuda.synchronize()
@@ -11195,6 +11250,8 @@ class ModelRunner:
                 slot_mapping=tensors["slot_mappings"],
                 context_lens=tensors["context_lengths"],
                 block_tables=tensors["block_tables"],
+                flash_attn_num_splits=flash_attn_num_splits,
+                force_attention_backend=True,
             )
             graph = torch.cuda.CUDAGraph()
             with torch.cuda.graph(graph, self.graph_pool):
