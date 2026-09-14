@@ -520,7 +520,7 @@ def _qualification_engine_config(
         "max_num_batched_tokens": 131_072,
         "max_model_len": 32_768,
         "max_num_prefill_tokens_per_step": 0,
-        "autoregressive_draft_command_timeline": True,
+        "autoregressive_draft_command_timeline": False,
         "autoregressive_draft_command_timeline_max_rows": 16_384,
         "exact_greedy_decode_burst": bool(cohort_enabled),
         "exact_greedy_decode_burst_tokens": 8,

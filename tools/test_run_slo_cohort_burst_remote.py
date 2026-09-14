@@ -372,8 +372,10 @@ def test_qualification_config_keeps_the_baseline_free_of_single_request_burst(
 
     assert candidate["exact_greedy_decode_burst"] is True
     assert candidate["exact_greedy_cohort_burst"] is True
+    assert candidate["autoregressive_draft_command_timeline"] is False
     assert baseline["exact_greedy_decode_burst"] is False
     assert baseline["exact_greedy_cohort_burst"] is False
+    assert baseline["autoregressive_draft_command_timeline"] is False
 
 
 def test_correctness_matrix_executes_every_bxk_pair_in_baseline_candidate_order(
