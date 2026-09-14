@@ -1738,7 +1738,7 @@ def _validate_lease_rows(lease: Mapping[str, object]) -> list[dict]:
                 "last_physical_slot",
                 "initial_completion_count",
                 "initial_sequence_length",
-                "remaining_output_budget",
+                "remaining_output_tokens",
             },
             "lease row",
         )
@@ -1750,7 +1750,7 @@ def _validate_lease_rows(lease: Mapping[str, object]) -> list[dict]:
             "first_physical_slot",
             "last_physical_slot",
             "initial_completion_count",
-            "remaining_output_budget",
+            "remaining_output_tokens",
         ):
             _integer(row[field], field)
         _integer(
@@ -1784,7 +1784,7 @@ def _validate_lease_rows(lease: Mapping[str, object]) -> list[dict]:
         ):
             raise ValueError("lease block identity mismatch")
         if (
-            row["remaining_output_budget"] < width
+            row["remaining_output_tokens"] < width
             or row["first_write_position"]
             != row["initial_sequence_length"] - 1
             or row["last_write_position"]
@@ -2019,7 +2019,7 @@ def _validate_executions(
             if (
                 authority["initial_sequence_length"]
                 != decision_state["context_bucket"]
-                or authority["remaining_output_budget"]
+                or authority["remaining_output_tokens"]
                 != decision_state["remaining_output_tokens"]
                 or authority["initial_completion_count"]
                 != (
@@ -2030,7 +2030,7 @@ def _validate_executions(
                         "candidate",
                         sequence_id,
                     )]["maximum_output_tokens"])
-                    - authority["remaining_output_budget"]
+                    - authority["remaining_output_tokens"]
                 )
                 or lease["authorized_width"]
                 > decision_state["writable_tokens"]

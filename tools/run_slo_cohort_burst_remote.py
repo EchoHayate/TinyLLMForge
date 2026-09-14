@@ -1000,6 +1000,7 @@ def _run_correctness_case(
     original_reserve_ns = (
         engine.scheduler.exact_greedy_cohort_burst_reserve_ns
     )
+    original_enforce_eager = engine.model_runner.enforce_eager
     _set_cohort_arm(
         engine,
         enabled=enabled,
@@ -1036,6 +1037,8 @@ def _run_correctness_case(
             ),
         ))
 
+    if not enabled and burst_width > 1:
+        engine.model_runner.enforce_eager = True
     try:
         _outputs, _count = engine.step(completion_only=True)
         first_observation = dict(engine.last_step_observation or {})
@@ -1155,6 +1158,7 @@ def _run_correctness_case(
         engine.scheduler.exact_greedy_cohort_burst_reserve_ns = (
             original_reserve_ns
         )
+        engine.model_runner.enforce_eager = original_enforce_eager
 
     rows = []
     for sequence_id in sequence_ids:

@@ -951,6 +951,7 @@ class _CorrectnessEngine:
             exact_greedy_cohort_burst_reserve_ns=2_000_000,
         )
         self.model_runner = SimpleNamespace(
+            enforce_eager=False,
             config=SimpleNamespace(exact_greedy_cohort_burst=True),
         )
         self.tokenizer = SimpleNamespace(
@@ -961,7 +962,9 @@ class _CorrectnessEngine:
         self._step = 0
         self._finished = True
         self._logits = None
+        self._target_steps = None
         self.recording = []
+        self.enforce_eager_states = []
 
     def is_finished(self):
         return self._finished
@@ -969,13 +972,17 @@ class _CorrectnessEngine:
     def enable_step_logits_authority_recording(self, enabled, **_kwargs):
         self.recording.append(enabled)
 
-    def add_request(self, _prompt, _sampling):
+    def add_request(self, _prompt, sampling):
         sequence_id = 10 + len(self._sequence_ids)
         self._sequence_ids.append(sequence_id)
+        self._target_steps = sampling["max_tokens"]
         self._finished = False
         return sequence_id
 
     def step(self, **_kwargs):
+        self.enforce_eager_states.append(
+            self.model_runner.enforce_eager
+        )
         self._step += 1
         if self._step == 1:
             deltas = {
@@ -997,7 +1004,7 @@ class _CorrectnessEngine:
                 logits[token[0]] = 1.0
                 self._logits.append(logits)
             outputs = []
-            if self._step == 3:
+            if self._step == self._target_steps:
                 self._finished = True
                 outputs = [
                     (sequence_id, [0, row_index + 1, row_index + 2])
@@ -1036,6 +1043,38 @@ def test_correctness_case_collects_ordered_k1_logits_and_tokens() -> None:
     ]
     assert engine.recording == [True, False]
     assert result["pending_leases_after_case"] == 0
+
+
+def test_correctness_baseline_forces_eager_only_during_case() -> None:
+    engine = _CorrectnessEngine()
+
+    remote._run_correctness_case(
+        engine=engine,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        source_commit="a" * 40,
+        batch_size=1,
+        burst_width=2,
+        arm="baseline",
+    )
+
+    assert engine.enforce_eager_states == [True, True, True]
+    assert engine.model_runner.enforce_eager is False
+
+
+def test_correctness_k1_baseline_preserves_runtime_execution_mode() -> None:
+    engine = _CorrectnessEngine()
+
+    remote._run_correctness_case(
+        engine=engine,
+        sampling_params_factory=lambda **kwargs: kwargs,
+        source_commit="a" * 40,
+        batch_size=1,
+        burst_width=1,
+        arm="baseline",
+    )
+
+    assert engine.enforce_eager_states == [False, False]
+    assert engine.model_runner.enforce_eager is False
 
 
 def test_correctness_candidate_width_contract_retains_k1(

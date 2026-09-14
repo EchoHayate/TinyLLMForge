@@ -495,7 +495,7 @@ def _lease_payload(
             "last_physical_slot": first_slot + 7,
             "initial_completion_count": 0,
             "initial_sequence_length": context_bucket,
-            "remaining_output_budget": remaining_tokens,
+            "remaining_output_tokens": remaining_tokens,
         })
     return {
         "schema_version": "exact-greedy-cohort-burst.lease.v1",
@@ -1204,9 +1204,9 @@ def _mutate(bundle: dict, mutation: str) -> None:
         authority["last_write_position"] += 1
         _refresh_execution_identities(row)
         _refresh_artifact_hash(bundle, "execution_rows.jsonl")
-    elif mutation == "lease_remaining_output_budget":
+    elif mutation == "lease_remaining_output_tokens":
         row = bundle["execution_rows"][0]
-        row["lease"]["rows"][0]["remaining_output_budget"] += 1
+        row["lease"]["rows"][0]["remaining_output_tokens"] += 1
         _refresh_execution_identities(row)
         _refresh_artifact_hash(bundle, "execution_rows.jsonl")
     elif mutation == "result_final_position":
@@ -1308,7 +1308,7 @@ def _mutate(bundle: dict, mutation: str) -> None:
         "missing_execution",
         "result_sequence_generation",
         "lease_initial_sequence_length",
-        "lease_remaining_output_budget",
+        "lease_remaining_output_tokens",
         "result_final_position",
         "result_final_context_length",
         "result_final_physical_slot",
