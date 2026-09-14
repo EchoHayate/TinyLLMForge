@@ -59,6 +59,15 @@ def parse_args():
         help="-1 表示 baseline；其余值是 quest top-k",
     )
     p.add_argument("--quest-min-seq-len", type=int, default=512)
+    p.add_argument(
+        "--quest-min-saved-blocks",
+        type=int,
+        default=0,
+        help=(
+            "minimum batch-wide avoided KV block dequantizations "
+            "required before Quest becomes active"
+        ),
+    )
     p.add_argument("--kv-cartridge-blocks", type=int, default=0,
                    help="KV-Cartridge v0：decode 时保留的 uniform KV block 数；0 表示关闭。与 Quest 分开评测。")
     p.add_argument("--kv-cartridge-min-seq-len", type=int, default=1024,
@@ -221,6 +230,84 @@ def clear_prefix_cache(llm) -> int:
             block.token_ids = []
             cleared += 1
     return cleared
+
+
+def _resolve_model_runner(llm):
+    for path in (
+        "model_runner",
+        "llm_engine.model_runner",
+        "engine.model_runner",
+    ):
+        target = llm
+        try:
+            for attribute in path.split("."):
+                target = getattr(target, attribute)
+        except AttributeError:
+            continue
+        if target is not None:
+            return target
+    return None
+
+
+def read_quest_activation_summary(llm):
+    runner = _resolve_model_runner(llm)
+    if runner is None:
+        return None
+    reader = getattr(runner, "quest_activation_summary", None)
+    if not callable(reader):
+        return None
+    try:
+        summary = reader()
+    except Exception:  # noqa: BLE001 - evidence, never control flow
+        return None
+    return dict(summary) if isinstance(summary, dict) else None
+
+
+def _counter_delta(before, after, key):
+    before_counts = before.get(key, {})
+    after_counts = after.get(key, {})
+    names = set(before_counts) | set(after_counts)
+    return {
+        str(name): int(after_counts.get(name, 0))
+        - int(before_counts.get(name, 0))
+        for name in sorted(names)
+        if int(after_counts.get(name, 0))
+        - int(before_counts.get(name, 0))
+        != 0
+    }
+
+
+def quest_activation_summary_delta(before, after):
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        return None
+    first_observation_id = int(
+        before.get("last_observation_id", 0)
+    ) + 1
+    last_observation_id = int(
+        after.get("last_observation_id", 0)
+    )
+    return {
+        "steps": int(after.get("steps", 0))
+        - int(before.get("steps", 0)),
+        "reason_counts": _counter_delta(
+            before,
+            after,
+            "reason_counts",
+        ),
+        "resolved_top_k_counts": _counter_delta(
+            before,
+            after,
+            "resolved_top_k_counts",
+        ),
+        "first_observation_id": first_observation_id,
+        "last_observation_id": last_observation_id,
+        "cumulative_saved_blocks_min": after.get(
+            "saved_blocks_min"
+        ),
+        "cumulative_saved_blocks_max": after.get(
+            "saved_blocks_max"
+        ),
+    }
 
 
 def _format_layer_list(layers: tuple[int, ...], max_items: int = 16) -> str:
@@ -495,6 +582,9 @@ def run_one_setting(llm, tokenizer, args, top_k: int):
     # C4 + Quest 叠加（β3）：attention.forward 里"先选 top-k 再 dequant"已支持
     llm.model_runner.config.quest_top_k_blocks = top_k
     llm.model_runner.config.quest_min_seq_len = args.quest_min_seq_len
+    llm.model_runner.config.quest_min_saved_blocks = (
+        args.quest_min_saved_blocks
+    )
 
     # 先组装所有 prompt（一次 generate 跑完）
     prompts, metas = build_eval_batch(tokenizer, args, top_k)
@@ -507,9 +597,11 @@ def run_one_setting(llm, tokenizer, args, top_k: int):
     # warmup
     llm.generate(["warmup"], SamplingParams(max_tokens=4), use_tqdm=False)
 
+    activation_before = read_quest_activation_summary(llm)
     t0 = time.time()
     outputs = llm.generate(prompts, sps, use_tqdm=False)
     dt = time.time() - t0
+    activation_after = read_quest_activation_summary(llm)
     total_out_tok = sum(len(o["token_ids"]) for o in outputs)
     throughput = total_out_tok / dt if dt > 0 else 0.0
 
@@ -543,6 +635,10 @@ def run_one_setting(llm, tokenizer, args, top_k: int):
         time_s=dt,
         per_setting=summary,
         details=results,
+        quest_activation=quest_activation_summary_delta(
+            activation_before,
+            activation_after,
+        ),
     )
 
     return out
@@ -557,6 +653,7 @@ def build_llm_kwargs(args, init_top_k: int) -> dict:
         max_num_seqs=args.max_num_seqs,
         quest_top_k_blocks=init_top_k,
         quest_min_seq_len=args.quest_min_seq_len,
+        quest_min_saved_blocks=args.quest_min_saved_blocks,
         kv_quant_bits=args.kv_quant_bits,
         kv_quant_group_size=args.kv_quant_group_size,
         kv_cartridge_blocks=args.kv_cartridge_blocks,

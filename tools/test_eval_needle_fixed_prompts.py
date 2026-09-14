@@ -123,6 +123,7 @@ def test_build_llm_kwargs_uses_configured_tp_size():
         gpu_memory_utilization=0.7,
         max_num_seqs=8,
         quest_min_seq_len=512,
+        quest_min_saved_blocks=128,
         kv_quant_bits=8,
         kv_quant_group_size=32,
         quantization="int4",
@@ -160,6 +161,7 @@ def test_build_llm_kwargs_uses_configured_tp_size():
 
     assert kwargs["tensor_parallel_size"] == 2
     assert kwargs["quest_top_k_blocks"] == 16
+    assert kwargs["quest_min_saved_blocks"] == 128
     assert kwargs["act_quant_skip_last"] == 4
     assert kwargs["kv_cartridge_blocks"] == 8
     assert kwargs["kv_cartridge_min_seq_len"] == 2048
@@ -190,6 +192,72 @@ def test_kv8_quest_quality_remote_runner_is_source_bound_and_paired():
     assert "--top-k-blocks-list -1 16" in source
 
 
+def test_quest_activation_summary_delta_preserves_missing_evidence():
+    assert (
+        eval_needle.quest_activation_summary_delta(None, None)
+        is None
+    )
+
+
+def test_quest_activation_summary_delta_subtracts_counters():
+    before = {
+        "steps": 2,
+        "reason_counts": {"active": 2},
+        "resolved_top_k_counts": {"16": 2},
+        "saved_blocks_min": 128,
+        "saved_blocks_max": 256,
+        "last_observation_id": 2,
+    }
+    after = {
+        "steps": 10,
+        "reason_counts": {
+            "active": 7,
+            "below_saved_blocks": 3,
+        },
+        "resolved_top_k_counts": {"-1": 3, "16": 7},
+        "saved_blocks_min": 64,
+        "saved_blocks_max": 400,
+        "last_observation_id": 10,
+    }
+
+    delta = eval_needle.quest_activation_summary_delta(
+        before,
+        after,
+    )
+
+    assert delta["steps"] == 8
+    assert delta["reason_counts"] == {
+        "active": 5,
+        "below_saved_blocks": 3,
+    }
+    assert delta["resolved_top_k_counts"] == {
+        "-1": 3,
+        "16": 5,
+    }
+    assert delta["first_observation_id"] == 3
+    assert delta["last_observation_id"] == 10
+    assert delta["cumulative_saved_blocks_min"] == 64
+    assert delta["cumulative_saved_blocks_max"] == 400
+
+
+def test_adaptive_quality_remote_runner_is_source_bound():
+    runner_path = os.path.join(
+        _THIS_DIR,
+        "run_kv8_quest_adaptive_quality_remote.sh",
+    )
+    source = open(runner_path, "r", encoding="utf-8").read()
+
+    assert (
+        'git archive "${SOURCE_REVISION}" -- tinyvllm '
+        "tools/eval_needle.py"
+    ) in source
+    assert "/data00/home/sitian/tllm/kvcapacity-runs/" in source
+    assert "--fixed-prompts" in source
+    assert "--kv-quant-bits 8" in source
+    assert "--top-k-blocks-list -1 16" in source
+    assert "--quest-min-saved-blocks 128" in source
+
+
 def main():
     test_fixed_prompts_reuse_same_magic_across_topk()
     test_default_prompts_keep_topk_seed_offset()
@@ -197,6 +265,9 @@ def main():
     test_clear_prefix_cache_drops_only_reusable_free_blocks()
     test_build_llm_kwargs_uses_configured_tp_size()
     test_kv8_quest_quality_remote_runner_is_source_bound_and_paired()
+    test_quest_activation_summary_delta_preserves_missing_evidence()
+    test_quest_activation_summary_delta_subtracts_counters()
+    test_adaptive_quality_remote_runner_is_source_bound()
     print("eval_needle fixed-prompt tests passed")
 
 
