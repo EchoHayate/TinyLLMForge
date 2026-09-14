@@ -10962,6 +10962,44 @@ class ModelRunner:
             bool(correctness_trace),
         )
 
+    def _compatible_cohort_graph(
+        self,
+        *,
+        batch_size: int,
+        block_table_width: int,
+        correctness_trace: bool,
+    ):
+        compatible = []
+        for key, graph in (
+            self.exact_greedy_cohort_burst_graphs.items()
+        ):
+            (
+                graph_batch_size,
+                graph_block_table_width,
+                graph_dtype,
+                graph_device,
+                graph_world_size,
+                graph_correctness_trace,
+            ) = key
+            if (
+                graph_batch_size == int(batch_size)
+                and graph_block_table_width
+                >= int(block_table_width)
+                and graph_dtype
+                == str(self.config.hf_config.torch_dtype)
+                and graph_device == str(self.kv_cache.device)
+                and graph_world_size == int(self.world_size)
+                and graph_correctness_trace
+                == bool(correctness_trace)
+            ):
+                compatible.append((
+                    graph_block_table_width,
+                    graph,
+                ))
+        if not compatible:
+            return None
+        return min(compatible, key=lambda item: item[0])[1]
+
     def exact_greedy_cohort_burst_capability(
         self,
         *,
@@ -10988,12 +11026,11 @@ class ModelRunner:
             self.config.am_compact_blocks > 0,
         )):
             reason = "mixed_mode_unsupported"
-        key = self._cohort_graph_key(
+        graph = self._compatible_cohort_graph(
             batch_size=batch_size,
             block_table_width=block_table_width,
             correctness_trace=correctness_trace,
         )
-        graph = self.exact_greedy_cohort_burst_graphs.get(key)
         if reason is None and graph is None:
             reason = "graph_unavailable"
         capability = (
@@ -11021,7 +11058,10 @@ class ModelRunner:
                 int(self._ordinary_graph_generation),
             ),
             "batch_size": batch_size,
-            "block_table_width": block_table_width,
+            "block_table_width": capability.get(
+                "block_table_width",
+                block_table_width,
+            ),
             "correctness_trace": correctness_trace,
         }
 
@@ -11107,14 +11147,6 @@ class ModelRunner:
             > self.config.exact_greedy_cohort_burst_max_batch_size
         ):
             raise ValueError("cohort graph batch size is invalid")
-        scratch_ids = tuple(
-            int(block_id)
-            for block_id in self._exact_greedy_burst_scratch_block_ids[
-                :batch_size
-            ]
-        )
-        if len(scratch_ids) != batch_size:
-            return None
         if block_table_width is None:
             block_table_width = (
                 self.config.max_model_len
@@ -11129,6 +11161,36 @@ class ModelRunner:
             raise ValueError(
                 "cohort graph block table width is invalid"
             )
+        compatible_graph = self._compatible_cohort_graph(
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            correctness_trace=correctness_trace,
+        )
+        if compatible_graph is not None:
+            return compatible_graph
+        block_table_width = max(
+            block_table_width,
+            (
+                self.config.max_model_len
+                + self.block_size
+                - 1
+            ) // self.block_size,
+        )
+        compatible_graph = self._compatible_cohort_graph(
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            correctness_trace=correctness_trace,
+        )
+        if compatible_graph is not None:
+            return compatible_graph
+        scratch_ids = tuple(
+            int(block_id)
+            for block_id in self._exact_greedy_burst_scratch_block_ids[
+                :batch_size
+            ]
+        )
+        if len(scratch_ids) != batch_size:
+            return None
         flash_attn_num_splits = (
             self._exact_greedy_cohort_burst_num_splits(
                 batch_size=batch_size,

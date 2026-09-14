@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import io
 import hashlib
 import json
@@ -736,6 +737,7 @@ def test_canonical_matrix_uses_separate_engine_per_repetition_arm(
     created = []
     released = []
     calls = []
+    captured = []
 
     def engine_factory(*, arm):
         engine = SimpleNamespace(
@@ -767,7 +769,7 @@ def test_canonical_matrix_uses_separate_engine_per_repetition_arm(
     monkeypatch.setattr(
         remote,
         "_capture_canonical_graphs",
-        lambda _engine: None,
+        lambda engine: captured.append(engine.name),
     )
     monkeypatch.setattr(
         remote,
@@ -820,10 +822,48 @@ def test_canonical_matrix_uses_separate_engine_per_repetition_arm(
         "candidate-2",
         "baseline-3",
     ]
+    assert captured == [
+        "baseline-0",
+        "candidate-1",
+        "candidate-2",
+        "baseline-3",
+    ]
     assert result["graph_identity_sha256_by_repetition"] == {
         "0": {"b1-w2-trace0": "a" * 64},
         "1": {"b1-w2-trace0": "b" * 64},
     }
+
+
+def test_canonical_worker_initializes_both_arms_as_cohort_capable():
+    source = Path(remote.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    worker = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "run_qualification_worker"
+    )
+    factory = next(
+        node
+        for node in ast.walk(worker)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "canonical_engine_factory"
+    )
+    create_call = next(
+        node
+        for node in ast.walk(factory)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_create_qualification_engine"
+    )
+    cohort_keyword = next(
+        keyword
+        for keyword in create_call.keywords
+        if keyword.arg == "cohort_enabled"
+    )
+
+    assert isinstance(cohort_keyword.value, ast.Constant)
+    assert cohort_keyword.value.value is True
 
 
 def test_canonical_matrix_drops_previous_engine_before_next_creation(

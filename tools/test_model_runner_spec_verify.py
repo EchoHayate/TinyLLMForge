@@ -6503,6 +6503,77 @@ def test_cohort_capture_accepts_an_exact_block_table_width():
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
+def test_cohort_capability_reuses_compatible_wider_graph():
+    runner = make_runner(exact_greedy_cohort_burst=True)
+    runner.config.hf_config = SimpleNamespace(
+        torch_dtype="bfloat16",
+    )
+    runner.kv_cache = SimpleNamespace(device="cuda:0")
+    identity = "a" * 64
+    graph = SimpleNamespace(
+        capability=lambda: {
+            "available": True,
+            "quarantined": False,
+            "graph_identity_sha256": identity,
+            "graph_generation": 7,
+            "batch_size": 2,
+            "block_table_width": 128,
+            "correctness_trace": False,
+        },
+    )
+    runner.exact_greedy_cohort_burst_graphs = {
+        runner._cohort_graph_key(
+            batch_size=2,
+            block_table_width=128,
+            correctness_trace=False,
+        ): graph,
+    }
+
+    capability = runner.exact_greedy_cohort_burst_capability(
+        batch_size=2,
+        block_table_width=2,
+    )
+
+    assert capability["available"] is True
+    assert capability["shape_supported"] is True
+    assert capability["graph_identity_sha256"] == identity
+    assert capability["block_table_width"] == 128
+
+
+def test_cohort_capture_reuses_compatible_wider_graph():
+    runner = make_runner(
+        exact_greedy_cohort_burst=True,
+        exact_greedy_cohort_burst_max_batch_size=8,
+    )
+    runner.config.hf_config = SimpleNamespace(
+        torch_dtype="bfloat16",
+    )
+    runner.kv_cache = SimpleNamespace(device="cuda:0")
+    graph = SimpleNamespace(
+        capability=lambda: {
+            "available": True,
+            "quarantined": False,
+            "graph_identity_sha256": "b" * 64,
+            "graph_generation": 3,
+            "batch_size": 1,
+            "block_table_width": 128,
+            "correctness_trace": False,
+        },
+    )
+    runner.exact_greedy_cohort_burst_graphs = {
+        runner._cohort_graph_key(
+            batch_size=1,
+            block_table_width=128,
+            correctness_trace=False,
+        ): graph,
+    }
+
+    assert runner.capture_exact_greedy_cohort_burst_graph(
+        1,
+        block_table_width=2,
+    ) is graph
+
+
 def test_cohort_capture_allocates_a_dedicated_cuda_graph_pool():
     source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
     tree = ast.parse(source)

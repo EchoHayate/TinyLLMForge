@@ -1443,12 +1443,12 @@ def _run_canonical_matrix_with_engine_factory(
                 _collect_qualification_engine_memory()
             active_engine = engine_factory(arm=arm)
             active_key = key
+            _capture_canonical_graphs(active_engine)
             _set_cohort_arm(
                 active_engine,
                 enabled=arm == "candidate",
             )
             if arm == "candidate":
-                _capture_canonical_graphs(active_engine)
                 repetition_key = str(trace_case["repetition"])
                 if repetition_key in graph_identities_by_repetition:
                     raise RuntimeError(
@@ -2601,10 +2601,11 @@ def run_qualification_worker(args) -> dict[str, object]:
         )
 
         def canonical_engine_factory(*, arm):
+            del arm
             return _create_qualification_engine(
                 model=args.model,
                 cost_table_path=cost_table_path,
-                cohort_enabled=arm == "candidate",
+                cohort_enabled=True,
             )
 
         canonical = _run_canonical_matrix_with_engine_factory(
