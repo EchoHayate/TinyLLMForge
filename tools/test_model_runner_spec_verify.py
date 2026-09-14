@@ -6503,7 +6503,7 @@ def test_cohort_capture_accepts_an_exact_block_table_width():
     assert parameter.kind is inspect.Parameter.KEYWORD_ONLY
 
 
-def test_cohort_capture_uses_an_isolated_cuda_graph_pool():
+def test_cohort_capture_allocates_a_dedicated_cuda_graph_pool():
     source = open(_MODEL_RUNNER_PATH, encoding="utf-8").read()
     tree = ast.parse(source)
     model_runner_class = next(
@@ -6530,12 +6530,28 @@ def test_cohort_capture_uses_an_isolated_cuda_graph_pool():
         and isinstance(node.func.value.value, ast.Name)
         and node.func.value.value.id == "torch"
     ]
+    pool_handle_calls = [
+        node
+        for node in ast.walk(capture_method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "graph_pool_handle"
+        and isinstance(node.func.value, ast.Attribute)
+        and node.func.value.attr == "cuda"
+        and isinstance(node.func.value.value, ast.Name)
+        and node.func.value.value.id == "torch"
+    ]
+
     assert len(graph_calls) == 1
     assert len(graph_calls[0].args) == 1
-    assert not any(
-        keyword.arg == "pool"
+    assert len(pool_handle_calls) == 1
+    pool_keyword = next(
+        keyword
         for keyword in graph_calls[0].keywords
+        if keyword.arg == "pool"
     )
+    assert isinstance(pool_keyword.value, ast.Name)
+    assert pool_keyword.value.id == "graph_pool"
 
 
 def test_cohort_capture_failure_is_recorded_without_blocking_other_shapes():
