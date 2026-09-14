@@ -174,12 +174,29 @@ def test_build_llm_kwargs_uses_configured_tp_size():
     assert kwargs["am_compact_decode_refit_mode"] == "selected"
 
 
+def test_kv8_quest_quality_remote_runner_is_source_bound_and_paired():
+    runner_path = os.path.join(_THIS_DIR, "run_kv8_quest_quality_remote.sh")
+    source = open(runner_path, "r", encoding="utf-8").read()
+
+    assert 'git archive "${SOURCE_REVISION}" -- tinyvllm tools/eval_needle.py' in source
+    assert "/data00/home/sitian/tllm/kvcapacity-runs/" in source
+    assert "--fixed-prompts" in source
+    assert "--needle-style newline" in source
+    assert "--context-lens 8192" in source
+    assert "--depths 0.0 0.25 0.5 0.75 1.0" in source
+    assert "--num-trials 5" in source
+    assert "--kv-quant-bits 0" in source
+    assert "--kv-quant-bits 8" in source
+    assert "--top-k-blocks-list -1 16" in source
+
+
 def main():
     test_fixed_prompts_reuse_same_magic_across_topk()
     test_default_prompts_keep_topk_seed_offset()
     test_newline_needle_style_delimits_inserted_needle()
     test_clear_prefix_cache_drops_only_reusable_free_blocks()
     test_build_llm_kwargs_uses_configured_tp_size()
+    test_kv8_quest_quality_remote_runner_is_source_bound_and_paired()
     print("eval_needle fixed-prompt tests passed")
 
 
