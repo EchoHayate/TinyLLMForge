@@ -1,6 +1,6 @@
 # KV8 + Quest Amortization-Aware Activation Design
 
-Date: 2026-09-15
+Date: 2026-09-14
 
 ## Objective
 
