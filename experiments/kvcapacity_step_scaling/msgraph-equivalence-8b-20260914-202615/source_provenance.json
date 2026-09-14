@@ -1,0 +1,7 @@
+{
+  "source_revision": "d333e71e1c9ff482ad1a96a8ab7bf18dd26d5990",
+  "tinyvllm_dirty_paths": 0,
+  "worker_sha256": "0dd6dbd51bbc718a62c93121701f688704d8fb60773c8d217d843cbc5be6b472",
+  "remote_dir": "/data00/home/sitian/tllm/kvcapacity-runs/msgraph-equivalence-8b-20260914-202615",
+  "cuda_device": "2"
+}

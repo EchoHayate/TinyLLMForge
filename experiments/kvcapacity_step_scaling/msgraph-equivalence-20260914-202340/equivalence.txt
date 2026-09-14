@@ -1,0 +1,10 @@
+multi-sequence decode graph against eager, greedy tokens
+================================================================
+prompt length 1024, batch 4, max tokens 32, seed 20260914
+eager   dispatch {'eager:feature_disabled': 31}
+msgraph dispatch {'eager:cold_identity': 3, 'graph': 28}
+
+sequences compared: 4, graph decode steps: 28
+VERDICT MATCH: every sequence produced identical token ids on both paths.
+The graph path is a legitimate execution path, so measurements taken on
+it describe the engine and not a corrupted forward.

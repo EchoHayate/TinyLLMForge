@@ -1,0 +1,44 @@
+GATE A: decode step scaling against the Stage 0 model
+========================================================================
+verdict INCONCLUSIVE
+  This run used a narrowed grid rather than the pre-registered one, so it can only demonstrate that the measurement works and cannot decide GATE A in either direction. The checks would have returned INCONCLUSIVE on this data, which is recorded as commentary only: 1 cells had a spread larger than 25% of their own median, so something other than steady decoding happened inside them. The median can survive that while the cell remains untrustworthy. Re-run those cells before concluding anything.
+  grid used: 1024:1;1024:2;1024:4;1024:8 (NOT pre-registered)
+  missing pre-registered cells: (8192,1), (8192,2), (8192,4), (8192,8), (8192,16), (8192,32), (16384,1), (16384,2), (16384,4), (16384,8) ...
+
+measured cells
+         L    B        L*B    step_ms    stdev    n
+      1024    1       1024     12.168    3.760   12
+      1024    2       2048     34.963    1.072   12
+      1024    4       4096     32.808    1.345   12
+      1024    8       8192     33.657    0.208   12
+
+batch 1 against batch 2, the CUDA graph regime boundary
+  L=1024: 12.168 ms at B=1 against 34.963 ms at B=2, ratio 2.87
+  these are different execution paths; Stage 0's c0 was fit at batch 1 and does not describe the multi-sequence regime its own capacity argument depends on
+
+fitted on: batch >= 2 only, because batch 1 runs a different execution path
+
+M1, the Stage 0 form
+  step_ms = c0 + c1 * L * B
+  c0 = 34.538 ms, c1 = -0.1525 us/token, R^2 = 0.1932
+
+M3, allowing the step to bend with resident tokens
+  step_ms = c0 + c1 * L * B + c2 * (L * B)^2
+  c0 = 38.837 ms, c1 = -2.3117 us/token, c2 = 2.050e-07 ms/token^2, R^2 = 1.0000
+  at L*B=8192, the quadratic term is 13.757 ms of 33.657 ms, or 40.9%
+
+measured against the frozen Stage 0 inputs
+  c0: 34.538 ms measured against 13.05 ms assumed, ratio 2.647
+  c1: -0.1525 us/token measured against 0.151 us/token assumed, ratio -1.010
+
+pre-registered checks
+  [FAIL] m1_r_squared: M1 R^2 0.1932 against threshold 0.98
+  [PASS (vacuous)] collision_consistency: no equal-product group was measured, so this check is vacuous
+  [PASS (vacuous)] batch_term_share: M2 could not be identified from the measured grid
+  [FAIL] curvature_share: the quadratic term explains 40.9% of the step at L=1024, B=8, against a tolerance of 10%
+  [PASS] window_stability: 3/3 cells held steady within 5% across their measured window
+  [FAIL] sample_dispersion: 3/4 cells kept their spread under 25% of their median; dispersed: L=1024 B=1 stdev/median 0.31
+  [FAIL] grid_coverage: 0/18 pre-registered cells produced a measurement; missing: (8192,1), (8192,2), (8192,4), (8192,8), (8192,16), (8192,32), (16384,1), (16384,2) ...
+  [PASS] batch_coverage: 3 distinct batches measured; at least 3 are needed to say anything about batch scaling
+
+report_sha256 9eaddcbbe7262ae4ba7f1064f62b8300bf60f9a38c13bc43200a7647e731f1a9

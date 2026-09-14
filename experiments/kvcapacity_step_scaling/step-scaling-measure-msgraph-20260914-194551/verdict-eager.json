@@ -1,0 +1,765 @@
+{
+  "attempted_but_unmeasured_cells": [],
+  "batch_term_at_largest_batch": {
+    "batch": 32,
+    "batch_term_ms": 6.175275153164666,
+    "context_length": 8192,
+    "predicted_step_ms": 66.61751462685282,
+    "share": 0.0926974713445025
+  },
+  "checks": [
+    {
+      "detail": "M1 R^2 0.9222 against threshold 0.98",
+      "name": "m1_r_squared",
+      "passed": false
+    },
+    {
+      "detail": "3/5 equal-product groups agree within 10%",
+      "name": "collision_consistency",
+      "passed": false,
+      "vacuous": false
+    },
+    {
+      "detail": "the pure batch term explains 9.3% of the step at L=8192, B=32, against a tolerance of 20%",
+      "name": "batch_term_share",
+      "passed": true
+    },
+    {
+      "detail": "the quadratic term explains 0.5% of the step at L=8192, B=32, against a tolerance of 10%",
+      "name": "curvature_share",
+      "passed": true
+    },
+    {
+      "detail": "16/18 cells held steady within 5% across their measured window; drifting: L=32768 B=4 ratio 0.938, L=40448 B=2 ratio 1.058",
+      "name": "window_stability",
+      "passed": false,
+      "vacuous": false
+    },
+    {
+      "detail": "17/18 cells kept their spread under 25% of their median; dispersed: L=8192 B=32 stdev/median 2.69",
+      "name": "sample_dispersion",
+      "passed": false,
+      "vacuous": false
+    },
+    {
+      "detail": "18/18 pre-registered cells produced a measurement",
+      "name": "grid_coverage",
+      "passed": true
+    },
+    {
+      "detail": "6 distinct batches measured; at least 3 are needed to say anything about batch scaling",
+      "name": "batch_coverage",
+      "passed": true
+    }
+  ],
+  "collision_groups": [
+    {
+      "kv_tokens": 16384,
+      "mean_ms": 41.37652611825615,
+      "relative_spread": 0.01215785803573425,
+      "shapes": [
+        [
+          8192,
+          2
+        ],
+        [
+          16384,
+          1
+        ]
+      ],
+      "step_ms": [
+        41.628051083534956,
+        41.12500115297735
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 32768,
+      "mean_ms": 43.78292375865082,
+      "relative_spread": 0.02952831932847604,
+      "shapes": [
+        [
+          8192,
+          4
+        ],
+        [
+          16384,
+          2
+        ],
+        [
+          32768,
+          1
+        ]
+      ],
+      "step_ms": [
+        43.95842598751187,
+        44.34159072116017,
+        43.04875456728041
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 65536,
+      "mean_ms": 46.90304794348776,
+      "relative_spread": 0.08437472978322041,
+      "shapes": [
+        [
+          8192,
+          8
+        ],
+        [
+          16384,
+          4
+        ],
+        [
+          32768,
+          2
+        ]
+      ],
+      "step_ms": [
+        45.522332889959216,
+        45.707046054303646,
+        49.47976488620043
+      ],
+      "within_threshold": true
+    },
+    {
+      "kv_tokens": 131072,
+      "mean_ms": 52.44546368097266,
+      "relative_spread": 0.10980592965327916,
+      "shapes": [
+        [
+          8192,
+          16
+        ],
+        [
+          16384,
+          8
+        ],
+        [
+          32768,
+          4
+        ]
+      ],
+      "step_ms": [
+        49.7505150269717,
+        52.07653809338808,
+        55.50933792255819
+      ],
+      "within_threshold": false
+    },
+    {
+      "kv_tokens": 262144,
+      "mean_ms": 63.999414055918656,
+      "relative_spread": 0.13483547201171717,
+      "shapes": [
+        [
+          8192,
+          32
+        ],
+        [
+          16384,
+          16
+        ],
+        [
+          32768,
+          8
+        ]
+      ],
+      "step_ms": [
+        69.71174571663141,
+        61.204141937196255,
+        61.082354513928294
+      ],
+      "within_threshold": false
+    }
+  ],
+  "consequence": "1 cells had a spread larger than 25% of their own median, so something other than steady decoding happened inside them. The median can survive that while the cell remains untrustworthy. Re-run those cells before concluding anything.",
+  "curvature_at_largest_product": {
+    "batch": 32,
+    "context_length": 8192,
+    "curvature_term_ms": -0.3076418835328646,
+    "kv_tokens": 262144,
+    "predicted_step_ms": 63.794091214868146,
+    "share": 0.004822419720608296
+  },
+  "fit_scope": "all measured batches",
+  "fitted_points": [
+    {
+      "batch": 1,
+      "context_length": 8192,
+      "dispersion_ratio": 0.014599657170717591,
+      "drift_ratio": 1.0044073394502269,
+      "kv_tokens": 8192,
+      "sample_count": 24,
+      "step_ms": 40.009247371926904,
+      "step_stdev_ms": 0.5841212952885666
+    },
+    {
+      "batch": 2,
+      "context_length": 8192,
+      "dispersion_ratio": 0.008462117963034034,
+      "drift_ratio": 1.0023372256336576,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 41.628051083534956,
+      "step_stdev_ms": 0.3522614788400796
+    },
+    {
+      "batch": 4,
+      "context_length": 8192,
+      "dispersion_ratio": 0.015963745794981183,
+      "drift_ratio": 1.0039266663817092,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 43.95842598751187,
+      "step_stdev_ms": 0.7017411380121342
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "dispersion_ratio": 0.00841336373971021,
+      "drift_ratio": 0.9900174879487021,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.522332889959216,
+      "step_stdev_ms": 0.3829959448834004
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "dispersion_ratio": 0.010874461059808138,
+      "drift_ratio": 1.0107888023833873,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.7505150269717,
+      "step_stdev_ms": 0.5410100383662033
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "dispersion_ratio": 2.69323498781383,
+      "drift_ratio": 0.9928455650306094,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 69.71174571663141,
+      "step_stdev_ms": 187.75011262561264
+    },
+    {
+      "batch": 1,
+      "context_length": 16384,
+      "dispersion_ratio": 0.06776302709842714,
+      "drift_ratio": 0.9711169993590331,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 41.12500115297735,
+      "step_stdev_ms": 2.7867545675520513
+    },
+    {
+      "batch": 2,
+      "context_length": 16384,
+      "dispersion_ratio": 0.050769488102081824,
+      "drift_ratio": 1.012963326729643,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 44.34159072116017,
+      "step_stdev_ms": 2.2511998625453233
+    },
+    {
+      "batch": 4,
+      "context_length": 16384,
+      "dispersion_ratio": 0.04609918204239984,
+      "drift_ratio": 0.9877628897605544,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.707046054303646,
+      "step_stdev_ms": 2.1070574366776973
+    },
+    {
+      "batch": 8,
+      "context_length": 16384,
+      "dispersion_ratio": 0.06325629278015284,
+      "drift_ratio": 0.9613829158057344,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 52.07653809338808,
+      "step_stdev_ms": 3.2941687406121387
+    },
+    {
+      "batch": 16,
+      "context_length": 16384,
+      "dispersion_ratio": 0.007512380900524142,
+      "drift_ratio": 1.011868421109613,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 61.204141937196255,
+      "step_stdev_ms": 0.4597888269219618
+    },
+    {
+      "batch": 1,
+      "context_length": 32768,
+      "dispersion_ratio": 0.07242337532280618,
+      "drift_ratio": 0.9842275822452979,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 43.04875456728041,
+      "step_stdev_ms": 3.117736109205516
+    },
+    {
+      "batch": 2,
+      "context_length": 32768,
+      "dispersion_ratio": 0.017024989454751054,
+      "drift_ratio": 0.9782412927440995,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 49.47976488620043,
+      "step_stdev_ms": 0.8423924754111237
+    },
+    {
+      "batch": 4,
+      "context_length": 32768,
+      "dispersion_ratio": 0.03905271567894247,
+      "drift_ratio": 0.9381924783657019,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 55.50933792255819,
+      "step_stdev_ms": 2.167790391416004
+    },
+    {
+      "batch": 8,
+      "context_length": 32768,
+      "dispersion_ratio": 0.020031074347869347,
+      "drift_ratio": 0.9706439968298703,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 61.082354513928294,
+      "step_stdev_ms": 1.2235451846114105
+    },
+    {
+      "batch": 1,
+      "context_length": 40448,
+      "dispersion_ratio": 0.0166106387661056,
+      "drift_ratio": 0.9960651049318909,
+      "kv_tokens": 40448,
+      "sample_count": 24,
+      "step_ms": 44.27066259086132,
+      "step_stdev_ms": 0.735363984232942
+    },
+    {
+      "batch": 2,
+      "context_length": 40448,
+      "dispersion_ratio": 0.03262494139750481,
+      "drift_ratio": 1.0582846063677456,
+      "kv_tokens": 80896,
+      "sample_count": 24,
+      "step_ms": 47.46099282056093,
+      "step_stdev_ms": 1.548412109438197
+    },
+    {
+      "batch": 4,
+      "context_length": 40448,
+      "dispersion_ratio": 0.013673214414256181,
+      "drift_ratio": 0.9893912265143721,
+      "kv_tokens": 161792,
+      "sample_count": 24,
+      "step_ms": 52.448648028075695,
+      "step_stdev_ms": 0.7171416102257336
+    }
+  ],
+  "grid_is_preregistered": true,
+  "grid_spec": "8192:1;8192:2;8192:4;8192:8;8192:16;8192:32;16384:1;16384:2;16384:4;16384:8;16384:16;32768:1;32768:2;32768:4;32768:8;40448:1;40448:2;40448:4",
+  "measured_points": [
+    {
+      "batch": 1,
+      "context_length": 8192,
+      "dispersion_ratio": 0.014599657170717591,
+      "drift_ratio": 1.0044073394502269,
+      "kv_tokens": 8192,
+      "sample_count": 24,
+      "step_ms": 40.009247371926904,
+      "step_stdev_ms": 0.5841212952885666
+    },
+    {
+      "batch": 2,
+      "context_length": 8192,
+      "dispersion_ratio": 0.008462117963034034,
+      "drift_ratio": 1.0023372256336576,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 41.628051083534956,
+      "step_stdev_ms": 0.3522614788400796
+    },
+    {
+      "batch": 4,
+      "context_length": 8192,
+      "dispersion_ratio": 0.015963745794981183,
+      "drift_ratio": 1.0039266663817092,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 43.95842598751187,
+      "step_stdev_ms": 0.7017411380121342
+    },
+    {
+      "batch": 8,
+      "context_length": 8192,
+      "dispersion_ratio": 0.00841336373971021,
+      "drift_ratio": 0.9900174879487021,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.522332889959216,
+      "step_stdev_ms": 0.3829959448834004
+    },
+    {
+      "batch": 16,
+      "context_length": 8192,
+      "dispersion_ratio": 0.010874461059808138,
+      "drift_ratio": 1.0107888023833873,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 49.7505150269717,
+      "step_stdev_ms": 0.5410100383662033
+    },
+    {
+      "batch": 32,
+      "context_length": 8192,
+      "dispersion_ratio": 2.69323498781383,
+      "drift_ratio": 0.9928455650306094,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 69.71174571663141,
+      "step_stdev_ms": 187.75011262561264
+    },
+    {
+      "batch": 1,
+      "context_length": 16384,
+      "dispersion_ratio": 0.06776302709842714,
+      "drift_ratio": 0.9711169993590331,
+      "kv_tokens": 16384,
+      "sample_count": 24,
+      "step_ms": 41.12500115297735,
+      "step_stdev_ms": 2.7867545675520513
+    },
+    {
+      "batch": 2,
+      "context_length": 16384,
+      "dispersion_ratio": 0.050769488102081824,
+      "drift_ratio": 1.012963326729643,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 44.34159072116017,
+      "step_stdev_ms": 2.2511998625453233
+    },
+    {
+      "batch": 4,
+      "context_length": 16384,
+      "dispersion_ratio": 0.04609918204239984,
+      "drift_ratio": 0.9877628897605544,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 45.707046054303646,
+      "step_stdev_ms": 2.1070574366776973
+    },
+    {
+      "batch": 8,
+      "context_length": 16384,
+      "dispersion_ratio": 0.06325629278015284,
+      "drift_ratio": 0.9613829158057344,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 52.07653809338808,
+      "step_stdev_ms": 3.2941687406121387
+    },
+    {
+      "batch": 16,
+      "context_length": 16384,
+      "dispersion_ratio": 0.007512380900524142,
+      "drift_ratio": 1.011868421109613,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 61.204141937196255,
+      "step_stdev_ms": 0.4597888269219618
+    },
+    {
+      "batch": 1,
+      "context_length": 32768,
+      "dispersion_ratio": 0.07242337532280618,
+      "drift_ratio": 0.9842275822452979,
+      "kv_tokens": 32768,
+      "sample_count": 24,
+      "step_ms": 43.04875456728041,
+      "step_stdev_ms": 3.117736109205516
+    },
+    {
+      "batch": 2,
+      "context_length": 32768,
+      "dispersion_ratio": 0.017024989454751054,
+      "drift_ratio": 0.9782412927440995,
+      "kv_tokens": 65536,
+      "sample_count": 24,
+      "step_ms": 49.47976488620043,
+      "step_stdev_ms": 0.8423924754111237
+    },
+    {
+      "batch": 4,
+      "context_length": 32768,
+      "dispersion_ratio": 0.03905271567894247,
+      "drift_ratio": 0.9381924783657019,
+      "kv_tokens": 131072,
+      "sample_count": 24,
+      "step_ms": 55.50933792255819,
+      "step_stdev_ms": 2.167790391416004
+    },
+    {
+      "batch": 8,
+      "context_length": 32768,
+      "dispersion_ratio": 0.020031074347869347,
+      "drift_ratio": 0.9706439968298703,
+      "kv_tokens": 262144,
+      "sample_count": 24,
+      "step_ms": 61.082354513928294,
+      "step_stdev_ms": 1.2235451846114105
+    },
+    {
+      "batch": 1,
+      "context_length": 40448,
+      "dispersion_ratio": 0.0166106387661056,
+      "drift_ratio": 0.9960651049318909,
+      "kv_tokens": 40448,
+      "sample_count": 24,
+      "step_ms": 44.27066259086132,
+      "step_stdev_ms": 0.735363984232942
+    },
+    {
+      "batch": 2,
+      "context_length": 40448,
+      "dispersion_ratio": 0.03262494139750481,
+      "drift_ratio": 1.0582846063677456,
+      "kv_tokens": 80896,
+      "sample_count": 24,
+      "step_ms": 47.46099282056093,
+      "step_stdev_ms": 1.548412109438197
+    },
+    {
+      "batch": 4,
+      "context_length": 40448,
+      "dispersion_ratio": 0.013673214414256181,
+      "drift_ratio": 0.9893912265143721,
+      "kv_tokens": 161792,
+      "sample_count": 24,
+      "step_ms": 52.448648028075695,
+      "step_stdev_ms": 0.7171416102257336
+    }
+  ],
+  "missing_preregistered_cells": [],
+  "model_m1": {
+    "c0_ms": 40.437405658594734,
+    "c1_us_per_token": 0.08921208363929597,
+    "form": "step_ms = c0 + c1 * L * B",
+    "parameters": 2,
+    "r_squared": 0.9221938450208503,
+    "residual_sum_squares": 86.64474917113611
+  },
+  "model_m2": {
+    "a_ms_per_sequence": 0.1929773485363958,
+    "c0_ms": 40.51073111407217,
+    "c1_us_per_token": 0.07603267043920893,
+    "form": "step_ms = c0 + a * B + c1 * L * B",
+    "parameters": 3,
+    "r_squared": 0.9376639094731687,
+    "residual_reduction_vs_m1": 0.1988282862257359,
+    "residual_sum_squares": 69.41732218298037
+  },
+  "model_m3": {
+    "c0_ms": 40.39030907728998,
+    "c1_us_per_token": 0.0904519043774072,
+    "c2_ms_per_token_squared": -4.476778609865354e-12,
+    "form": "step_ms = c0 + c1 * L * B + c2 * (L * B)^2",
+    "parameters": 3,
+    "r_squared": 0.9222055268014475,
+    "regressor_scale": 100000.0,
+    "residual_sum_squares": 86.63174036804097
+  },
+  "preregistered_cells": [
+    [
+      8192,
+      1
+    ],
+    [
+      8192,
+      2
+    ],
+    [
+      8192,
+      4
+    ],
+    [
+      8192,
+      8
+    ],
+    [
+      8192,
+      16
+    ],
+    [
+      8192,
+      32
+    ],
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      40448,
+      1
+    ],
+    [
+      40448,
+      2
+    ],
+    [
+      40448,
+      4
+    ]
+  ],
+  "preregistered_cells_v1": [
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      65536,
+      1
+    ],
+    [
+      65536,
+      2
+    ],
+    [
+      65536,
+      4
+    ],
+    [
+      131072,
+      1
+    ],
+    [
+      131072,
+      2
+    ]
+  ],
+  "regime_discontinuity": {
+    "comparisons": [
+      {
+        "batch_one_ms": 40.009247371926904,
+        "batch_two_ms": 41.628051083534956,
+        "context_length": 8192,
+        "ratio": 1.0404607389026745
+      },
+      {
+        "batch_one_ms": 41.12500115297735,
+        "batch_two_ms": 44.34159072116017,
+        "context_length": 16384,
+        "ratio": 1.0782149417143532
+      },
+      {
+        "batch_one_ms": 43.04875456728041,
+        "batch_two_ms": 49.47976488620043,
+        "context_length": 32768,
+        "ratio": 1.1493889982082772
+      },
+      {
+        "batch_one_ms": 44.27066259086132,
+        "batch_two_ms": 47.46099282056093,
+        "context_length": 40448,
+        "ratio": 1.0720642078295477
+      }
+    ],
+    "max_ratio": 1.1493889982082772,
+    "regimes_differ": false
+  },
+  "rejected_cells": [],
+  "report_sha256": "300c914068aadd2725b8ae39c2255057ac08af8fad12702e930e162855e7a4f4",
+  "schema": "kvcapacity-gate-a-verdict/1",
+  "source_payload_sha256": "4b5c31b708e8f04081aa606d98b0c18e89111515865fc1226fc72ba849c08ad3,9d7c6511f32744957980882f6b6f55bb3838c1cb058dcc3be40ad4b7ea2587ee,65a1f0c09501ab21940790a151ca8dbab88e1ba3f0c89f785c94b36e4aab3f89,59a713ad3810f305c559afe9e796ea6340c07c6b6e72b22855bb1ac7720b2bfb",
+  "stage0_comparison": {
+    "c0_ratio": 3.0986517746049604,
+    "c1_ratio": 0.5908085009224899,
+    "measured_c0_ms": 40.437405658594734,
+    "measured_c1_us_per_token": 0.08921208363929597,
+    "stage0_c0_ms": 13.05,
+    "stage0_c1_us_per_token": 0.151
+  },
+  "thresholds": {
+    "max_batch_term_share": 0.2,
+    "max_collision_spread": 0.1,
+    "max_curvature_share": 0.1,
+    "max_dispersion_ratio": 0.25,
+    "max_drift_deviation": 0.05,
+    "min_r_squared": 0.98
+  },
+  "verdict": "INCONCLUSIVE"
+}

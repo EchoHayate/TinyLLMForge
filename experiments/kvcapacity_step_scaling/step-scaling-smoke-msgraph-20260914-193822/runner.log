@@ -1,0 +1,316 @@
+=== msgraph-ctx1024 ===
+[rank0]:W0914 19:38:38.715000 140002391557120 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:38:38.835000 140002391557120 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:39:03.939000 140002391557120 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:39:03.993000 140002391557120 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:39:23.325000 140002391557120 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:39:23.472000 140002391557120 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps1 is not in var_ranges, defaulting to unknown range.
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 8017, in _capture_exact_multi_sequence_graph
+    self.model(
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 233, in forward
+    hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 199, in forward
+    hidden_states, residual = layer(positions, hidden_states, residual)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 174, in forward
+    hidden_states = self.self_attn(positions, hidden_states)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 96, in forward
+    q, k = self.rotary_emb(positions, q, k)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 433, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 1116, in __call__
+    return self._torchdynamo_orig_callable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 948, in __call__
+    result = self._inner_convert(
+             ^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 472, in __call__
+    return _compile(
+           ^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_utils_internal.py", line 84, in wrapper_function
+    return StrobelightCompileTimeProfiler.profile_compile_time(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_strobelight/compile_time_profiler.py", line 129, in profile_compile_time
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/contextlib.py", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 846, in _compile
+    raise InternalTorchDynamoError(str(e)).with_traceback(
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 817, in _compile
+    guarded_code = compile_inner(code, one_graph, hooks, transform)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/utils.py", line 231, in time_wrapper
+    r = func(*args, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 636, in compile_inner
+    out_code = transform_code_object(code, transform)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/bytecode_transformation.py", line 1185, in transform_code_object
+    transformations(instructions, code_options)
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 172, in _fn
+    cuda_rng_state = torch.cuda.get_rng_state()
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/cuda/random.py", line 40, in get_rng_state
+    return default_generator.get_state()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch._dynamo.exc.InternalTorchDynamoError: Cannot call CUDAGeneratorImpl::current_seed during CUDA graph capture. If you need this call to be captured, please file an issue. Current cudaStreamCaptureStatus: cudaStreamCaptureStatusActive
+
+
+You can suppress this exception and fall back to eager by setting:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 8106, in _capture_exact_multi_sequence_graph
+    raise _ExactGraphCaptureError(
+tinyvllm.engine.model_runner._ExactGraphCaptureError: exact CUDA Graph capture failed
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 8017, in _capture_exact_multi_sequence_graph
+    self.model(
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 233, in forward
+    hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 199, in forward
+    hidden_states, residual = layer(positions, hidden_states, residual)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 174, in forward
+    hidden_states = self.self_attn(positions, hidden_states)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 96, in forward
+    q, k = self.rotary_emb(positions, q, k)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 433, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 1116, in __call__
+    return self._torchdynamo_orig_callable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 948, in __call__
+    result = self._inner_convert(
+             ^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 472, in __call__
+    return _compile(
+           ^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_utils_internal.py", line 84, in wrapper_function
+    return StrobelightCompileTimeProfiler.profile_compile_time(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_strobelight/compile_time_profiler.py", line 129, in profile_compile_time
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/contextlib.py", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 846, in _compile
+    raise InternalTorchDynamoError(str(e)).with_traceback(
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 817, in _compile
+    guarded_code = compile_inner(code, one_graph, hooks, transform)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/utils.py", line 231, in time_wrapper
+    r = func(*args, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 636, in compile_inner
+    out_code = transform_code_object(code, transform)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/bytecode_transformation.py", line 1185, in transform_code_object
+    transformations(instructions, code_options)
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 172, in _fn
+    cuda_rng_state = torch.cuda.get_rng_state()
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/cuda/random.py", line 40, in get_rng_state
+    return default_generator.get_state()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch._dynamo.exc.InternalTorchDynamoError: Cannot call CUDAGeneratorImpl::current_seed during CUDA graph capture. If you need this call to be captured, please file an issue. Current cudaStreamCaptureStatus: cudaStreamCaptureStatusActive
+
+
+You can suppress this exception and fall back to eager by setting:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 8106, in _capture_exact_multi_sequence_graph
+    raise _ExactGraphCaptureError(
+tinyvllm.engine.model_runner._ExactGraphCaptureError: exact CUDA Graph capture failed
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 8017, in _capture_exact_multi_sequence_graph
+    self.model(
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 233, in forward
+    hidden_states = self.model(input_ids, positions, input_embeds=input_embeds)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 199, in forward
+    hidden_states, residual = layer(positions, hidden_states, residual)
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 174, in forward
+    hidden_states = self.self_attn(positions, hidden_states)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/models/qwen3.py", line 96, in forward
+    q, k = self.rotary_emb(positions, q, k)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/eval_frame.py", line 433, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 1116, in __call__
+    return self._torchdynamo_orig_callable(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 948, in __call__
+    result = self._inner_convert(
+             ^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 472, in __call__
+    return _compile(
+           ^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_utils_internal.py", line 84, in wrapper_function
+    return StrobelightCompileTimeProfiler.profile_compile_time(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_strobelight/compile_time_profiler.py", line 129, in profile_compile_time
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/contextlib.py", line 81, in inner
+    return func(*args, **kwds)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 846, in _compile
+    raise InternalTorchDynamoError(str(e)).with_traceback(
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 817, in _compile
+    guarded_code = compile_inner(code, one_graph, hooks, transform)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/utils.py", line 231, in time_wrapper
+    r = func(*args, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 636, in compile_inner
+    out_code = transform_code_object(code, transform)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/bytecode_transformation.py", line 1185, in transform_code_object
+    transformations(instructions, code_options)
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/_dynamo/convert_frame.py", line 172, in _fn
+    cuda_rng_state = torch.cuda.get_rng_state()
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/env/lib/python3.11/site-packages/torch/cuda/random.py", line 40, in get_rng_state
+    return default_generator.get_state()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch._dynamo.exc.InternalTorchDynamoError: Cannot call CUDAGeneratorImpl::current_seed during CUDA graph capture. If you need this call to be captured, please file an issue. Current cudaStreamCaptureStatus: cudaStreamCaptureStatusActive
+
+
+You can suppress this exception and fall back to eager by setting:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 7588, in _attempt_post_step_capture
+    entry = self._capture_exact_multi_sequence_graph(
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph-20260914-193822/source/tinyvllm/engine/model_runner.py", line 8106, in _capture_exact_multi_sequence_graph
+    raise _ExactGraphCaptureError(
+tinyvllm.engine.model_runner._ExactGraphCaptureError: exact CUDA Graph capture failed
+measured 4/4 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 79dfee05059986b49838fcd32ca025302d41ac0a6ba32f282129f50dbdb6c542

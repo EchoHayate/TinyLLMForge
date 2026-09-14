@@ -141,3 +141,33 @@ sweep 用到的 batch，重跑一遍 GATE A，就能知道常数能降到多少�
 - KV 字节的兑换率被量化：当前引擎上界 3.5×，天花板 ~2000 seq/s。
 - **发现该兑换率本身受引擎伪影污染**（多序列 decode 不走图，每步多付 ~27 ms）——这是本文档最重要的一条，
   也是"先修分母再选方向"的直接理由。
+
+---
+
+## 附录（2026-09-14 晚）：分母已实测修正，结论按新分母重排
+
+本文档正文里"27 ms 是引擎开销"当时只是代码推断。现在已经跑完实测，见
+`2026-09-14-gatea-rerun-multi-sequence-graph.md`。摘要：
+
+- 打开 `multi_sequence_cuda_graphs` 后还发现两层坑：捕获**每次都失败**（capture 区内触发
+  torch.compile 重编译，dynamo 读 CUDA RNG state，非法），以及捕获预算把 B=2 判成
+  `single_capture_budget`。都不体现在 step 时间上，是靠给每一步打 dispatch 标签抓出来的。
+  引擎修复见 commit `3c3b6b6a`。
+- 修好后 B≥2 全部 24/24 步真实 replay 捕获图。常数从 **40.44 ms 降到 11.74 ms**，
+  Stage 0 假设的 13.05 ms 基本被证实（比值 0.90）；`c1` 实测 0.161 us/token 对假设 0.151（比值 1.06）。
+- 正确性已验证：同 prompt greedy 解码，eager 与 graph 路径 token id **完全一致**
+  （0.6B L=1024 B=4，以及 8B L=8192 B=8）。
+
+因此本文档正文的方向定价要按下面改：
+
+| 结论（正文） | 现状 |
+|---|---|
+| 延迟轴已死，KV 字节不值钱 | **撤回**。L=8192,B=32 时 KV 项 42.1 ms / 63.6 ms = 66%；L=32768,B=8 时 74% |
+| 容量轴收益上界 ~3.5× | **作废**。两次 wall sweep 都跑在 eager 路径（每步多背 ~28 ms），人为压平了吞吐曲线 |
+| 优先做 Cartridges（压 token 数）而非 KV 字节 | **降级为待定**。引擎侧证据现在明显偏向 KV 字节这条线 |
+| latent 需要打败的基线 | **加强**。KV 字节现在值 42 ms，`kv_quant_bits=8/4` 能用极低成本吃掉大部分，低秩 latent 必须先赢过量化 |
+
+下一步顺序不变但内容换了：先把 wall sweep 在 graph 路径上重跑（需要把 allowlist 和
+static/reserved 捕获预算扩到 B=128/144，且还不确定这么宽的 page table 捕获能不能装下），
+再用 M2 常数（`c0 = 11.79 ms`, `a = 0.238 ms/seq`, `c1 = 0.161 us/token`）重算容量算术，
+最后才在 KV 字节线和 token 数线之间做选择。

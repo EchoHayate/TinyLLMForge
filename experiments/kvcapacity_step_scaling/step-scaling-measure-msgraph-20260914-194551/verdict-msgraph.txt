@@ -1,0 +1,71 @@
+GATE A: decode step scaling against the Stage 0 model
+========================================================================
+verdict INCONCLUSIVE
+  At least one cell was still warming up while it was being timed, so the numbers describe compilation as much as decoding. This refutes the measurement, not the Stage 0 model. Raise the warmup and re-run before concluding anything.
+
+measured cells
+         L    B        L*B    step_ms    stdev    n
+      8192    1       8192     13.924    0.186   24
+      8192    2      16384     16.482    0.634   24
+      8192    4      32768     17.824    0.571   24
+      8192    8      65536     23.232    0.133   24
+      8192   16     131072     33.602    0.172   24
+      8192   32     262144     63.086    0.717   24
+     16384    1      16384     15.231    0.468   24
+     16384    2      32768     17.884    0.536   24
+     16384    4      65536     23.707    0.398   24
+     16384    8     131072     33.807    0.186   24
+     16384   16     262144     56.375    0.650   24
+     32768    1      32768     17.712    0.322   24
+     32768    2      65536     23.215    0.921   24
+     32768    4     131072     33.475    2.696   24
+     32768    8     262144     53.890    0.506   24
+     40448    1      40448     18.838    0.511   24
+     40448    2      80896     25.384    1.008   24
+     40448    4     161792     38.537    1.431   24
+
+batch 1 against batch 2, the CUDA graph regime boundary
+  L=8192: 13.924 ms at B=1 against 16.482 ms at B=2, ratio 1.18
+  L=16384: 15.231 ms at B=1 against 17.884 ms at B=2, ratio 1.17
+  L=32768: 17.712 ms at B=1 against 23.215 ms at B=2, ratio 1.31
+  L=40448: 18.838 ms at B=1 against 25.384 ms at B=2, ratio 1.35
+  these are different execution paths; Stage 0's c0 was fit at batch 1 and does not describe the multi-sequence regime its own capacity argument depends on
+
+fitted on: batch >= 2 only, because batch 1 runs a different execution path
+
+M1, the Stage 0 form
+  step_ms = c0 + c1 * L * B
+  c0 = 11.992 ms, c1 = 0.1720 us/token, R^2 = 0.9818
+
+M2, with a pure batch term
+  step_ms = c0 + a * B + c1 * L * B
+  c0 = 12.052 ms, a = 0.2819 ms/seq, c1 = 0.1530 us/token, R^2 = 0.9940
+  residual reduction against M1: 67.2%
+  at L=8192 B=32, the batch term is 9.021 ms of 61.176 ms, or 14.7%
+
+M3, allowing the step to bend with resident tokens
+  step_ms = c0 + c1 * L * B + c2 * (L * B)^2
+  c0 = 13.812 ms, c1 = 0.1339 us/token, c2 = 1.288e-10 ms/token^2, R^2 = 0.9845
+  at L*B=262144, the quadratic term is 8.850 ms of 57.765 ms, or 15.3%
+
+equal-product cells, which M1 requires to cost the same
+  L*B=32768: (8192,4), (16384,2) -> 17.824 ms, 17.884 ms  spread 0.3%  ok
+  L*B=65536: (8192,8), (16384,4), (32768,2) -> 23.232 ms, 23.707 ms, 23.215 ms  spread 2.1%  ok
+  L*B=131072: (8192,16), (16384,8), (32768,4) -> 33.602 ms, 33.807 ms, 33.475 ms  spread 1.0%  ok
+  L*B=262144: (8192,32), (16384,16), (32768,8) -> 63.086 ms, 56.375 ms, 53.890 ms  spread 15.9%  MISMATCH
+
+measured against the frozen Stage 0 inputs
+  c0: 11.992 ms measured against 13.05 ms assumed, ratio 0.919
+  c1: 0.1720 us/token measured against 0.151 us/token assumed, ratio 1.139
+
+pre-registered checks
+  [PASS] m1_r_squared: M1 R^2 0.9818 against threshold 0.98
+  [FAIL] collision_consistency: 3/4 equal-product groups agree within 10%
+  [PASS] batch_term_share: the pure batch term explains 14.7% of the step at L=8192, B=32, against a tolerance of 20%
+  [FAIL] curvature_share: the quadratic term explains 15.3% of the step at L=8192, B=32, against a tolerance of 10%
+  [FAIL] window_stability: 12/14 cells held steady within 5% across their measured window; drifting: L=32768 B=2 ratio 0.920, L=40448 B=2 ratio 0.925
+  [PASS] sample_dispersion: 18/18 cells kept their spread under 25% of their median
+  [PASS] grid_coverage: 18/18 pre-registered cells produced a measurement
+  [PASS] batch_coverage: 5 distinct batches measured; at least 3 are needed to say anything about batch scaling
+
+report_sha256 75286ef833b3b8ba6b27f5c03caa84d7d17d3aa93ba5a578795b370953a9f49b

@@ -1,0 +1,8 @@
+{
+  "source_revision": "ace83657fddc12c44fa974e19549e812ae8352db",
+  "tinyvllm_dirty_paths": 1,
+  "worker_sha256": "4e4ebcb2127b19019b948fea23301c459f982e8cdbbd63a5698c1faf4388f80c",
+  "remote_dir": "/data00/home/sitian/tllm/kvcapacity-runs/step-scaling-smoke-msgraph2-20260914-194223",
+  "cuda_device": "2",
+  "mode": "smoke"
+}

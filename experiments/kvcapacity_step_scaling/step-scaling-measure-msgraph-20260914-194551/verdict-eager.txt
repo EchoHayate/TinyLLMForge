@@ -1,0 +1,71 @@
+GATE A: decode step scaling against the Stage 0 model
+========================================================================
+verdict INCONCLUSIVE
+  1 cells had a spread larger than 25% of their own median, so something other than steady decoding happened inside them. The median can survive that while the cell remains untrustworthy. Re-run those cells before concluding anything.
+
+measured cells
+         L    B        L*B    step_ms    stdev    n
+      8192    1       8192     40.009    0.584   24
+      8192    2      16384     41.628    0.352   24
+      8192    4      32768     43.958    0.702   24
+      8192    8      65536     45.522    0.383   24
+      8192   16     131072     49.751    0.541   24
+      8192   32     262144     69.712  187.750   24
+     16384    1      16384     41.125    2.787   24
+     16384    2      32768     44.342    2.251   24
+     16384    4      65536     45.707    2.107   24
+     16384    8     131072     52.077    3.294   24
+     16384   16     262144     61.204    0.460   24
+     32768    1      32768     43.049    3.118   24
+     32768    2      65536     49.480    0.842   24
+     32768    4     131072     55.509    2.168   24
+     32768    8     262144     61.082    1.224   24
+     40448    1      40448     44.271    0.735   24
+     40448    2      80896     47.461    1.548   24
+     40448    4     161792     52.449    0.717   24
+
+batch 1 against batch 2, the CUDA graph regime boundary
+  L=8192: 40.009 ms at B=1 against 41.628 ms at B=2, ratio 1.04
+  L=16384: 41.125 ms at B=1 against 44.342 ms at B=2, ratio 1.08
+  L=32768: 43.049 ms at B=1 against 49.480 ms at B=2, ratio 1.15
+  L=40448: 44.271 ms at B=1 against 47.461 ms at B=2, ratio 1.07
+
+fitted on: all measured batches
+
+M1, the Stage 0 form
+  step_ms = c0 + c1 * L * B
+  c0 = 40.437 ms, c1 = 0.0892 us/token, R^2 = 0.9222
+
+M2, with a pure batch term
+  step_ms = c0 + a * B + c1 * L * B
+  c0 = 40.511 ms, a = 0.1930 ms/seq, c1 = 0.0760 us/token, R^2 = 0.9377
+  residual reduction against M1: 19.9%
+  at L=8192 B=32, the batch term is 6.175 ms of 66.618 ms, or 9.3%
+
+M3, allowing the step to bend with resident tokens
+  step_ms = c0 + c1 * L * B + c2 * (L * B)^2
+  c0 = 40.390 ms, c1 = 0.0905 us/token, c2 = -4.477e-12 ms/token^2, R^2 = 0.9222
+  at L*B=262144, the quadratic term is -0.308 ms of 63.794 ms, or 0.5%
+
+equal-product cells, which M1 requires to cost the same
+  L*B=16384: (8192,2), (16384,1) -> 41.628 ms, 41.125 ms  spread 1.2%  ok
+  L*B=32768: (8192,4), (16384,2), (32768,1) -> 43.958 ms, 44.342 ms, 43.049 ms  spread 3.0%  ok
+  L*B=65536: (8192,8), (16384,4), (32768,2) -> 45.522 ms, 45.707 ms, 49.480 ms  spread 8.4%  ok
+  L*B=131072: (8192,16), (16384,8), (32768,4) -> 49.751 ms, 52.077 ms, 55.509 ms  spread 11.0%  MISMATCH
+  L*B=262144: (8192,32), (16384,16), (32768,8) -> 69.712 ms, 61.204 ms, 61.082 ms  spread 13.5%  MISMATCH
+
+measured against the frozen Stage 0 inputs
+  c0: 40.437 ms measured against 13.05 ms assumed, ratio 3.099
+  c1: 0.0892 us/token measured against 0.151 us/token assumed, ratio 0.591
+
+pre-registered checks
+  [FAIL] m1_r_squared: M1 R^2 0.9222 against threshold 0.98
+  [FAIL] collision_consistency: 3/5 equal-product groups agree within 10%
+  [PASS] batch_term_share: the pure batch term explains 9.3% of the step at L=8192, B=32, against a tolerance of 20%
+  [PASS] curvature_share: the quadratic term explains 0.5% of the step at L=8192, B=32, against a tolerance of 10%
+  [FAIL] window_stability: 16/18 cells held steady within 5% across their measured window; drifting: L=32768 B=4 ratio 0.938, L=40448 B=2 ratio 1.058
+  [FAIL] sample_dispersion: 17/18 cells kept their spread under 25% of their median; dispersed: L=8192 B=32 stdev/median 2.69
+  [PASS] grid_coverage: 18/18 pre-registered cells produced a measurement
+  [PASS] batch_coverage: 6 distinct batches measured; at least 3 are needed to say anything about batch scaling
+
+report_sha256 300c914068aadd2725b8ae39c2255057ac08af8fad12702e930e162855e7a4f4

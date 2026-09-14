@@ -1,0 +1,14 @@
+[rank0]:W0914 20:26:29.493000 140445041087488 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:26:29.618000 140445041087488 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:27:02.846000 140445041087488 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:27:02.980000 140445041087488 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+eager: 8 sequences, 15 decode steps, dispatch {'eager:feature_disabled': 15}
+[rank0]:W0914 20:27:51.747000 139715104207872 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:27:51.865000 139715104207872 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:28:23.041000 139715104207872 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:28:23.092000 139715104207872 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:28:47.339000 139715104207872 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:28:47.484000 139715104207872 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:29:22.965000 139715104207872 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:29:23.080000 139715104207872 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps1 is not in var_ranges, defaulting to unknown range.
+msgraph: 8 sequences, 15 decode steps, dispatch {'eager:cold_identity': 3, 'graph': 12}

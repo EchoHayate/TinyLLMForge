@@ -1,0 +1,397 @@
+{
+  "attempted_but_unmeasured_cells": [],
+  "batch_term_at_largest_batch": null,
+  "checks": [
+    {
+      "detail": "M1 R^2 0.5517 against threshold 0.98",
+      "name": "m1_r_squared",
+      "passed": false
+    },
+    {
+      "detail": "no equal-product group was measured, so this check is vacuous",
+      "name": "collision_consistency",
+      "passed": true,
+      "vacuous": true
+    },
+    {
+      "detail": "M2 could not be identified from the measured grid",
+      "name": "batch_term_share",
+      "passed": true,
+      "vacuous": true
+    },
+    {
+      "detail": "the quadratic term explains 2631.3% of the step at L=1024, B=8, against a tolerance of 10%",
+      "name": "curvature_share",
+      "passed": false
+    },
+    {
+      "detail": "3/3 cells held steady within 5% across their measured window",
+      "name": "window_stability",
+      "passed": true,
+      "vacuous": false
+    },
+    {
+      "detail": "4/4 cells kept their spread under 25% of their median",
+      "name": "sample_dispersion",
+      "passed": true,
+      "vacuous": false
+    },
+    {
+      "detail": "0/18 pre-registered cells produced a measurement; missing: (8192,1), (8192,2), (8192,4), (8192,8), (8192,16), (8192,32), (16384,1), (16384,2) ...",
+      "name": "grid_coverage",
+      "passed": false
+    },
+    {
+      "detail": "3 distinct batches measured; at least 3 are needed to say anything about batch scaling",
+      "name": "batch_coverage",
+      "passed": true
+    }
+  ],
+  "collision_groups": [],
+  "consequence": "This run used a narrowed grid rather than the pre-registered one, so it can only demonstrate that the measurement works and cannot decide GATE A in either direction. The checks would have returned INCONCLUSIVE on this data, which is recorded as commentary only: 18 pre-registered cells produced no measurement, so the grid the thresholds were registered against was not actually covered. A missing cell is a gap in the measurement, not evidence against the Stage 0 model. Recover those cells or re-register the grid with the reason, then re-run.",
+  "curvature_at_largest_product": {
+    "batch": 8,
+    "context_length": 1024,
+    "curvature_term_ms": 143.41521014769305,
+    "kv_tokens": 8192,
+    "predicted_step_ms": 5.450289929285532,
+    "share": 26.313317641524637
+  },
+  "fit_scope": "batch >= 2 only, because batch 1 runs a different execution path",
+  "fitted_points": [
+    {
+      "batch": 2,
+      "context_length": 1024,
+      "dispersion_ratio": 0.007941333524775787,
+      "drift_ratio": 0.9933465620751749,
+      "kv_tokens": 2048,
+      "sample_count": 12,
+      "step_ms": 31.436924589797854,
+      "step_stdev_ms": 0.24965110316081002
+    },
+    {
+      "batch": 4,
+      "context_length": 1024,
+      "dispersion_ratio": 0.03311890028709282,
+      "drift_ratio": 0.9983484615891126,
+      "kv_tokens": 4096,
+      "sample_count": 12,
+      "step_ms": 4.847811767831445,
+      "step_stdev_ms": 0.16055419454940478
+    },
+    {
+      "batch": 8,
+      "context_length": 1024,
+      "dispersion_ratio": 0.02332789863341726,
+      "drift_ratio": 0.9985659676864491,
+      "kv_tokens": 8192,
+      "sample_count": 12,
+      "step_ms": 5.4502899292856455,
+      "step_stdev_ms": 0.12714381099311045
+    }
+  ],
+  "grid_is_preregistered": false,
+  "grid_spec": "1024:1;1024:2;1024:4;1024:8",
+  "measured_points": [
+    {
+      "batch": 1,
+      "context_length": 1024,
+      "dispersion_ratio": 0.04949161750441156,
+      "drift_ratio": 1.0041226401633285,
+      "kv_tokens": 1024,
+      "sample_count": 12,
+      "step_ms": 3.4791745711117983,
+      "step_stdev_ms": 0.17218997710454026
+    },
+    {
+      "batch": 2,
+      "context_length": 1024,
+      "dispersion_ratio": 0.007941333524775787,
+      "drift_ratio": 0.9933465620751749,
+      "kv_tokens": 2048,
+      "sample_count": 12,
+      "step_ms": 31.436924589797854,
+      "step_stdev_ms": 0.24965110316081002
+    },
+    {
+      "batch": 4,
+      "context_length": 1024,
+      "dispersion_ratio": 0.03311890028709282,
+      "drift_ratio": 0.9983484615891126,
+      "kv_tokens": 4096,
+      "sample_count": 12,
+      "step_ms": 4.847811767831445,
+      "step_stdev_ms": 0.16055419454940478
+    },
+    {
+      "batch": 8,
+      "context_length": 1024,
+      "dispersion_ratio": 0.02332789863341726,
+      "drift_ratio": 0.9985659676864491,
+      "kv_tokens": 8192,
+      "sample_count": 12,
+      "step_ms": 5.4502899292856455,
+      "step_stdev_ms": 0.12714381099311045
+    }
+  ],
+  "missing_preregistered_cells": [
+    [
+      8192,
+      1
+    ],
+    [
+      8192,
+      2
+    ],
+    [
+      8192,
+      4
+    ],
+    [
+      8192,
+      8
+    ],
+    [
+      8192,
+      16
+    ],
+    [
+      8192,
+      32
+    ],
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      40448,
+      1
+    ],
+    [
+      40448,
+      2
+    ],
+    [
+      40448,
+      4
+    ]
+  ],
+  "model_m1": {
+    "c0_ms": 31.135685509070754,
+    "c1_us_per_token": -3.604354787967168,
+    "form": "step_ms = c0 + c1 * L * B",
+    "parameters": 2,
+    "r_squared": 0.5517356386452408,
+    "residual_sum_squares": 206.59743584305497
+  },
+  "model_m2": {
+    "error": "design matrix is singular; the grid cannot identify this model"
+  },
+  "model_m3": {
+    "c0_ms": 75.95293868022475,
+    "c1_us_per_token": -26.113019885086945,
+    "c2_ms_per_token_squared": 2.13705316406031e-06,
+    "form": "step_ms = c0 + c1 * L * B + c2 * (L * B)^2",
+    "parameters": 3,
+    "r_squared": 1.0,
+    "regressor_scale": 100000.0,
+    "residual_sum_squares": 3.259951913607727e-25
+  },
+  "preregistered_cells": [
+    [
+      8192,
+      1
+    ],
+    [
+      8192,
+      2
+    ],
+    [
+      8192,
+      4
+    ],
+    [
+      8192,
+      8
+    ],
+    [
+      8192,
+      16
+    ],
+    [
+      8192,
+      32
+    ],
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      40448,
+      1
+    ],
+    [
+      40448,
+      2
+    ],
+    [
+      40448,
+      4
+    ]
+  ],
+  "preregistered_cells_v1": [
+    [
+      16384,
+      1
+    ],
+    [
+      16384,
+      2
+    ],
+    [
+      16384,
+      4
+    ],
+    [
+      16384,
+      8
+    ],
+    [
+      16384,
+      16
+    ],
+    [
+      32768,
+      1
+    ],
+    [
+      32768,
+      2
+    ],
+    [
+      32768,
+      4
+    ],
+    [
+      32768,
+      8
+    ],
+    [
+      65536,
+      1
+    ],
+    [
+      65536,
+      2
+    ],
+    [
+      65536,
+      4
+    ],
+    [
+      131072,
+      1
+    ],
+    [
+      131072,
+      2
+    ]
+  ],
+  "regime_discontinuity": {
+    "comparisons": [
+      {
+        "batch_one_ms": 3.4791745711117983,
+        "batch_two_ms": 31.436924589797854,
+        "context_length": 1024,
+        "ratio": 9.03574222771809
+      }
+    ],
+    "max_ratio": 9.03574222771809,
+    "regimes_differ": true
+  },
+  "rejected_cells": [],
+  "report_sha256": "7741809aaaff41eaf39cb033325e3ae710bc3fdfbefe8467219a373abdfe51ef",
+  "schema": "kvcapacity-gate-a-verdict/1",
+  "source_payload_sha256": "db4ed94eb1e9e200accd5fdfeae9a2a02135736a93358688db1ea4456f07faab",
+  "stage0_comparison": {
+    "c0_ratio": 2.385876284219981,
+    "c1_ratio": -23.869899258060716,
+    "measured_c0_ms": 31.135685509070754,
+    "measured_c1_us_per_token": -3.604354787967168,
+    "stage0_c0_ms": 13.05,
+    "stage0_c1_us_per_token": 0.151
+  },
+  "thresholds": {
+    "max_batch_term_share": 0.2,
+    "max_collision_spread": 0.1,
+    "max_curvature_share": 0.1,
+    "max_dispersion_ratio": 0.25,
+    "max_drift_deviation": 0.05,
+    "min_r_squared": 0.98
+  },
+  "verdict": "INCONCLUSIVE"
+}

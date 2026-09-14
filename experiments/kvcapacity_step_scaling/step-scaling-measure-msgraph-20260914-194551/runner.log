@@ -1,0 +1,88 @@
+=== msgraph-ctx8192 ===
+[rank0]:W0914 19:46:21.060000 140577882891264 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:46:21.208000 140577882891264 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:46:53.040000 140577882891264 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:46:53.093000 140577882891264 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:47:16.326000 140577882891264 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:47:16.468000 140577882891264 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:47:49.130000 140577882891264 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:47:49.240000 140577882891264 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps1 is not in var_ranges, defaulting to unknown range.
+measured 6/6 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 08731b57e7ccde08c1b3fbe99d56cecb45a3aaffb9dfb08b76e7cbff3c5d8cd9
+=== msgraph-ctx16384 ===
+[rank0]:W0914 19:48:54.886000 140289658659840 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:48:55.009000 140289658659840 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:49:26.248000 140289658659840 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:49:26.303000 140289658659840 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:49:49.741000 140289658659840 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:49:49.862000 140289658659840 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:50:23.947000 140289658659840 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:50:24.053000 140289658659840 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps1 is not in var_ranges, defaulting to unknown range.
+measured 5/5 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 70e28916b1a10d9cf4b846ab8dbe88f4efb01ad5c502b8c02e9d8f84ce6c4820
+=== msgraph-ctx32768 ===
+[rank0]:W0914 19:51:32.763000 139694613873664 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:51:32.885000 139694613873664 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:52:03.730000 139694613873664 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:52:03.785000 139694613873664 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:52:27.730000 139694613873664 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:52:27.850000 139694613873664 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:53:07.720000 139694613873664 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:53:07.817000 139694613873664 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps1 is not in var_ranges, defaulting to unknown range.
+measured 4/4 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 92a4a891fd7f0f867b6edcf987f319a74535732004e5919722f1bcb1c096252f
+=== msgraph-ctx40448 ===
+[rank0]:W0914 19:54:19.761000 139720638800896 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:54:19.907000 139720638800896 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:54:51.499000 139720638800896 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:54:51.552000 139720638800896 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:55:15.940000 139720638800896 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:55:16.071000 139720638800896 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:55:58.694000 139720638800896 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:55:58.789000 139720638800896 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps1 is not in var_ranges, defaulting to unknown range.
+measured 3/3 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 62287239905e708b28503095fa81aa27af6ee570bfff7de6af2df02aa7c45551
+=== eager-ctx8192 ===
+[rank0]:W0914 19:56:41.082000 140653877531648 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:56:41.201000 140653877531648 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:57:12.240000 140653877531648 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:57:12.359000 140653877531648 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:57:42.412000 140653877531648 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:57:42.464000 140653877531648 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+measured 6/6 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 4b5c31b708e8f04081aa606d98b0c18e89111515865fc1226fc72ba849c08ad3
+=== eager-ctx16384 ===
+[rank0]:W0914 19:59:12.083000 139832515818496 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:59:12.209000 139832515818496 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:59:44.742000 139832515818496 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 19:59:44.869000 139832515818496 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:00:15.913000 139832515818496 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:00:15.965000 139832515818496 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+measured 5/5 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 9d7c6511f32744957980882f6b6f55bb3838c1cb058dcc3be40ad4b7ea2587ee
+=== eager-ctx32768 ===
+[rank0]:W0914 20:01:49.469000 139709694510080 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:01:49.614000 139709694510080 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:02:21.429000 139709694510080 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:02:21.564000 139709694510080 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:02:52.048000 139709694510080 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:02:52.099000 139709694510080 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+measured 4/4 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 65a1f0c09501ab21940790a151ca8dbab88e1ba3f0c89f785c94b36e4aab3f89
+=== eager-ctx40448 ===
+[rank0]:W0914 20:04:31.567000 139868912010240 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:04:31.686000 139868912010240 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:05:03.199000 139868912010240 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:05:03.319000 139868912010240 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:05:33.050000 139868912010240 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0914 20:05:33.104000 139868912010240 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+measured 3/3 cells
+WARNING: this run used a narrowed grid, so it is a plumbing check and not the pre-registered GATE A measurement
+payload_sha256 59a713ad3810f305c559afe9e796ea6340c07c6b6e72b22855bb1ac7720b2bfb
