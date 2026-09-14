@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Sequence
 
 
@@ -13,6 +13,69 @@ class QuestActivationDecision:
     saved_blocks: int | None
     batch_size: int
     reason: str
+
+
+class QuestActivationTelemetry:
+    def __init__(self) -> None:
+        self._observation_id = 0
+        self._latest = None
+        self._reason_counts = {}
+        self._resolved_top_k_counts = {}
+        self._saved_blocks_min = None
+        self._saved_blocks_max = None
+
+    def publish(
+        self,
+        decision: QuestActivationDecision,
+    ) -> dict:
+        self._observation_id += 1
+        event = {
+            "observation_id": self._observation_id,
+            **asdict(decision),
+        }
+        self._latest = event
+        self._reason_counts[decision.reason] = (
+            self._reason_counts.get(decision.reason, 0) + 1
+        )
+        resolved_key = str(decision.resolved_top_k)
+        self._resolved_top_k_counts[resolved_key] = (
+            self._resolved_top_k_counts.get(resolved_key, 0) + 1
+        )
+        if decision.saved_blocks is not None:
+            if self._saved_blocks_min is None:
+                self._saved_blocks_min = decision.saved_blocks
+                self._saved_blocks_max = decision.saved_blocks
+            else:
+                self._saved_blocks_min = min(
+                    self._saved_blocks_min,
+                    decision.saved_blocks,
+                )
+                self._saved_blocks_max = max(
+                    self._saved_blocks_max,
+                    decision.saved_blocks,
+                )
+        return dict(event)
+
+    def observation(self) -> dict | None:
+        return (
+            None
+            if self._latest is None
+            else dict(self._latest)
+        )
+
+    def summary(self) -> dict:
+        return {
+            "steps": self._observation_id,
+            "reason_counts": dict(
+                sorted(self._reason_counts.items())
+            ),
+            "resolved_top_k_counts": dict(
+                sorted(self._resolved_top_k_counts.items())
+            ),
+            "saved_blocks_min": self._saved_blocks_min,
+            "saved_blocks_max": self._saved_blocks_max,
+            "last_observation_id": self._observation_id,
+        }
 
 
 def _decision(

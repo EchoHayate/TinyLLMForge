@@ -13,6 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "tinyvllm" / "engine" / "quest_activation.py"
 CONFIG_PATH = ROOT / "tinyvllm" / "config.py"
+MODEL_RUNNER_PATH = ROOT / "tinyvllm" / "engine" / "model_runner.py"
 
 
 def _load_policy_module():
@@ -30,7 +31,8 @@ def _load_policy_module():
     return module
 
 
-resolve_quest_activation = _load_policy_module().resolve_quest_activation
+policy_module = _load_policy_module()
+resolve_quest_activation = policy_module.resolve_quest_activation
 
 
 def _load_config_class():
@@ -205,3 +207,103 @@ def test_config_rejects_invalid_saved_block_threshold(value):
                 model=model,
                 quest_min_saved_blocks=value,
             )
+
+
+def test_activation_telemetry_publishes_latest_event_and_summary():
+    telemetry = policy_module.QuestActivationTelemetry()
+    fallback = _resolve(batch=4)
+    active = _resolve(batch=8)
+
+    telemetry.publish(fallback)
+    latest = telemetry.publish(active)
+
+    assert latest == {
+        "observation_id": 2,
+        "requested_top_k": 16,
+        "resolved_top_k": 16,
+        "min_seq_len": 512,
+        "min_saved_blocks": 128,
+        "saved_blocks": 128,
+        "batch_size": 8,
+        "reason": "active",
+    }
+    assert telemetry.observation() == latest
+    assert telemetry.summary() == {
+        "steps": 2,
+        "reason_counts": {
+            "active": 1,
+            "below_saved_blocks": 1,
+        },
+        "resolved_top_k_counts": {
+            "-1": 1,
+            "16": 1,
+        },
+        "saved_blocks_min": 64,
+        "saved_blocks_max": 128,
+        "last_observation_id": 2,
+    }
+
+
+def test_activation_telemetry_returns_defensive_copies():
+    telemetry = policy_module.QuestActivationTelemetry()
+    telemetry.publish(_resolve(batch=8))
+
+    event = telemetry.observation()
+    summary = telemetry.summary()
+    event["reason"] = "mutated"
+    summary["reason_counts"]["active"] = 999
+
+    assert telemetry.observation()["reason"] == "active"
+    assert telemetry.summary()["reason_counts"]["active"] == 1
+
+
+def test_model_runner_wires_adaptive_policy_without_device_reads():
+    source = MODEL_RUNNER_PATH.read_text(encoding="utf-8")
+
+    assert (
+        "from tinyvllm.engine.quest_activation import ("
+        in source
+    )
+    assert "QuestActivationTelemetry" in source
+    assert "resolve_quest_activation" in source
+    policy_call = source[
+        source.index("quest_decision = resolve_quest_activation("):
+        source.index(
+            "self._publish_quest_activation(quest_decision)",
+        )
+    ]
+    assert "getattr(" in policy_call
+    assert '"quest_min_saved_blocks"' in policy_call
+    assert "0," in policy_call
+    assert (
+        "sequence_lengths=[len(seq) for seq in seqs]"
+        in source
+    )
+    assert (
+        "sequence_block_counts=[seq.num_blocks for seq in seqs]"
+        in source
+    )
+    assert ".item()" not in source[
+        source.index("resolve_quest_activation("):
+        source.index("set_context(", source.index("resolve_quest_activation("))
+    ]
+    assert (
+        "quest_top_k_blocks=quest_decision.resolved_top_k"
+        in source
+    )
+    assert "self._publish_quest_activation(quest_decision)" in source
+
+
+def test_model_runner_exposes_activation_observation_and_summary():
+    source = MODEL_RUNNER_PATH.read_text(encoding="utf-8")
+
+    assert "def quest_activation_observation(self) -> dict | None:" in source
+    assert "def quest_activation_summary(self) -> dict:" in source
+    assert (
+        "return self._quest_activation_telemetry().observation()"
+        in source
+    )
+    assert (
+        "return self._quest_activation_telemetry().summary()"
+        in source
+    )

@@ -86,6 +86,10 @@ from tinyvllm.engine.greedy_sampling_fast_path import (
     GreedySamplingFastPathStats,
     decide_greedy_sampling_fast_path,
 )
+from tinyvllm.engine.quest_activation import (
+    QuestActivationTelemetry,
+    resolve_quest_activation,
+)
 from tinyvllm.engine.graph_resident_greedy_tail import (
     GraphResidentGreedyTail,
     GraphResidentGreedyTailReplay,
@@ -2729,6 +2733,9 @@ class ModelRunner:
 
         self.last_cuda_graph_dispatch_event = None
         self._cuda_graph_step_id = 0
+        self.quest_activation_telemetry = (
+            QuestActivationTelemetry()
+        )
         self._cuda_graph_request_ids_hash = hashlib.sha256(
             b"[]"
         ).hexdigest()
@@ -10390,24 +10397,27 @@ class ModelRunner:
         #   3) **短序列保护**：top_k * block_size 已经 >= 最长 seq * 0.8 时，
         #      Quest 能裁掉的块 <20%，selection overhead 远超收益 → 降级 full attention
         #      （kv-sparse-attention.md §5.5 #4）
-        cfg_top_k = self.config.quest_top_k_blocks if not (cartridge_active or am_compact_active) else -1
+        cfg_top_k = self.config.quest_top_k_blocks
         cfg_min_len = self.config.quest_min_seq_len
-        if cfg_top_k > 0 and seqs:
-            min_seq_len_host = min(len(s) for s in seqs)
-            min_blocks_host = min(s.num_blocks for s in seqs)
-            max_seq_len_host = max(len(s) for s in seqs)
-            cover = cfg_top_k * self.block_size  # top-k 已能覆盖的 token 数
-            short_seq_skip = cover >= max_seq_len_host * 0.8
-            quest_active_top_k = cfg_top_k if (
-                min_seq_len_host >= cfg_min_len
-                and min_blocks_host > cfg_top_k
-                and not short_seq_skip
-            ) else -1
-        else:
-            quest_active_top_k = -1
+        quest_decision = resolve_quest_activation(
+            requested_top_k=cfg_top_k,
+            min_seq_len=cfg_min_len,
+            min_saved_blocks=getattr(
+                self.config,
+                "quest_min_saved_blocks",
+                0,
+            ),
+            block_size=self.block_size,
+            sequence_lengths=[len(seq) for seq in seqs],
+            sequence_block_counts=[seq.num_blocks for seq in seqs],
+            incompatible_feature=(
+                cartridge_active or am_compact_active
+            ),
+        )
+        self._publish_quest_activation(quest_decision)
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables,
                     flash_attn_num_splits=flash_attn_num_splits,
-                    quest_top_k_blocks=quest_active_top_k,
+                    quest_top_k_blocks=quest_decision.resolved_top_k,
                     quest_min_seq_len=cfg_min_len,
                     am_compact_blocks=(self.config.am_compact_blocks if am_compact_active else 0),
                     am_compact_selector=self.config.am_compact_selector,
@@ -10448,6 +10458,31 @@ class ModelRunner:
 
     def zero_temperature_greedy_fast_path_summary(self) -> dict:
         return self.greedy_sampling_fast_path_stats.summary()
+
+    def _quest_activation_telemetry(
+        self,
+    ) -> QuestActivationTelemetry:
+        telemetry = getattr(
+            self,
+            "quest_activation_telemetry",
+            None,
+        )
+        if telemetry is None:
+            telemetry = QuestActivationTelemetry()
+            self.quest_activation_telemetry = telemetry
+        return telemetry
+
+    def _publish_quest_activation(
+        self,
+        decision,
+    ) -> dict:
+        return self._quest_activation_telemetry().publish(decision)
+
+    def quest_activation_observation(self) -> dict | None:
+        return self._quest_activation_telemetry().observation()
+
+    def quest_activation_summary(self) -> dict:
+        return self._quest_activation_telemetry().summary()
 
     def graph_resident_greedy_tail_summary(self) -> dict:
         return self.graph_resident_greedy_tail_stats.summary()
