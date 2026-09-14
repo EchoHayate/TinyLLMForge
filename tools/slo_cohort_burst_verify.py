@@ -48,6 +48,7 @@ ARTIFACT_KEYS = {
     "environment.json": "environment",
     "cost_profile_rows.jsonl": "cost_profile_rows",
     "arrival_traces.json": "arrival_traces",
+    "canonical_graph_identities.json": "canonical_graph_identities",
     "cost_table.json": "cost_table",
     "decision_rows.jsonl": "decision_rows",
     "execution_rows.jsonl": "execution_rows",
@@ -1044,6 +1045,70 @@ def _validate_arrival_traces(
     return dict(traces), indexed
 
 
+def _validate_canonical_graph_identities(
+    payload: object,
+    *,
+    source_commit: str,
+    repetitions: int,
+) -> dict[int, dict[str, str]]:
+    artifact = _require_fields(
+        payload,
+        {
+            "schema_version",
+            "source_commit",
+            "graph_identity_sha256_by_repetition",
+        },
+        "canonical graph identities",
+    )
+    if (
+        artifact["schema_version"]
+        != "slo-cohort-burst.canonical-graph-identities.v1"
+        or artifact["source_commit"] != source_commit
+    ):
+        raise ValueError("canonical graph identity source mismatch")
+    inventory = artifact["graph_identity_sha256_by_repetition"]
+    expected_repetitions = {
+        str(repetition) for repetition in range(repetitions)
+    }
+    if (
+        not isinstance(inventory, Mapping)
+        or set(inventory) != expected_repetitions
+    ):
+        raise ValueError(
+            "canonical graph identity repetition inventory mismatch"
+        )
+    expected_shapes = {
+        _cohort_graph_shape_key(
+            batch_size=batch_size,
+            block_table_width=block_table_width,
+            correctness_trace=False,
+        )
+        for batch_size, block_table_width, correctness_trace
+        in EXPECTED_GRAPH_SHAPES
+        if correctness_trace is False
+    }
+    normalized = {}
+    for repetition_text, identities in inventory.items():
+        if (
+            not isinstance(identities, Mapping)
+            or set(identities) != expected_shapes
+        ):
+            raise ValueError(
+                "canonical graph identity shape inventory mismatch"
+            )
+        normalized[int(repetition_text)] = {
+            shape: _digest(
+                digest,
+                (
+                    "canonical graph identity for repetition "
+                    f"{repetition_text} shape {shape}"
+                ),
+            )
+            for shape, digest in identities.items()
+        }
+    return normalized
+
+
 def _normalize_request_payload(payload: object) -> dict:
     row = _require_fields(
         payload,
@@ -1832,6 +1897,7 @@ def _validate_executions(
     *,
     decisions: Mapping[tuple, dict],
     environment: Mapping[str, object],
+    canonical_graph_identities: Mapping[int, Mapping[str, str]],
     cost_table_sha256: str,
     request_by_sequence: Mapping[tuple, dict],
 ) -> tuple[list[dict], int, int]:
@@ -1922,7 +1988,7 @@ def _validate_executions(
         )
         if (
             lease["graph_identity_sha256"]
-            != environment["graph_identity_sha256_by_shape"].get(
+            != canonical_graph_identities.get(repetition, {}).get(
                 graph_shape_key
             )
         ):
@@ -2924,10 +2990,15 @@ def verify_slo_cohort_burst_bundle(
         source_identity,
         bundle["cost_profile_rows"],
     )
-    _traces, trace_index = _validate_arrival_traces(
+    traces, trace_index = _validate_arrival_traces(
         bundle["arrival_traces"],
         source_commit=source_identity["source_commit"],
         predictions=predictions,
+    )
+    canonical_graph_identities = _validate_canonical_graph_identities(
+        bundle["canonical_graph_identities"],
+        source_commit=source_identity["source_commit"],
+        repetitions=traces["minimum_repetitions"],
     )
     request_rows, grouped, request_by_sequence = _validate_request_rows(
         bundle["request_rows"],
@@ -2945,6 +3016,7 @@ def verify_slo_cohort_burst_bundle(
         bundle["execution_rows"],
         decisions=decisions,
         environment=environment,
+        canonical_graph_identities=canonical_graph_identities,
         cost_table_sha256=cost_table["table_sha256"],
         request_by_sequence=request_by_sequence,
     )

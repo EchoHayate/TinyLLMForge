@@ -70,6 +70,7 @@ QUALIFICATION_AUTHORITATIVE_FILES = frozenset({
     "environment.json",
     "cost_profile_rows.jsonl",
     "arrival_traces.json",
+    "canonical_graph_identities.json",
     "cost_table.json",
     "decision_rows.jsonl",
     "execution_rows.jsonl",
@@ -1426,10 +1427,10 @@ def _run_canonical_matrix_with_engine_factory(
     sampling_params_factory,
     source_commit: str,
     arrival_traces: Mapping[str, object],
-    expected_graph_identities: Mapping[str, str],
-) -> dict[str, list[dict]]:
+) -> dict[str, object]:
     active_key = None
     active_engine = None
+    graph_identities_by_repetition = {}
 
     def run_case(*, trace_case, arm):
         nonlocal active_key, active_engine
@@ -1448,21 +1449,17 @@ def _run_canonical_matrix_with_engine_factory(
             )
             if arm == "candidate":
                 _capture_canonical_graphs(active_engine)
-                if (
+                repetition_key = str(trace_case["repetition"])
+                if repetition_key in graph_identities_by_repetition:
+                    raise RuntimeError(
+                        "candidate graph identity repetition duplicated"
+                    )
+                graph_identities_by_repetition[repetition_key] = (
                     _graph_identity_by_shape(
                         active_engine,
                         shapes=CANONICAL_GRAPH_SHAPES,
                     )
-                    != {
-                        key: value
-                        for key, value in expected_graph_identities.items()
-                        if key.endswith("-trace0")
-                    }
-                ):
-                    raise RuntimeError(
-                        "candidate graph identity changed across "
-                        "repetitions"
-                    )
+                )
         return _run_open_loop_case(
             engine=active_engine,
             sampling_params_factory=sampling_params_factory,
@@ -1472,10 +1469,14 @@ def _run_canonical_matrix_with_engine_factory(
         )
 
     try:
-        return run_canonical_matrix(
+        result = run_canonical_matrix(
             arrival_traces=arrival_traces,
             run_case=run_case,
         )
+        result["graph_identity_sha256_by_repetition"] = (
+            graph_identities_by_repetition
+        )
+        return result
     finally:
         if active_engine is not None:
             active_engine = _release_qualification_engine(active_engine)
@@ -2611,7 +2612,6 @@ def run_qualification_worker(args) -> dict[str, object]:
             sampling_params_factory=sampling_params_factory,
             source_commit=source_commit,
             arrival_traces=arrival_traces,
-            expected_graph_identities=graph_identities,
         )
         summary = _build_canonical_summary(
             request_rows=canonical["request_rows"],
@@ -2620,6 +2620,15 @@ def run_qualification_worker(args) -> dict[str, object]:
         )
         artifacts.update({
             "arrival_traces.json": arrival_traces,
+            "canonical_graph_identities.json": {
+                "schema_version": (
+                    "slo-cohort-burst.canonical-graph-identities.v1"
+                ),
+                "source_commit": source_commit,
+                "graph_identity_sha256_by_repetition": canonical[
+                    "graph_identity_sha256_by_repetition"
+                ],
+            },
             "decision_rows.jsonl": canonical["decision_rows"],
             "execution_rows.jsonl": canonical["execution_rows"],
             "request_rows.jsonl": canonical["request_rows"],

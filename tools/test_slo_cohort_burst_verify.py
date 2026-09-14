@@ -68,6 +68,34 @@ def _artifact_sha(bundle: dict, relative: str) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _canonical_graph_sha(repetition: int) -> str:
+    return f"{repetition + 1:064x}"
+
+
+def _canonical_graph_identities() -> dict:
+    shape_keys = {
+        (
+            f"b{batch_size}-w{block_table_width}"
+            "-trace0"
+        )
+        for batch_size in range(1, 9)
+        for block_table_width in (2, 9, 33)
+    }
+    return {
+        "schema_version": (
+            "slo-cohort-burst.canonical-graph-identities.v1"
+        ),
+        "source_commit": SOURCE_COMMIT,
+        "graph_identity_sha256_by_repetition": {
+            str(repetition): {
+                shape: _canonical_graph_sha(repetition)
+                for shape in sorted(shape_keys)
+            }
+            for repetition in range(REPETITIONS)
+        },
+    }
+
+
 def _write_json(path: Path, payload: object) -> None:
     path.write_bytes(_canonical_bytes(payload))
 
@@ -300,6 +328,7 @@ def test_execution_inventory_may_be_empty_when_all_decisions_are_k1() -> None:
         [],
         decisions={decision_key: {"selected_width": 1}},
         environment={},
+        canonical_graph_identities={},
         cost_table_sha256="f" * 64,
         request_by_sequence={},
     )
@@ -973,7 +1002,7 @@ def complete_synthetic_bundle() -> dict:
                                 ],
                             )
                             decision_rows.append(decision_row)
-                            execution_rows.append(_execution_row(
+                            execution_row = _execution_row(
                                 case=case,
                                 sequence_ids=pair,
                                 context_buckets=[
@@ -1007,7 +1036,21 @@ def complete_synthetic_bundle() -> dict:
                                 global_slack_ns=decision_row[
                                     "decision"
                                 ]["global_slack_ns"],
-                            ))
+                            )
+                            graph_identity = _canonical_graph_sha(
+                                repetition
+                            )
+                            execution_row["lease"][
+                                "graph_identity_sha256"
+                            ] = graph_identity
+                            execution_row["result"][
+                                "graph_identity_sha256"
+                            ] = graph_identity
+                            execution_row["execution"][
+                                "graph_identity_sha256"
+                            ] = graph_identity
+                            _refresh_execution_identities(execution_row)
+                            execution_rows.append(execution_row)
     fallback = deepcopy(decision_rows[0])
     fallback["decision"]["schedule_generation"] = 999_999
     fallback["decision"]["selected_width"] = 1
@@ -1056,6 +1099,9 @@ def complete_synthetic_bundle() -> dict:
         "request_rows": request_rows,
         "correctness_rows": _correctness_rows(
             cost_table_sha256=cost_table["table_sha256"],
+        ),
+        "canonical_graph_identities": (
+            _canonical_graph_identities()
         ),
         "summary": summary,
     }
@@ -1263,10 +1309,13 @@ def _mutate(bundle: dict, mutation: str) -> None:
         ].pop("b8-w33-trace0")
         _refresh_artifact_hash(bundle, "environment.json")
     elif mutation == "graph_shape_identity":
-        bundle["environment"][
-            "graph_identity_sha256_by_shape"
-        ]["b2-w2-trace0"] = "e" * 64
-        _refresh_artifact_hash(bundle, "environment.json")
+        bundle["canonical_graph_identities"][
+            "graph_identity_sha256_by_repetition"
+        ]["0"]["b2-w2-trace0"] = "e" * 64
+        _refresh_artifact_hash(
+            bundle,
+            "canonical_graph_identities.json",
+        )
     elif mutation == "duplicate_lease_block_identity":
         row = bundle["execution_rows"][0]
         authority = row["lease"]["rows"][0]
@@ -1350,6 +1399,55 @@ def test_verifier_is_independent_and_reconstructs_complete_bundle() -> None:
     assert result["decision_row_count"] == 586
     assert result["execution_row_count"] == 585
     assert result["correctness_case_count"] == 16
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing_repetition",
+        "extra_repetition",
+        "missing_shape",
+        "wrong_execution_identity",
+    ),
+)
+def test_verifier_rejects_unclosed_canonical_graph_identity_inventory(
+    mutation: str,
+) -> None:
+    bundle = complete_synthetic_bundle()
+    identities = bundle["canonical_graph_identities"][
+        "graph_identity_sha256_by_repetition"
+    ]
+    if mutation == "missing_repetition":
+        identities.pop("4")
+    elif mutation == "extra_repetition":
+        identities["5"] = dict(identities["4"])
+    elif mutation == "missing_shape":
+        identities["0"].pop("b2-w2-trace0")
+    elif mutation == "wrong_execution_identity":
+        row = next(
+            row
+            for row in bundle["execution_rows"]
+            if row["case"]["repetition"] == 0
+        )
+        wrong = "f" * 64
+        row["lease"]["graph_identity_sha256"] = wrong
+        row["result"]["graph_identity_sha256"] = wrong
+        row["execution"]["graph_identity_sha256"] = wrong
+        _refresh_execution_identities(row)
+        _refresh_artifact_hash(bundle, "execution_rows.jsonl")
+    else:
+        raise AssertionError(mutation)
+    if mutation != "wrong_execution_identity":
+        _refresh_artifact_hash(
+            bundle,
+            "canonical_graph_identities.json",
+        )
+
+    with pytest.raises(ValueError):
+        verifier.verify_slo_cohort_burst_bundle(
+            bundle,
+            source_root=ROOT,
+        )
 
 
 def test_directory_verifier_writes_requested_receipt(

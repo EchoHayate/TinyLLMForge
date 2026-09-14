@@ -247,6 +247,10 @@ def test_stage_artifact_contracts_are_separate_and_closed() -> None:
     assert "final_bundle/cost_profile_rows.jsonl" in canonical["required"]
     assert "final_bundle/decision_rows.jsonl" in canonical["required"]
     assert "final_bundle/execution_rows.jsonl" in canonical["required"]
+    assert (
+        "final_bundle/canonical_graph_identities.json"
+        in canonical["required"]
+    )
     assert "final_bundle/summary.json" in canonical["required"]
     assert "final_bundle/remote_verify.json" in canonical["required"]
     assert correctness["local_root"].name == "slo_cohort_burst"
@@ -752,8 +756,12 @@ def test_canonical_matrix_uses_separate_engine_per_repetition_arm(
     monkeypatch.setattr(
         remote,
         "_graph_identity_by_shape",
-        lambda _engine, **_kwargs: {
-            "b1-w2-trace0": "a" * 64,
+        lambda engine, **_kwargs: {
+            "b1-w2-trace0": (
+                "a" * 64
+                if engine.name == "candidate-1"
+                else "b" * 64
+            ),
         },
     )
     monkeypatch.setattr(
@@ -783,14 +791,11 @@ def test_canonical_matrix_uses_separate_engine_per_repetition_arm(
         ),
     )
 
-    remote._run_canonical_matrix_with_engine_factory(
+    result = remote._run_canonical_matrix_with_engine_factory(
         engine_factory=engine_factory,
         sampling_params_factory=object,
         source_commit="a" * 40,
         arrival_traces=traces,
-        expected_graph_identities={
-            "b1-w2-trace0": "a" * 64,
-        },
     )
 
     assert [arm for arm, _engine in created] == [
@@ -815,6 +820,10 @@ def test_canonical_matrix_uses_separate_engine_per_repetition_arm(
         "candidate-2",
         "baseline-3",
     ]
+    assert result["graph_identity_sha256_by_repetition"] == {
+        "0": {"b1-w2-trace0": "a" * 64},
+        "1": {"b1-w2-trace0": "b" * 64},
+    }
 
 
 def test_canonical_matrix_drops_previous_engine_before_next_creation(
@@ -880,9 +889,6 @@ def test_canonical_matrix_drops_previous_engine_before_next_creation(
         sampling_params_factory=object,
         source_commit="a" * 40,
         arrival_traces=traces,
-        expected_graph_identities={
-            "b1-w2-trace0": "a" * 64,
-        },
     )
 
     assert all(reference() is None for reference in prior_engines)
