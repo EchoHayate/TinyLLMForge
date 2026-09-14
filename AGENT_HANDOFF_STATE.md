@@ -53682,6 +53682,8 @@ single predeclared threshold failure is terminal for this candidate.
   `b986b9d40e1eadee57c63d6ab50f3f424d133ba1`;
 - quality-runner source:
   `343f59399bc410c40c7a558a491c3bbff1a462e1`;
+- terminal evidence/analyzer commit:
+  `aed1dce7612fd78afa48280f32c3174fd3fe2dbf`;
 - `tinyvllm` and `tools/eval_needle.py` have no diff between those revisions;
 - model / hardware / topology:
   Qwen3-8B / A100 80GB PCIe / TP1;

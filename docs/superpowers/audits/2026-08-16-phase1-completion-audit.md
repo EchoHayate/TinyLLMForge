@@ -4954,6 +4954,7 @@ full dequantization. This prevents an unconditional runtime promotion.
 | --- | --- |
 | Performance source revision | `b986b9d40e1eadee57c63d6ab50f3f424d133ba1` |
 | Quality runner revision | `343f59399bc410c40c7a558a491c3bbff1a462e1` |
+| Terminal evidence/analyzer commit | `aed1dce7612fd78afa48280f32c3174fd3fe2dbf` |
 | Source-path equivalence | `git diff b986b9d4..343f5939 -- tinyvllm tools/eval_needle.py` is empty |
 | Branch | `feat/kv-sparse-attention` |
 | Model / hardware / topology | Qwen3-8B / NVIDIA A100 80GB PCIe / TP1 |
@@ -5058,6 +5059,7 @@ has not been implemented.
 ```text
 KV8_QUEST_PERFORMANCE_SOURCE=b986b9d40e1eadee57c63d6ab50f3f424d133ba1
 KV8_QUEST_QUALITY_RUNNER_SOURCE=343f59399bc410c40c7a558a491c3bbff1a462e1
+KV8_QUEST_TERMINAL_EVIDENCE_COMMIT=aed1dce7612fd78afa48280f32c3174fd3fe2dbf
 KV8_QUEST_CLASSIFICATION=NO_GO_KV8_QUEST
 KV8_QUEST_ONLY_FAILURE=QUEST_NOT_FASTER_IN_EVERY_CELL
 KV8_QUEST_B4_REGRESSION=25_236_PERCENT

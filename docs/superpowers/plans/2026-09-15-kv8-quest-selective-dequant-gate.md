@@ -252,7 +252,7 @@ claims.
 Run all Task-4 tests, parse every JSON artifact, run `git diff --check`, and
 confirm the staged-path manifest contains only task files.
 
-- [ ] **Step 3: Commit and push**
+- [x] **Step 3: Commit and push**
 
 Use exact-path staging, push `feat/kv-sparse-attention`, and verify local HEAD
 equals `git ls-remote` for the branch.
