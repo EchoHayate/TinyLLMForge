@@ -73,6 +73,8 @@ KV_BLOCKS="${KV_BLOCKS:-}"
 # 0 keeps bf16 KV. At a pinned pool, 8 or 4 removes bytes without changing the
 # token count, which is the comparison that isolates the memory-traffic term.
 KV_QUANT_BITS="${KV_QUANT_BITS:-0}"
+QUEST_TOP_K_BLOCKS="${QUEST_TOP_K_BLOCKS:--1}"
+QUEST_MIN_SEQ_LEN="${QUEST_MIN_SEQ_LEN:-512}"
 MEASURED_STEPS="${MEASURED_STEPS:-24}"
 SEED="${SEED:-20260913}"
 # Deliberately small and deliberately not the pre-registered grid. The worker
@@ -341,6 +343,10 @@ for path_mode in "${EXECUTION_PATHS[@]}"; do
     fi
     if [[ "${KV_QUANT_BITS}" != 0 ]]; then
       REMOTE_ARGS+=(--kv-quant-bits "${KV_QUANT_BITS}")
+    fi
+    if [[ "${QUEST_TOP_K_BLOCKS}" -gt 0 ]]; then
+      REMOTE_ARGS+=(--quest-top-k-blocks "${QUEST_TOP_K_BLOCKS}")
+      REMOTE_ARGS+=(--quest-min-seq-len "${QUEST_MIN_SEQ_LEN}")
     fi
     if [[ "${path_mode}" == eager ]]; then
       REMOTE_ARGS+=(--enforce-eager)

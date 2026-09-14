@@ -1437,6 +1437,79 @@ def test_payload_records_whether_the_graph_path_was_requested():
     assert payload["configuration"]["multi_sequence_cuda_graphs"] is True
 
 
+def test_cli_accepts_kv8_quest_configuration():
+    args = worker.parse_args(
+        [
+            "--model-path",
+            "m",
+            "--out",
+            "o",
+            "--kv-quant-bits",
+            "8",
+            "--quest-top-k-blocks",
+            "16",
+            "--quest-min-seq-len",
+            "512",
+        ]
+    )
+    assert args.kv_quant_bits == 8
+    assert args.quest_top_k_blocks == 16
+    assert args.quest_min_seq_len == 512
+
+
+def test_payload_records_requested_quant_and_quest_configuration():
+    payload = worker.build_payload(
+        [],
+        [],
+        model_path="m",
+        enforce_eager=True,
+        seed=1,
+        gpu_memory_utilization=0.85,
+        warmup_steps=1,
+        measured_steps=1,
+        kv_quant_bits=8,
+        quest_top_k_blocks=16,
+        quest_min_seq_len=512,
+    )
+    assert payload["configuration"]["kv_quant_bits"] == 8
+    assert payload["configuration"]["quest_top_k_blocks"] == 16
+    assert payload["configuration"]["quest_min_seq_len"] == 512
+
+
+def test_load_engine_passes_kv8_quest_configuration(monkeypatch):
+    captured = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "tinyvllm", types.SimpleNamespace(LLM=FakeLLM))
+    worker._load_engine(
+        model_path="m",
+        max_model_len=8192,
+        enforce_eager=True,
+        gpu_memory_utilization=0.85,
+        max_num_seqs=19,
+        kv_blocks=640,
+        kv_quant_bits=8,
+        quest_top_k_blocks=16,
+        quest_min_seq_len=512,
+    )
+    assert captured["kv_quant_bits"] == 8
+    assert captured["quest_top_k_blocks"] == 16
+    assert captured["quest_min_seq_len"] == 512
+
+
+def test_runner_passes_nondefault_quest_configuration_to_worker():
+    source = (
+        HERE / "run_kvcapacity_step_scaling_remote.sh"
+    ).read_text(encoding="utf-8")
+    assert 'QUEST_TOP_K_BLOCKS="${QUEST_TOP_K_BLOCKS:--1}"' in source
+    assert 'QUEST_MIN_SEQ_LEN="${QUEST_MIN_SEQ_LEN:-512}"' in source
+    assert 'REMOTE_ARGS+=(--quest-top-k-blocks "${QUEST_TOP_K_BLOCKS}")' in source
+    assert 'REMOTE_ARGS+=(--quest-min-seq-len "${QUEST_MIN_SEQ_LEN}")' in source
+
+
 def test_dispatch_label_separates_eager_reasons():
     assert worker.dispatch_label({"dispatch": "graph"}) == "graph"
     assert worker.dispatch_label(

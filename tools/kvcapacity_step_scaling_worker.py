@@ -459,7 +459,8 @@ def device_is_contaminated(device_memory, *, limit=MAX_FOREIGN_DEVICE_SHARE):
 
 def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utilization,
                  max_num_seqs, multi_sequence_graph_batches=None, kv_blocks=None,
-                 kv_quant_bits=0):
+                 kv_quant_bits=0, quest_top_k_blocks=-1,
+                 quest_min_seq_len=512):
     from tinyvllm import LLM
 
     extra = {}
@@ -478,6 +479,9 @@ def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utiliza
         # path supports it is not assumed: the per-step dispatch labels will say
         # so, and a silent eager fallback would otherwise read as a slope win.
         extra["kv_quant_bits"] = int(kv_quant_bits)
+    if quest_top_k_blocks > 0:
+        extra["quest_top_k_blocks"] = int(quest_top_k_blocks)
+        extra["quest_min_seq_len"] = int(quest_min_seq_len)
 
     engine = LLM(
         model=model_path,
@@ -531,6 +535,8 @@ def _engine_identity(engine):
         ("config.enforce_eager", "enforce_eager"),
         ("config.multi_sequence_cuda_graphs", "multi_sequence_cuda_graphs"),
         ("config.kv_quant_bits", "kv_quant_bits"),
+        ("config.quest_top_k_blocks", "quest_top_k_blocks"),
+        ("config.quest_min_seq_len", "quest_min_seq_len"),
         ("config.cpu_offload", "cpu_offload"),
         ("config.hf_config.vocab_size", "vocab_size"),
         ("config.hf_config.num_hidden_layers", "num_hidden_layers"),
@@ -657,7 +663,8 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
 
 def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
         warmup_steps, measured_steps, grid=CONTEXT_BATCH_GRID,
-        multi_sequence_cuda_graphs=False, kv_blocks=None, kv_quant_bits=0):
+        multi_sequence_cuda_graphs=False, kv_blocks=None, kv_quant_bits=0,
+        quest_top_k_blocks=-1, quest_min_seq_len=512):
     """Measure every feasible cell, one engine per context length.
 
     Context lengths are attempted in ascending order and a group that fails is
@@ -685,6 +692,8 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
                 ),
                 kv_blocks=kv_blocks,
                 kv_quant_bits=kv_quant_bits,
+                quest_top_k_blocks=quest_top_k_blocks,
+                quest_min_seq_len=quest_min_seq_len,
             )
         except Exception as error:  # noqa: BLE001 - recorded, not swallowed
             reason = f"engine construction failed: {type(error).__name__}: {error}"
@@ -781,7 +790,8 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
 
 def build_payload(rows, engines, *, model_path, enforce_eager, seed,
                   gpu_memory_utilization, warmup_steps, measured_steps,
-                  kv_blocks=None,
+                  kv_blocks=None, kv_quant_bits=0, quest_top_k_blocks=-1,
+                  quest_min_seq_len=512,
                   grid=CONTEXT_BATCH_GRID, multi_sequence_cuda_graphs=False):
     cells = enumerate_cells(grid)
     preregistered = tuple(grid) == CONTEXT_BATCH_GRID
@@ -801,6 +811,9 @@ def build_payload(rows, engines, *, model_path, enforce_eager, seed,
             "measured_steps": measured_steps,
             "kv_bytes_per_token": KV_BYTES_PER_TOKEN,
             "kv_blocks_requested": kv_blocks,
+            "kv_quant_bits": int(kv_quant_bits),
+            "quest_top_k_blocks": int(quest_top_k_blocks),
+            "quest_min_seq_len": int(quest_min_seq_len),
         },
         "grid": [list(cell) for cell in cells],
         "grid_spec": format_grid_spec(grid),
@@ -860,6 +873,21 @@ def parse_args(argv=None):
             "silently shrinking when the device cannot serve it"
         ),
     )
+    parser.add_argument(
+        "--quest-top-k-blocks",
+        type=int,
+        default=-1,
+        help=(
+            "enable Quest decode block selection with this top-k block budget; "
+            "negative values keep Quest disabled"
+        ),
+    )
+    parser.add_argument(
+        "--quest-min-seq-len",
+        type=int,
+        default=512,
+        help="minimum sequence length at which Quest may become active",
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--warmup-steps", type=int, default=WARMUP_STEPS)
     parser.add_argument("--measured-steps", type=int, default=MEASURED_STEPS)
@@ -894,6 +922,8 @@ def main(argv=None):
         multi_sequence_cuda_graphs=args.multi_sequence_cuda_graphs,
         kv_blocks=args.kv_blocks,
         kv_quant_bits=args.kv_quant_bits,
+        quest_top_k_blocks=args.quest_top_k_blocks,
+        quest_min_seq_len=args.quest_min_seq_len,
     )
     payload = build_payload(
         rows,
@@ -905,6 +935,9 @@ def main(argv=None):
         warmup_steps=args.warmup_steps,
         measured_steps=args.measured_steps,
         kv_blocks=args.kv_blocks,
+        kv_quant_bits=args.kv_quant_bits,
+        quest_top_k_blocks=args.quest_top_k_blocks,
+        quest_min_seq_len=args.quest_min_seq_len,
         grid=args.grid,
         multi_sequence_cuda_graphs=args.multi_sequence_cuda_graphs,
     )
