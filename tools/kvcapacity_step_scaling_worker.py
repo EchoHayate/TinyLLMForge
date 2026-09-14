@@ -340,6 +340,127 @@ def dispatch_observation(engine):
         return None
 
 
+def quest_activation_observation(engine):
+    """Read the engine's latest host-side Quest activation decision."""
+    runner = resolve_model_runner(engine)
+    if runner is None:
+        return None
+    reader = getattr(runner, "quest_activation_observation", None)
+    if not callable(reader):
+        return None
+    try:
+        return reader()
+    except Exception:  # noqa: BLE001 - evidence, never control flow
+        return None
+
+
+def _quest_activation_event_is_valid(event):
+    required = {
+        "observation_id",
+        "requested_top_k",
+        "resolved_top_k",
+        "min_seq_len",
+        "min_saved_blocks",
+        "saved_blocks",
+        "batch_size",
+        "reason",
+    }
+    if not isinstance(event, dict) or not required.issubset(event):
+        return False
+    requested = event["requested_top_k"]
+    resolved = event["resolved_top_k"]
+    threshold = event["min_saved_blocks"]
+    saved = event["saved_blocks"]
+    reason = event["reason"]
+    if reason == "active":
+        return (
+            requested > 0
+            and resolved == requested
+            and saved is not None
+            and (threshold == 0 or saved >= threshold)
+        )
+    if reason == "below_saved_blocks":
+        return (
+            requested > 0
+            and resolved == -1
+            and threshold > 0
+            and saved is not None
+            and saved < threshold
+        )
+    return resolved == -1 and reason in {
+        "disabled",
+        "incompatible_feature",
+        "below_min_seq_len",
+        "insufficient_blocks",
+        "insufficient_pruning",
+    }
+
+
+class QuestActivationTracker:
+    def __init__(self):
+        self.last_observation_id = None
+
+    def observe(self, engine):
+        event = quest_activation_observation(engine)
+        if event is None:
+            return {"status": "unobserved"}
+        observation_id = event.get("observation_id")
+        if (
+            observation_id is not None
+            and observation_id == self.last_observation_id
+        ):
+            return {
+                "status": "unpublished",
+                "observation_id": observation_id,
+            }
+        self.last_observation_id = observation_id
+        return {
+            "status": (
+                "valid"
+                if _quest_activation_event_is_valid(event)
+                else "invalid"
+            ),
+            **event,
+        }
+
+
+def summarise_quest_activation(events):
+    if not events:
+        return None
+    status_counts = {}
+    reason_counts = {}
+    resolved_counts = {}
+    saved_values = []
+    for event in events:
+        status = str(event.get("status") or "invalid")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status != "valid":
+            continue
+        reason = str(event["reason"])
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        resolved = str(event["resolved_top_k"])
+        resolved_counts[resolved] = (
+            resolved_counts.get(resolved, 0) + 1
+        )
+        if event.get("saved_blocks") is not None:
+            saved_values.append(int(event["saved_blocks"]))
+    return {
+        "steps": len(events),
+        "status_counts": dict(sorted(status_counts.items())),
+        "reason_counts": dict(sorted(reason_counts.items())),
+        "resolved_top_k_counts": dict(
+            sorted(resolved_counts.items())
+        ),
+        "saved_blocks_min": (
+            min(saved_values) if saved_values else None
+        ),
+        "saved_blocks_max": (
+            max(saved_values) if saved_values else None
+        ),
+        "all_valid": status_counts == {"valid": len(events)},
+    }
+
+
 def dispatch_label(event):
     """Collapse a dispatch event into one countable label.
 
@@ -460,7 +581,8 @@ def device_is_contaminated(device_memory, *, limit=MAX_FOREIGN_DEVICE_SHARE):
 def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utilization,
                  max_num_seqs, multi_sequence_graph_batches=None, kv_blocks=None,
                  kv_quant_bits=0, quest_top_k_blocks=-1,
-                 quest_min_seq_len=512):
+                 quest_min_seq_len=512,
+                 quest_min_saved_blocks=0):
     from tinyvllm import LLM
 
     extra = {}
@@ -482,6 +604,9 @@ def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utiliza
     if quest_top_k_blocks > 0:
         extra["quest_top_k_blocks"] = int(quest_top_k_blocks)
         extra["quest_min_seq_len"] = int(quest_min_seq_len)
+        extra["quest_min_saved_blocks"] = int(
+            quest_min_saved_blocks
+        )
 
     engine = LLM(
         model=model_path,
@@ -537,6 +662,10 @@ def _engine_identity(engine):
         ("config.kv_quant_bits", "kv_quant_bits"),
         ("config.quest_top_k_blocks", "quest_top_k_blocks"),
         ("config.quest_min_seq_len", "quest_min_seq_len"),
+        (
+            "config.quest_min_saved_blocks",
+            "quest_min_saved_blocks",
+        ),
         ("config.cpu_offload", "cpu_offload"),
         ("config.hf_config.vocab_size", "vocab_size"),
         ("config.hf_config.num_hidden_layers", "num_hidden_layers"),
@@ -604,6 +733,9 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
     measured_dispatch = []
     all_decode_dispatch = []
     dispatch_tracker = DispatchTracker()
+    measured_quest_activation = []
+    all_decode_quest_activation = []
+    quest_activation_tracker = QuestActivationTracker()
     step_index = 0
     guard = (warmup_steps + measured_steps + 8) * max(1, batch) + 64
 
@@ -622,6 +754,10 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
         observed_batches.append(observed)
         step_dispatch = dispatch_tracker.observe(engine)
         all_decode_dispatch.append(step_dispatch)
+        step_quest_activation = quest_activation_tracker.observe(
+            engine
+        )
+        all_decode_quest_activation.append(step_quest_activation)
         decode_steps_by_batch[observed] = decode_steps_by_batch.get(observed, 0) + 1
         if observed != batch:
             continue
@@ -632,6 +768,9 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
         if len(samples) < measured_steps:
             samples.append(elapsed_ms)
             measured_dispatch.append(step_dispatch)
+            measured_quest_activation.append(
+                step_quest_activation
+            )
 
     return {
         "context_length": context_length,
@@ -654,6 +793,19 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
         "drift": measurement_drift(samples),
         "dispatch_measured": summarise_dispatch(measured_dispatch),
         "dispatch_all_decode": summarise_dispatch(all_decode_dispatch),
+        "quest_activation_measured": (
+            summarise_quest_activation(
+                measured_quest_activation,
+            )
+        ),
+        "quest_activation_measured_events": (
+            measured_quest_activation
+        ),
+        "quest_activation_all_decode": (
+            summarise_quest_activation(
+                all_decode_quest_activation,
+            )
+        ),
         "target_batch_step_trace_ms": trace,
         "warmup_steps": warmup_steps,
         "measured": bool(samples),
@@ -664,7 +816,8 @@ def _measure_cell(engine, *, context_length, batch, vocab_size, rng,
 def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
         warmup_steps, measured_steps, grid=CONTEXT_BATCH_GRID,
         multi_sequence_cuda_graphs=False, kv_blocks=None, kv_quant_bits=0,
-        quest_top_k_blocks=-1, quest_min_seq_len=512):
+        quest_top_k_blocks=-1, quest_min_seq_len=512,
+        quest_min_saved_blocks=0):
     """Measure every feasible cell, one engine per context length.
 
     Context lengths are attempted in ascending order and a group that fails is
@@ -694,6 +847,7 @@ def run(*, model_path, gpu_memory_utilization, enforce_eager, seed,
                 kv_quant_bits=kv_quant_bits,
                 quest_top_k_blocks=quest_top_k_blocks,
                 quest_min_seq_len=quest_min_seq_len,
+                quest_min_saved_blocks=quest_min_saved_blocks,
             )
         except Exception as error:  # noqa: BLE001 - recorded, not swallowed
             reason = f"engine construction failed: {type(error).__name__}: {error}"
@@ -792,6 +946,7 @@ def build_payload(rows, engines, *, model_path, enforce_eager, seed,
                   gpu_memory_utilization, warmup_steps, measured_steps,
                   kv_blocks=None, kv_quant_bits=0, quest_top_k_blocks=-1,
                   quest_min_seq_len=512,
+                  quest_min_saved_blocks=0,
                   grid=CONTEXT_BATCH_GRID, multi_sequence_cuda_graphs=False):
     cells = enumerate_cells(grid)
     preregistered = tuple(grid) == CONTEXT_BATCH_GRID
@@ -814,6 +969,9 @@ def build_payload(rows, engines, *, model_path, enforce_eager, seed,
             "kv_quant_bits": int(kv_quant_bits),
             "quest_top_k_blocks": int(quest_top_k_blocks),
             "quest_min_seq_len": int(quest_min_seq_len),
+            "quest_min_saved_blocks": int(
+                quest_min_saved_blocks
+            ),
         },
         "grid": [list(cell) for cell in cells],
         "grid_spec": format_grid_spec(grid),
@@ -888,6 +1046,15 @@ def parse_args(argv=None):
         default=512,
         help="minimum sequence length at which Quest may become active",
     )
+    parser.add_argument(
+        "--quest-min-saved-blocks",
+        type=int,
+        default=0,
+        help=(
+            "minimum batch-wide avoided KV block dequantizations "
+            "required before Quest becomes active"
+        ),
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--warmup-steps", type=int, default=WARMUP_STEPS)
     parser.add_argument("--measured-steps", type=int, default=MEASURED_STEPS)
@@ -924,6 +1091,7 @@ def main(argv=None):
         kv_quant_bits=args.kv_quant_bits,
         quest_top_k_blocks=args.quest_top_k_blocks,
         quest_min_seq_len=args.quest_min_seq_len,
+        quest_min_saved_blocks=args.quest_min_saved_blocks,
     )
     payload = build_payload(
         rows,
@@ -938,6 +1106,7 @@ def main(argv=None):
         kv_quant_bits=args.kv_quant_bits,
         quest_top_k_blocks=args.quest_top_k_blocks,
         quest_min_seq_len=args.quest_min_seq_len,
+        quest_min_saved_blocks=args.quest_min_saved_blocks,
         grid=args.grid,
         multi_sequence_cuda_graphs=args.multi_sequence_cuda_graphs,
     )

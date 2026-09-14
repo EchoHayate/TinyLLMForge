@@ -1398,11 +1398,19 @@ def test_preregistered_lists_stay_in_step_after_the_context_change():
 
 
 class _Runner:
-    def __init__(self, events):
+    def __init__(self, events, quest_events=None):
         self._events = list(events)
+        self._quest_events = list(quest_events or [])
 
     def cuda_graph_dispatch_observation(self):
         return self._events.pop(0) if self._events else None
+
+    def quest_activation_observation(self):
+        return (
+            self._quest_events.pop(0)
+            if self._quest_events
+            else None
+        )
 
 
 class _Engine:
@@ -1450,11 +1458,14 @@ def test_cli_accepts_kv8_quest_configuration():
             "16",
             "--quest-min-seq-len",
             "512",
+            "--quest-min-saved-blocks",
+            "128",
         ]
     )
     assert args.kv_quant_bits == 8
     assert args.quest_top_k_blocks == 16
     assert args.quest_min_seq_len == 512
+    assert args.quest_min_saved_blocks == 128
 
 
 def test_payload_records_requested_quant_and_quest_configuration():
@@ -1470,10 +1481,12 @@ def test_payload_records_requested_quant_and_quest_configuration():
         kv_quant_bits=8,
         quest_top_k_blocks=16,
         quest_min_seq_len=512,
+        quest_min_saved_blocks=128,
     )
     assert payload["configuration"]["kv_quant_bits"] == 8
     assert payload["configuration"]["quest_top_k_blocks"] == 16
     assert payload["configuration"]["quest_min_seq_len"] == 512
+    assert payload["configuration"]["quest_min_saved_blocks"] == 128
 
 
 def test_load_engine_passes_kv8_quest_configuration(monkeypatch):
@@ -1494,10 +1507,12 @@ def test_load_engine_passes_kv8_quest_configuration(monkeypatch):
         kv_quant_bits=8,
         quest_top_k_blocks=16,
         quest_min_seq_len=512,
+        quest_min_saved_blocks=128,
     )
     assert captured["kv_quant_bits"] == 8
     assert captured["quest_top_k_blocks"] == 16
     assert captured["quest_min_seq_len"] == 512
+    assert captured["quest_min_saved_blocks"] == 128
 
 
 def test_runner_passes_nondefault_quest_configuration_to_worker():
@@ -1506,8 +1521,94 @@ def test_runner_passes_nondefault_quest_configuration_to_worker():
     ).read_text(encoding="utf-8")
     assert 'QUEST_TOP_K_BLOCKS="${QUEST_TOP_K_BLOCKS:--1}"' in source
     assert 'QUEST_MIN_SEQ_LEN="${QUEST_MIN_SEQ_LEN:-512}"' in source
+    assert 'QUEST_MIN_SAVED_BLOCKS="${QUEST_MIN_SAVED_BLOCKS:-0}"' in source
     assert 'REMOTE_ARGS+=(--quest-top-k-blocks "${QUEST_TOP_K_BLOCKS}")' in source
     assert 'REMOTE_ARGS+=(--quest-min-seq-len "${QUEST_MIN_SEQ_LEN}")' in source
+    assert (
+        'REMOTE_ARGS+=(--quest-min-saved-blocks '
+        '"${QUEST_MIN_SAVED_BLOCKS}")'
+    ) in source
+
+
+def _quest_event(
+    observation_id,
+    *,
+    reason="active",
+    resolved_top_k=16,
+    saved_blocks=128,
+    batch_size=8,
+):
+    return {
+        "observation_id": observation_id,
+        "requested_top_k": 16,
+        "resolved_top_k": resolved_top_k,
+        "min_seq_len": 512,
+        "min_saved_blocks": 128,
+        "saved_blocks": saved_blocks,
+        "batch_size": batch_size,
+        "reason": reason,
+    }
+
+
+def test_quest_activation_observation_reads_through_model_runner():
+    event = _quest_event(1)
+    engine = _Engine(_Runner([], [event]))
+
+    assert worker.quest_activation_observation(engine) == event
+
+
+def test_quest_activation_tracker_marks_repeated_and_missing_events():
+    event = _quest_event(7)
+    engine = _Engine(_Runner([], [event, event]))
+    tracker = worker.QuestActivationTracker()
+
+    assert tracker.observe(engine)["status"] == "valid"
+    assert tracker.observe(engine)["status"] == "unpublished"
+    assert tracker.observe(object()) == {"status": "unobserved"}
+
+
+def test_quest_activation_tracker_marks_contradictory_event_invalid():
+    event = _quest_event(
+        1,
+        reason="active",
+        resolved_top_k=-1,
+    )
+    tracker = worker.QuestActivationTracker()
+
+    observed = tracker.observe(_Engine(_Runner([], [event])))
+
+    assert observed["status"] == "invalid"
+
+
+def test_summarise_quest_activation_preserves_auditable_counts():
+    events = [
+        {"status": "valid", **_quest_event(1)},
+        {
+            "status": "valid",
+            **_quest_event(
+                2,
+                reason="below_saved_blocks",
+                resolved_top_k=-1,
+                saved_blocks=96,
+                batch_size=6,
+            ),
+        },
+    ]
+
+    summary = worker.summarise_quest_activation(events)
+
+    assert summary == {
+        "steps": 2,
+        "status_counts": {"valid": 2},
+        "reason_counts": {
+            "active": 1,
+            "below_saved_blocks": 1,
+        },
+        "resolved_top_k_counts": {"-1": 1, "16": 1},
+        "saved_blocks_min": 96,
+        "saved_blocks_max": 128,
+        "all_valid": True,
+    }
 
 
 def test_dispatch_label_separates_eager_reasons():

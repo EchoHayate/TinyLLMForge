@@ -75,6 +75,7 @@ KV_BLOCKS="${KV_BLOCKS:-}"
 KV_QUANT_BITS="${KV_QUANT_BITS:-0}"
 QUEST_TOP_K_BLOCKS="${QUEST_TOP_K_BLOCKS:--1}"
 QUEST_MIN_SEQ_LEN="${QUEST_MIN_SEQ_LEN:-512}"
+QUEST_MIN_SAVED_BLOCKS="${QUEST_MIN_SAVED_BLOCKS:-0}"
 MEASURED_STEPS="${MEASURED_STEPS:-24}"
 SEED="${SEED:-20260913}"
 # Deliberately small and deliberately not the pre-registered grid. The worker
@@ -347,6 +348,7 @@ for path_mode in "${EXECUTION_PATHS[@]}"; do
     if [[ "${QUEST_TOP_K_BLOCKS}" -gt 0 ]]; then
       REMOTE_ARGS+=(--quest-top-k-blocks "${QUEST_TOP_K_BLOCKS}")
       REMOTE_ARGS+=(--quest-min-seq-len "${QUEST_MIN_SEQ_LEN}")
+      REMOTE_ARGS+=(--quest-min-saved-blocks "${QUEST_MIN_SAVED_BLOCKS}")
     fi
     if [[ "${path_mode}" == eager ]]; then
       REMOTE_ARGS+=(--enforce-eager)
