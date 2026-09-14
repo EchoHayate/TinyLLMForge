@@ -378,6 +378,32 @@ def test_qualification_config_keeps_the_baseline_free_of_single_request_burst(
     assert baseline["autoregressive_draft_command_timeline"] is False
 
 
+def test_cohort_arm_switches_base_exact_burst_with_candidate_state():
+    engine = SimpleNamespace(
+        scheduler=SimpleNamespace(
+            exact_greedy_cohort_burst=False,
+            exact_greedy_cohort_burst_widths=(),
+        ),
+        model_runner=SimpleNamespace(
+            config=SimpleNamespace(
+                exact_greedy_decode_burst=True,
+                exact_greedy_cohort_burst=True,
+            ),
+        ),
+    )
+
+    remote._set_cohort_arm(engine, enabled=False)
+
+    assert engine.scheduler.exact_greedy_cohort_burst is True
+    assert engine.model_runner.config.exact_greedy_decode_burst is False
+    assert engine.model_runner.config.exact_greedy_cohort_burst is False
+
+    remote._set_cohort_arm(engine, enabled=True)
+
+    assert engine.model_runner.config.exact_greedy_decode_burst is True
+    assert engine.model_runner.config.exact_greedy_cohort_burst is True
+
+
 def test_correctness_matrix_executes_every_bxk_pair_in_baseline_candidate_order(
 ) -> None:
     calls = []

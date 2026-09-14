@@ -754,6 +754,7 @@ def _set_cohort_arm(engine, *, enabled: bool, widths=(1, 2, 4, 8)):
     # the baseline an ordinary K1 runtime.
     engine.scheduler.exact_greedy_cohort_burst = True
     engine.scheduler.exact_greedy_cohort_burst_widths = tuple(widths)
+    engine.model_runner.config.exact_greedy_decode_burst = bool(enabled)
     engine.model_runner.config.exact_greedy_cohort_burst = bool(enabled)
 
 
