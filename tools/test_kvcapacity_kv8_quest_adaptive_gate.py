@@ -319,6 +319,21 @@ def test_all_thresholds_pass():
     assert report["threshold_failures"] == []
 
 
+def test_non_adaptive_arms_do_not_require_quest_events():
+    inputs = good_inputs()
+    for arm in ("bf16", "kv8"):
+        for row in inputs[0][arm]["rows"]:
+            row.pop("quest_activation_measured")
+            row.pop("quest_activation_measured_events")
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "GO_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert report["identity_failures"] == []
+
+
 def test_missing_boundary_cell_is_inconclusive():
     inputs = good_inputs()
     inputs[0]["adaptive"]["rows"] = [
@@ -345,6 +360,215 @@ def test_source_mismatch_is_inconclusive():
         "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
     )
     assert "source_revision_mismatch" in report["identity_failures"]
+
+
+def test_worker_mismatch_is_inconclusive():
+    inputs = good_inputs()
+    inputs[1]["adaptive"]["worker_sha256"] = "c" * 64
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "worker_sha256_mismatch" in report["identity_failures"]
+
+
+def test_quality_model_must_match_performance_model():
+    inputs = good_inputs()
+    inputs[2]["args"]["model"] = "/models/Other-8B"
+    inputs[3]["model"] = "/models/Other-8B"
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "quality_performance_model_mismatch" in report[
+        "identity_failures"
+    ]
+
+
+def test_common_identity_and_sample_mutations_are_inconclusive():
+    mutations = (
+        (
+            lambda inputs: inputs[0]["adaptive"]["configuration"].__setitem__(
+                "model_path",
+                "/models/Other-8B",
+            ),
+            "adaptive_model_path_mismatch",
+        ),
+        (
+            lambda inputs: inputs[0]["adaptive"]["configuration"].__setitem__(
+                "kv_blocks_requested",
+                639,
+            ),
+            "adaptive_kv_blocks_requested_mismatch",
+        ),
+        (
+            lambda inputs: inputs[0]["adaptive"]["configuration"].__setitem__(
+                "seed",
+                7,
+            ),
+            "adaptive_seed_mismatch",
+        ),
+        (
+            lambda inputs: inputs[0]["adaptive"]["rows"][0]["step"].__setitem__(
+                "count",
+                23,
+            ),
+            "adaptive_8192x4_sample_count_mismatch",
+        ),
+    )
+    for mutate, expected_failure in mutations:
+        inputs = good_inputs()
+        mutate(inputs)
+
+        report = classify(*inputs)
+
+        assert report["classification"] == (
+            "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+        )
+        assert expected_failure in report["identity_failures"]
+
+
+def test_missing_repeated_and_invalid_activation_events_are_inconclusive():
+    mutations = (
+        (
+            lambda row: row.pop("quest_activation_measured_events"),
+            "adaptive_8192x8_activation_event_count_mismatch",
+        ),
+        (
+            lambda row: row["quest_activation_measured_events"][1].__setitem__(
+                "observation_id",
+                1,
+            ),
+            "adaptive_8192x8_activation_observation_ids_invalid",
+        ),
+        (
+            lambda row: row["quest_activation_measured_events"][0].__setitem__(
+                "status",
+                "invalid",
+            ),
+            "adaptive_activation_mismatch_8192x8",
+        ),
+    )
+    for mutate, expected_failure in mutations:
+        inputs = good_inputs()
+        row = inputs[0]["adaptive"]["rows"][2]
+        mutate(row)
+
+        report = classify(*inputs)
+
+        assert report["classification"] == (
+            "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+        )
+        assert expected_failure in report["identity_failures"]
+
+
+def test_performance_activation_event_requires_worker_valid_status():
+    inputs = good_inputs()
+    event = inputs[0]["adaptive"]["rows"][2][
+        "quest_activation_measured_events"
+    ][0]
+    event.pop("status")
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "adaptive_8192x8_activation_status_invalid" in report[
+        "identity_failures"
+    ]
+
+
+def test_fixed_quest_arm_requires_complete_active_events():
+    inputs = good_inputs()
+    row = inputs[0]["fixed"]["rows"][2]
+    row.pop("quest_activation_measured_events")
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "fixed_8192x8_activation_event_count_mismatch" in report[
+        "identity_failures"
+    ]
+
+
+def test_performance_activation_event_must_match_cell_batch():
+    inputs = good_inputs()
+    row = inputs[0]["adaptive"]["rows"][2]
+    row["quest_activation_measured_events"][0] = _activation_event(
+        1,
+        top_k=16,
+        min_saved_blocks=128,
+        batch=10,
+    )
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "adaptive_activation_batch_mismatch_8192x8" in report[
+        "identity_failures"
+    ]
+
+
+def test_adaptive_activation_event_must_match_registered_threshold():
+    inputs = good_inputs()
+    row = inputs[0]["adaptive"]["rows"][2]
+    row["quest_activation_measured_events"] = [
+        _activation_event(
+            index + 1,
+            top_k=16,
+            min_saved_blocks=64,
+            batch=8,
+        )
+        for index in range(24)
+    ]
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "adaptive_activation_configuration_mismatch_8192x8" in report[
+        "identity_failures"
+    ]
+
+
+def test_performance_prompt_digests_must_match_across_arms():
+    inputs = good_inputs()
+    inputs[0]["adaptive"]["rows"][2]["prompt_digests"][0] = (
+        "different-prompt"
+    )
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "adaptive_prompt_digests_mismatch_8192x8" in report[
+        "identity_failures"
+    ]
+
+
+def test_missing_step_median_is_inconclusive_instead_of_crashing():
+    inputs = good_inputs()
+    inputs[0]["adaptive"]["rows"][2]["step"].pop("median_ms")
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "adaptive_8192x8_step_median_missing" in report[
+        "identity_failures"
+    ]
 
 
 def test_fallback_cell_must_not_activate():
@@ -449,6 +673,80 @@ def test_quality_requires_an_active_step():
     ]
 
 
+def test_quality_accepts_raw_runtime_events_without_worker_status():
+    inputs = good_inputs()
+    events = inputs[2]["results"][1]["quest_activation"]["events"]
+    for event in events:
+        event.pop("status")
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "GO_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "adaptive_quality_activation_mismatch" not in report[
+        "identity_failures"
+    ]
+
+
+def test_quality_activation_observation_ids_must_be_unique():
+    inputs = good_inputs()
+    events = inputs[2]["results"][1]["quest_activation"]["events"]
+    events[1]["observation_id"] = events[0]["observation_id"]
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "adaptive_quality_activation_observation_ids_invalid" in report[
+        "identity_failures"
+    ]
+
+
+def test_malformed_quality_activation_event_is_inconclusive():
+    inputs = good_inputs()
+    event = inputs[2]["results"][1]["quest_activation"]["events"][0]
+    event.pop("status")
+    event["sequence_block_counts"][0] = "not-an-integer"
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "adaptive_quality_activation_mismatch" in report[
+        "identity_failures"
+    ]
+
+
+def test_non_mapping_activation_events_are_inconclusive():
+    mutations = (
+        (
+            lambda inputs: inputs[0]["adaptive"]["rows"][2][
+                "quest_activation_measured_events"
+            ].__setitem__(0, None),
+            "adaptive_8192x8_activation_observation_ids_invalid",
+        ),
+        (
+            lambda inputs: inputs[2]["results"][1][
+                "quest_activation"
+            ]["events"].__setitem__(0, None),
+            "adaptive_quality_activation_mismatch",
+        ),
+    )
+    for mutate, expected_failure in mutations:
+        inputs = good_inputs()
+        mutate(inputs)
+
+        report = classify(*inputs)
+
+        assert report["classification"] == (
+            "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+        )
+        assert expected_failure in report["identity_failures"]
+
+
 def test_quality_hit_is_recomputed_from_answer():
     inputs = good_inputs()
     inputs[2]["results"][1]["details"][0]["answer"] = "99999"
@@ -457,6 +755,41 @@ def test_quality_hit_is_recomputed_from_answer():
     report = classify(*inputs)
 
     assert report["quality"]["adaptive_overall_accuracy"] == 24 / 25
+
+
+def test_duplicate_quality_case_is_inconclusive():
+    inputs = good_inputs()
+    duplicate = copy.deepcopy(
+        inputs[2]["results"][1]["details"][0]
+    )
+    inputs[2]["results"][1]["details"].append(duplicate)
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "quality_adaptive_duplicate_case" in report[
+        "identity_failures"
+    ]
+
+
+def test_quality_cases_must_cover_the_exact_registered_grid():
+    inputs = good_inputs()
+    for setting in inputs[2]["results"]:
+        setting["details"][0]["depth"] = 0.1
+
+    report = classify(*inputs)
+
+    assert report["classification"] == (
+        "INCONCLUSIVE_KV8_QUEST_AMORTIZATION_POLICY"
+    )
+    assert "quality_full_case_grid_mismatch" in report[
+        "identity_failures"
+    ]
+    assert "quality_adaptive_case_grid_mismatch" in report[
+        "identity_failures"
+    ]
 
 
 def test_overall_quality_loss_over_five_points_is_no_go():
@@ -484,3 +817,20 @@ def test_depth_quality_loss_over_twenty_points_is_no_go():
     assert "depth_quality_loss_over_20pp_0.5" in report[
         "threshold_failures"
     ]
+
+
+def test_markdown_reports_overall_and_per_depth_quality_deltas():
+    report = classify(*good_inputs())
+
+    markdown = gate.render_markdown(report)
+
+    assert "## Quality" in markdown
+    assert (
+        "| Overall | 100.000% | 100.000% | +0.000 pp |"
+        in markdown
+    )
+    for depth in gate.EXPECTED_DEPTHS:
+        assert (
+            f"| Depth {depth:.2f} | 100.000% | "
+            "100.000% | +0.000 pp |"
+        ) in markdown

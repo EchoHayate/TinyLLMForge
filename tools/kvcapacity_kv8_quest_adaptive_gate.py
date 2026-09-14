@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 
@@ -68,6 +69,16 @@ def _validate_common_identity(
     revisions.add(quality_provenance.get("source_revision"))
     if len(revisions) != 1 or None in revisions:
         failures.append("source_revision_mismatch")
+    worker_hashes = {
+        item.get("worker_sha256")
+        for item in provenance.values()
+    }
+    if (
+        len(worker_hashes) != 1
+        or None in worker_hashes
+        or "" in worker_hashes
+    ):
+        failures.append("worker_sha256_mismatch")
     for arm, item in provenance.items():
         if int(item.get("tinyvllm_dirty_paths", -1)) != 0:
             failures.append(f"{arm}_source_dirty")
@@ -90,6 +101,10 @@ def _validate_common_identity(
         "measured_steps",
     )
     reference = performance["bf16"].get("configuration", {})
+    if quality_provenance.get("model") != reference.get(
+        "model_path"
+    ):
+        failures.append("quality_performance_model_mismatch")
     for arm, payload in performance.items():
         config = payload.get("configuration", {})
         for key in common_keys:
@@ -142,7 +157,10 @@ def _validate_common_identity(
 
 
 def _event_is_policy_consistent(event):
-    if event.get("status") != "valid":
+    if not isinstance(event, dict):
+        return False
+    status = event.get("status")
+    if status is not None and status != "valid":
         return False
     lengths = event.get("sequence_lengths")
     blocks = event.get("sequence_block_counts")
@@ -150,17 +168,33 @@ def _event_is_policy_consistent(event):
     if (
         not isinstance(lengths, (list, tuple))
         or not isinstance(blocks, (list, tuple))
+        or isinstance(batch, bool)
+        or not isinstance(batch, int)
+        or batch <= 0
         or len(lengths) != len(blocks)
         or len(lengths) != batch
     ):
         return False
     requested = event.get("requested_top_k")
     threshold = event.get("min_saved_blocks")
-    if requested != 16 or threshold != 128:
+    if (
+        requested != 16
+        or isinstance(threshold, bool)
+        or not isinstance(threshold, int)
+        or threshold < 0
+    ):
+        return False
+    try:
+        normalised_blocks = [
+            int(block_count) for block_count in blocks
+        ]
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if any(block_count < 0 for block_count in normalised_blocks):
         return False
     saved = sum(
-        max(0, int(block_count) - requested)
-        for block_count in blocks
+        max(0, block_count - requested)
+        for block_count in normalised_blocks
     )
     if event.get("saved_blocks") != saved:
         return False
@@ -189,6 +223,14 @@ def _validate_performance_row(
     step = row.get("step") or {}
     if step.get("count") != EXPECTED_SAMPLES:
         failures.append(f"{prefix}_sample_count_mismatch")
+    median_ms = step.get("median_ms")
+    if (
+        isinstance(median_ms, bool)
+        or not isinstance(median_ms, (int, float))
+        or not math.isfinite(median_ms)
+        or median_ms <= 0
+    ):
+        failures.append(f"{prefix}_step_median_missing")
     dispatch = row.get("dispatch_measured") or {}
     if (
         dispatch.get("steps") != EXPECTED_SAMPLES
@@ -196,12 +238,18 @@ def _validate_performance_row(
     ):
         failures.append(f"{prefix}_dispatch_mismatch")
 
+    if arm not in {"fixed", "adaptive"}:
+        return
+
     events = row.get("quest_activation_measured_events")
     if not isinstance(events, list) or len(events) != EXPECTED_SAMPLES:
         failures.append(f"{prefix}_activation_event_count_mismatch")
         return
     observation_ids = [
-        event.get("observation_id") for event in events
+        event.get("observation_id")
+        if isinstance(event, dict)
+        else None
+        for event in events
     ]
     if (
         any(value is None for value in observation_ids)
@@ -209,20 +257,50 @@ def _validate_performance_row(
     ):
         failures.append(f"{prefix}_activation_observation_ids_invalid")
 
-    if arm != "adaptive":
-        return
+    if any(
+        not isinstance(event, dict)
+        or event.get("status") != "valid"
+        for event in events
+    ):
+        failures.append(f"{prefix}_activation_status_invalid")
+
+    if any(
+        not isinstance(event, dict)
+        or event.get("batch_size") != batch
+        for event in events
+    ):
+        failures.append(
+            f"{arm}_activation_batch_mismatch_"
+            f"{EXPECTED_CONTEXT}x{batch}"
+        )
+
+    expected_threshold = 0 if arm == "fixed" else 128
+    if any(
+        not isinstance(event, dict)
+        or event.get("requested_top_k") != 16
+        or event.get("min_seq_len") != 512
+        or event.get("min_saved_blocks") != expected_threshold
+        for event in events
+    ):
+        failures.append(
+            f"{arm}_activation_configuration_mismatch_"
+            f"{EXPECTED_CONTEXT}x{batch}"
+        )
+
     if not all(_event_is_policy_consistent(event) for event in events):
         failures.append(
-            f"adaptive_activation_mismatch_{EXPECTED_CONTEXT}x{batch}"
+            f"{arm}_activation_mismatch_{EXPECTED_CONTEXT}x{batch}"
         )
         return
-    should_activate = batch in ACTIVE_BATCHES
+    should_activate = (
+        True if arm == "fixed" else batch in ACTIVE_BATCHES
+    )
     if not all(
         (event["resolved_top_k"] == 16) == should_activate
         for event in events
     ):
         failures.append(
-            f"adaptive_activation_mismatch_{EXPECTED_CONTEXT}x{batch}"
+            f"{arm}_activation_mismatch_{EXPECTED_CONTEXT}x{batch}"
         )
 
 
@@ -244,7 +322,7 @@ def _quality_setting(payload, top_k, failures):
     return matches[0]
 
 
-def _quality_rows(setting):
+def _quality_rows(setting, label, failures):
     rows = {}
     for detail in setting.get("details", []):
         key = (
@@ -253,8 +331,24 @@ def _quality_rows(setting):
             detail.get("trial"),
             detail.get("magic"),
         )
+        if key in rows:
+            failures.append(f"quality_{label}_duplicate_case")
         rows[key] = detail
     return rows
+
+
+def _validate_quality_grid(rows, label, failures):
+    expected = {
+        (EXPECTED_CONTEXT, depth, trial)
+        for depth in EXPECTED_DEPTHS
+        for trial in range(5)
+    }
+    observed = {
+        (ctx_len, depth, trial)
+        for ctx_len, depth, trial, _magic in rows
+    }
+    if observed != expected:
+        failures.append(f"quality_{label}_case_grid_mismatch")
 
 
 def _accuracy(rows):
@@ -301,10 +395,31 @@ def _validate_quality_activation(setting, failures):
         failures.append("adaptive_quality_activation_events_incomplete")
         return
     if not events or not any(
-        event.get("reason") == "active"
+        isinstance(event, dict)
+        and event.get("reason") == "active"
         for event in events
     ):
         failures.append("adaptive_quality_has_no_active_step")
+    observation_ids = [
+        event.get("observation_id")
+        if isinstance(event, dict)
+        else None
+        for event in events
+    ]
+    if (
+        any(
+            isinstance(value, bool) or not isinstance(value, int)
+            for value in observation_ids
+        )
+        or observation_ids != sorted(set(observation_ids))
+        or activation.get("first_observation_id")
+        != observation_ids[0]
+        or activation.get("last_observation_id")
+        != observation_ids[-1]
+    ):
+        failures.append(
+            "adaptive_quality_activation_observation_ids_invalid"
+        )
     if not all(_event_is_policy_consistent(event) for event in events):
         failures.append("adaptive_quality_activation_mismatch")
 
@@ -341,6 +456,36 @@ def build_report(
                     batch,
                     identity_failures,
                 )
+
+    if "bf16" in row_maps:
+        for batch in EXPECTED_BATCHES:
+            key = (EXPECTED_CONTEXT, batch)
+            reference_row = row_maps["bf16"].get(key)
+            if reference_row is None:
+                continue
+            reference_digests = reference_row.get("prompt_digests")
+            if (
+                not isinstance(reference_digests, list)
+                or len(reference_digests) != batch
+                or any(
+                    not isinstance(digest, str) or not digest
+                    for digest in reference_digests
+                )
+            ):
+                identity_failures.append(
+                    f"bf16_prompt_digests_invalid_"
+                    f"{EXPECTED_CONTEXT}x{batch}"
+                )
+                continue
+            for arm in ("kv8", "fixed", "adaptive"):
+                arm_row = row_maps.get(arm, {}).get(key)
+                if arm_row is None:
+                    continue
+                if arm_row.get("prompt_digests") != reference_digests:
+                    identity_failures.append(
+                        f"{arm}_prompt_digests_mismatch_"
+                        f"{EXPECTED_CONTEXT}x{batch}"
+                    )
 
     performance_cells = []
     if not identity_failures:
@@ -414,8 +559,16 @@ def build_report(
     )
     quality_report = {}
     if full_setting is not None and adaptive_setting is not None:
-        full_rows = _quality_rows(full_setting)
-        adaptive_rows = _quality_rows(adaptive_setting)
+        full_rows = _quality_rows(
+            full_setting,
+            "full",
+            identity_failures,
+        )
+        adaptive_rows = _quality_rows(
+            adaptive_setting,
+            "adaptive",
+            identity_failures,
+        )
         expected_count = len(EXPECTED_DEPTHS) * 5
         if len(full_rows) != expected_count:
             identity_failures.append("quality_full_case_count_mismatch")
@@ -423,6 +576,16 @@ def build_report(
             identity_failures.append(
                 "quality_adaptive_case_count_mismatch"
             )
+        _validate_quality_grid(
+            full_rows,
+            "full",
+            identity_failures,
+        )
+        _validate_quality_grid(
+            adaptive_rows,
+            "adaptive",
+            identity_failures,
+        )
         if set(full_rows) != set(adaptive_rows):
             identity_failures.append("quality_pairing_mismatch")
         _validate_quality_activation(
@@ -512,6 +675,30 @@ def render_markdown(report):
             "{adaptive_vs_kv8_ratio:.3f}x | "
             "{adaptive_vs_fixed_ratio:.3f}x |".format(**row)
         )
+    quality = report.get("quality") or {}
+    if quality:
+        lines.extend(
+            [
+                "",
+                "## Quality",
+                "",
+                "| Scope | KV8 full | Adaptive | Delta |",
+                "| :--- | ---: | ---: | ---: |",
+                (
+                    "| Overall | "
+                    f"{quality['kv8_full_overall_accuracy']:.3%} | "
+                    f"{quality['adaptive_overall_accuracy']:.3%} | "
+                    f"{quality['adaptive_vs_full_delta_pp']:+.3f} pp |"
+                ),
+            ]
+        )
+        for row in quality["per_depth"]:
+            lines.append(
+                "| Depth {depth:.2f} | "
+                "{kv8_full_accuracy:.3%} | "
+                "{adaptive_accuracy:.3%} | "
+                "{delta_pp:+.3f} pp |".format(**row)
+            )
     lines.extend(
         [
             "",

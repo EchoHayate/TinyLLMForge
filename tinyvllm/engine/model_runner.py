@@ -10399,25 +10399,33 @@ class ModelRunner:
         #      （kv-sparse-attention.md §5.5 #4）
         cfg_top_k = self.config.quest_top_k_blocks
         cfg_min_len = self.config.quest_min_seq_len
-        quest_decision = resolve_quest_activation(
-            requested_top_k=cfg_top_k,
-            min_seq_len=cfg_min_len,
-            min_saved_blocks=getattr(
-                self.config,
-                "quest_min_saved_blocks",
-                0,
-            ),
-            block_size=self.block_size,
-            sequence_lengths=[len(seq) for seq in seqs],
-            sequence_block_counts=[seq.num_blocks for seq in seqs],
-            incompatible_feature=(
-                cartridge_active or am_compact_active
-            ),
-        )
-        self._publish_quest_activation(quest_decision)
+        if cfg_top_k <= 0:
+            resolved_quest_top_k = -1
+        else:
+            quest_decision = resolve_quest_activation(
+                requested_top_k=cfg_top_k,
+                min_seq_len=cfg_min_len,
+                min_saved_blocks=getattr(
+                    self.config,
+                    "quest_min_saved_blocks",
+                    0,
+                ),
+                block_size=self.block_size,
+                sequence_lengths=[len(seq) for seq in seqs],
+                sequence_block_counts=[
+                    seq.num_blocks for seq in seqs
+                ],
+                incompatible_feature=(
+                    cartridge_active or am_compact_active
+                ),
+            )
+            self._publish_quest_activation(quest_decision)
+            resolved_quest_top_k = (
+                quest_decision.resolved_top_k
+            )
         set_context(False, slot_mapping=slot_mapping, context_lens=context_lens, block_tables=block_tables,
                     flash_attn_num_splits=flash_attn_num_splits,
-                    quest_top_k_blocks=quest_decision.resolved_top_k,
+                    quest_top_k_blocks=resolved_quest_top_k,
                     quest_min_seq_len=cfg_min_len,
                     am_compact_blocks=(self.config.am_compact_blocks if am_compact_active else 0),
                     am_compact_selector=self.config.am_compact_selector,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import os
 from pathlib import Path
@@ -300,18 +301,55 @@ def test_model_runner_wires_adaptive_policy_without_device_reads():
         in source
     )
     assert (
-        "sequence_block_counts=[seq.num_blocks for seq in seqs]"
-        in source
+        "sequence_block_counts=[" in policy_call
+        and "seq.num_blocks for seq in seqs" in policy_call
     )
     assert ".item()" not in source[
         source.index("resolve_quest_activation("):
         source.index("set_context(", source.index("resolve_quest_activation("))
     ]
     assert (
-        "quest_top_k_blocks=quest_decision.resolved_top_k"
+        "quest_top_k_blocks=resolved_quest_top_k"
         in source
     )
     assert "self._publish_quest_activation(quest_decision)" in source
+
+
+def test_model_runner_default_disabled_path_skips_policy_and_telemetry():
+    source = MODEL_RUNNER_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    prepare_decode = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "prepare_decode"
+    )
+    fast_path = next(
+        node
+        for node in ast.walk(prepare_decode)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "cfg_top_k"
+        and len(node.test.ops) == 1
+        and isinstance(node.test.ops[0], ast.LtE)
+        and len(node.test.comparators) == 1
+        and isinstance(node.test.comparators[0], ast.Constant)
+        and node.test.comparators[0].value == 0
+    )
+    disabled_source = "\n".join(
+        ast.get_source_segment(source, statement)
+        for statement in fast_path.body
+    )
+    enabled_source = "\n".join(
+        ast.get_source_segment(source, statement)
+        for statement in fast_path.orelse
+    )
+
+    assert "resolve_quest_activation" not in disabled_source
+    assert "_publish_quest_activation" not in disabled_source
+    assert "resolve_quest_activation" in enabled_source
+    assert "_publish_quest_activation" in enabled_source
 
 
 def test_model_runner_exposes_activation_observation_and_summary():
