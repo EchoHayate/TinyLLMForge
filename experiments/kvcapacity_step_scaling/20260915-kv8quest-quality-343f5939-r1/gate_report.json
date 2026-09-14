@@ -1,0 +1,116 @@
+{
+  "claim_boundary": "Qwen3-8B, A100 80GB PCIe, TP1, eager decode, context 8192, batches 4/8/12/16/19, pinned 640-block KV pool, synthetic fixed needle workload; no graph-path, production, TP2/TP4, or cross-model claim",
+  "classification": "NO_GO_KV8_QUEST",
+  "identity_failures": [],
+  "kind": "kvcapacity_kv8_quest_gate",
+  "performance_cells": [
+    {
+      "batch": 4,
+      "bf16_step_ms": 41.56787460669875,
+      "context_length": 8192,
+      "kv8_step_ms": 65.89197786524892,
+      "quest_faster_than_kv8": false,
+      "quest_step_ms": 82.52080087549984,
+      "quest_vs_kv8_ratio": 1.2523649091890574
+    },
+    {
+      "batch": 8,
+      "bf16_step_ms": 44.22110179439187,
+      "context_length": 8192,
+      "kv8_step_ms": 114.4295351114124,
+      "quest_faster_than_kv8": true,
+      "quest_step_ms": 81.57996600493789,
+      "quest_vs_kv8_ratio": 0.7129275315634982
+    },
+    {
+      "batch": 12,
+      "bf16_step_ms": 49.076690105721354,
+      "context_length": 8192,
+      "kv8_step_ms": 166.3064556196332,
+      "quest_faster_than_kv8": true,
+      "quest_step_ms": 96.42257005907595,
+      "quest_vs_kv8_ratio": 0.5797884976853108
+    },
+    {
+      "batch": 16,
+      "bf16_step_ms": 51.65351973846555,
+      "context_length": 8192,
+      "kv8_step_ms": 215.85282240994275,
+      "quest_faster_than_kv8": true,
+      "quest_step_ms": 122.16228852048516,
+      "quest_vs_kv8_ratio": 0.5659517774962299
+    },
+    {
+      "batch": 19,
+      "bf16_step_ms": 56.26779096201062,
+      "context_length": 8192,
+      "kv8_step_ms": 252.75260489434004,
+      "quest_faster_than_kv8": true,
+      "quest_step_ms": 142.16427225619555,
+      "quest_vs_kv8_ratio": 0.5624641230329772
+    }
+  ],
+  "quality": {
+    "bf16_overall_accuracy": 1.0,
+    "kv8_full_overall_accuracy": 1.0,
+    "kv8_quest_overall_accuracy": 1.0,
+    "kv8_quest_vs_full_delta_pp": 0.0,
+    "per_depth": [
+      {
+        "delta_pp": 0.0,
+        "depth": 0.0,
+        "kv8_full_accuracy": 1.0,
+        "kv8_quest_accuracy": 1.0
+      },
+      {
+        "delta_pp": 0.0,
+        "depth": 0.25,
+        "kv8_full_accuracy": 1.0,
+        "kv8_quest_accuracy": 1.0
+      },
+      {
+        "delta_pp": 0.0,
+        "depth": 0.5,
+        "kv8_full_accuracy": 1.0,
+        "kv8_quest_accuracy": 1.0
+      },
+      {
+        "delta_pp": 0.0,
+        "depth": 0.75,
+        "kv8_full_accuracy": 1.0,
+        "kv8_quest_accuracy": 1.0
+      },
+      {
+        "delta_pp": 0.0,
+        "depth": 1.0,
+        "kv8_full_accuracy": 1.0,
+        "kv8_quest_accuracy": 1.0
+      }
+    ],
+    "throughput_tok_s": {
+      "bf16": 30.120510112108004,
+      "kv8_full": 22.980852882616173,
+      "kv8_quest": 25.737229354894996
+    }
+  },
+  "quality_source_revision": "343f59399bc410c40c7a558a491c3bbff1a462e1",
+  "threshold_failures": [
+    "quest_not_faster_in_every_cell"
+  ],
+  "thresholds": {
+    "maximum_overall_quality_loss_pp": 5.0,
+    "maximum_per_depth_quality_loss_pp": 20.0,
+    "minimum_wall_excess_latency_recovery": 0.5,
+    "quest_faster_in_every_cell": true
+  },
+  "wall_cell": {
+    "batch": 19,
+    "bf16_step_ms": 56.26779096201062,
+    "context_length": 8192,
+    "excess_latency_recovery": 0.5628339942659986,
+    "kv8_step_ms": 252.75260489434004,
+    "quest_faster_than_kv8": true,
+    "quest_step_ms": 142.16427225619555,
+    "quest_vs_kv8_ratio": 0.5624641230329772
+  }
+}

@@ -1,0 +1,599 @@
+{
+  "args": {
+    "model": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+    "max_model_len": 16384,
+    "enforce_eager": true,
+    "tp_size": 1,
+    "context_lens": [
+      8192
+    ],
+    "depths": [
+      0.0,
+      0.25,
+      0.5,
+      0.75,
+      1.0
+    ],
+    "top_k_blocks_list": [
+      -1,
+      16
+    ],
+    "quest_min_seq_len": 512,
+    "kv_cartridge_blocks": 0,
+    "kv_cartridge_min_seq_len": 1024,
+    "kv_cartridge_mode": "uniform",
+    "am_compact_blocks": 0,
+    "am_compact_selector": "highest",
+    "am_compact_min_seq_len": 1024,
+    "am_compact_score_method": "rms",
+    "am_compact_beta_bound": 3.0,
+    "am_compact_ridge_lambda": 1e-06,
+    "am_omp_candidate_pool_size": 0,
+    "am_compact_cache_refresh_interval": 0,
+    "am_prefill_cache_ref_query_stride": 8,
+    "am_compact_num_clusters": 1,
+    "am_compact_route_top_k": 1,
+    "am_compact_num_key_spans": 1,
+    "am_compact_decode_refit": false,
+    "am_compact_decode_refit_mode": "full",
+    "am_compact_decode_refit_interval": 1,
+    "am_compact_skip_first_layers": 0,
+    "am_compact_skip_last_layers": 0,
+    "am_compact_enable_layers": null,
+    "am_compact_layer_stride": 1,
+    "am_layer_sweep": null,
+    "am_layer_sweep_print_only": false,
+    "am_layer_sweep_no_auto_off": false,
+    "num_trials": 5,
+    "max_output_len": 16,
+    "seed": 0,
+    "fixed_prompts": true,
+    "needle_style": "newline",
+    "out_json": "/data00/home/sitian/tllm/kvcapacity-runs/20260915-kv8quest-quality-343f5939-r1/kv8_paired.json",
+    "kv_quant_bits": 8,
+    "kv_quant_group_size": 128,
+    "quantization": null,
+    "quant_group_size": 128,
+    "act_quant_bits": 0,
+    "smoothquant_scale_path": null,
+    "act_quant_skip_first": 0,
+    "act_quant_skip_last": 0,
+    "act_quant_skip_layers": null,
+    "gpu_memory_utilization": 0.85,
+    "max_num_seqs": 32
+  },
+  "results": [
+    {
+      "label": "baseline",
+      "top_k": -1,
+      "overall_accuracy": 1.0,
+      "throughput_tok_s": 22.980852882616173,
+      "time_s": 17.405794382095337,
+      "per_setting": [
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "accuracy": 1.0,
+          "n": 5
+        }
+      ],
+      "details": [
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 60494,
+          "answer": "60494",
+          "hit": true,
+          "raw": " The magic number is 60494.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 65125,
+          "answer": "65125",
+          "hit": true,
+          "raw": " The magic number is 65125.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 2,
+          "magic": 15306,
+          "answer": "15306",
+          "hit": true,
+          "raw": " The magic number is 15306.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 3,
+          "magic": 43936,
+          "answer": "43936",
+          "hit": true,
+          "raw": " The magic number is 43936.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 4,
+          "magic": 77013,
+          "answer": "77013",
+          "hit": true,
+          "raw": " The magic number is 77013.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 73691,
+          "answer": "73691",
+          "hit": true,
+          "raw": " The magic number is 73691. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 63075,
+          "answer": "63075",
+          "hit": true,
+          "raw": " The magic number is 63075. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 2,
+          "magic": 49755,
+          "answer": "49755",
+          "hit": true,
+          "raw": " The magic number is 49755. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 3,
+          "magic": 72468,
+          "answer": "72468",
+          "hit": true,
+          "raw": " The magic number is 72468. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 4,
+          "magic": 56930,
+          "answer": "56930",
+          "hit": true,
+          "raw": " The magic number is 56930. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 86465,
+          "answer": "86465",
+          "hit": true,
+          "raw": " The magic number is 86465. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 38631,
+          "answer": "38631",
+          "hit": true,
+          "raw": " The magic number is 38631. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 2,
+          "magic": 76150,
+          "answer": "76150",
+          "hit": true,
+          "raw": " The magic number is 76150. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 3,
+          "magic": 28254,
+          "answer": "28254",
+          "hit": true,
+          "raw": " The magic number is 28254. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 4,
+          "magic": 46941,
+          "answer": "46941",
+          "hit": true,
+          "raw": " The magic number is 46941. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 28316,
+          "answer": "28316",
+          "hit": true,
+          "raw": " The magic number is 28316. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 22429,
+          "answer": "22429",
+          "hit": true,
+          "raw": " The magic number is 22429. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 2,
+          "magic": 91050,
+          "answer": "91050",
+          "hit": true,
+          "raw": " The magic number is 91050. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 3,
+          "magic": 42834,
+          "answer": "42834",
+          "hit": true,
+          "raw": " The magic number is 42834. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 4,
+          "magic": 79804,
+          "answer": "79804",
+          "hit": true,
+          "raw": " The magic number is 79804. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 88892,
+          "answer": "88892",
+          "hit": true,
+          "raw": " The magic number is 88892. The magic number is "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 29262,
+          "answer": "29262",
+          "hit": true,
+          "raw": " The magic number is 29262. The magic number is "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 2,
+          "magic": 50651,
+          "answer": "50651",
+          "hit": true,
+          "raw": " The magic number is 50651. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 3,
+          "magic": 22945,
+          "answer": "22945",
+          "hit": true,
+          "raw": " The magic number is 22945. The magic number is "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 4,
+          "magic": 19665,
+          "answer": "19665",
+          "hit": true,
+          "raw": " The magic number is 19665. The magic number is "
+        }
+      ]
+    },
+    {
+      "label": "top_k=16",
+      "top_k": 16,
+      "overall_accuracy": 1.0,
+      "throughput_tok_s": 25.737229354894996,
+      "time_s": 15.541688442230225,
+      "per_setting": [
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "accuracy": 1.0,
+          "n": 5
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "accuracy": 1.0,
+          "n": 5
+        }
+      ],
+      "details": [
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 0,
+          "magic": 60494,
+          "answer": "60494",
+          "hit": true,
+          "raw": " The magic number is 60494.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 1,
+          "magic": 65125,
+          "answer": "65125",
+          "hit": true,
+          "raw": " The magic number is 65125.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 2,
+          "magic": 15306,
+          "answer": "15306",
+          "hit": true,
+          "raw": " The magic number is 15306.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 3,
+          "magic": 43936,
+          "answer": "43936",
+          "hit": true,
+          "raw": " The magic number is 43936.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.0,
+          "trial": 4,
+          "magic": 77013,
+          "answer": "77013",
+          "hit": true,
+          "raw": " The magic number is 77013.\n\nOkay, let me try"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 0,
+          "magic": 73691,
+          "answer": "73691",
+          "hit": true,
+          "raw": " The magic number is 73691. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 1,
+          "magic": 63075,
+          "answer": "63075",
+          "hit": true,
+          "raw": " The magic number is 63075. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 2,
+          "magic": 49755,
+          "answer": "49755",
+          "hit": true,
+          "raw": " The magic number is 49755. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 3,
+          "magic": 72468,
+          "answer": "72468",
+          "hit": true,
+          "raw": " The magic number is 72468. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.25,
+          "trial": 4,
+          "magic": 56930,
+          "answer": "56930",
+          "hit": true,
+          "raw": " The magic number is 56930. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 0,
+          "magic": 86465,
+          "answer": "86465",
+          "hit": true,
+          "raw": " The magic number is 86465. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 1,
+          "magic": 38631,
+          "answer": "38631",
+          "hit": true,
+          "raw": " The magic number is 38631. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 2,
+          "magic": 76150,
+          "answer": "76150",
+          "hit": true,
+          "raw": " The magic number is 76150. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 3,
+          "magic": 28254,
+          "answer": "28254",
+          "hit": true,
+          "raw": " The magic number is 28254. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.5,
+          "trial": 4,
+          "magic": 46941,
+          "answer": "46941",
+          "hit": true,
+          "raw": " The magic number is 46941. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 0,
+          "magic": 28316,
+          "answer": "28316",
+          "hit": true,
+          "raw": " The magic number is 28316. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 1,
+          "magic": 22429,
+          "answer": "22429",
+          "hit": true,
+          "raw": " The magic number is 22429. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 2,
+          "magic": 91050,
+          "answer": "91050",
+          "hit": true,
+          "raw": " The magic number is 91050. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 3,
+          "magic": 42834,
+          "answer": "42834",
+          "hit": true,
+          "raw": " The magic number is 42834. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 0.75,
+          "trial": 4,
+          "magic": 79804,
+          "answer": "79804",
+          "hit": true,
+          "raw": " The magic number is 79804. Remember it.\n\nOkay,"
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 0,
+          "magic": 88892,
+          "answer": "88892",
+          "hit": true,
+          "raw": " The magic number is 88892. The magic number is "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 1,
+          "magic": 29262,
+          "answer": "29262",
+          "hit": true,
+          "raw": " The magic number is 29262. The magic number is "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 2,
+          "magic": 50651,
+          "answer": "50651",
+          "hit": true,
+          "raw": " The magic number is 50651. The magic number is "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 3,
+          "magic": 22945,
+          "answer": "22945",
+          "hit": true,
+          "raw": " The magic number is 22945. The magic number is "
+        },
+        {
+          "ctx_len": 8192,
+          "depth": 1.0,
+          "trial": 4,
+          "magic": 19665,
+          "answer": "19665",
+          "hit": true,
+          "raw": " The magic number is 19665. The magic number is "
+        }
+      ]
+    }
+  ]
+}

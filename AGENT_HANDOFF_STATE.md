@@ -53656,3 +53656,102 @@ Do not claim:
 
 The next inference-optimization effort must use a materially different design
 and a new immutable tag. Task 10 itself has no remaining GPU work.
+
+---
+
+## 2026-09-14 — KV8 + Quest selective-dequant terminal handoff
+
+### Current decision
+
+The eager-only Qwen3-8B diagnostic is closed:
+
+```text
+NO_GO_KV8_QUEST
+```
+
+The immutable run tags carry the remote host's `20260915` clock date.
+
+Do not promote Quest top-16 as an unconditional KV8 runtime path. It improves
+B=8/12/16/19, recovers 56.283% of KV8's excess latency at B=19, and loses no
+accuracy on the fixed needle workload, but B=4 regresses by 25.236%. That
+single predeclared threshold failure is terminal for this candidate.
+
+### Frozen evidence
+
+- performance source:
+  `b986b9d40e1eadee57c63d6ab50f3f424d133ba1`;
+- quality-runner source:
+  `343f59399bc410c40c7a558a491c3bbff1a462e1`;
+- `tinyvllm` and `tools/eval_needle.py` have no diff between those revisions;
+- model / hardware / topology:
+  Qwen3-8B / A100 80GB PCIe / TP1;
+- path / pool / workload:
+  eager / 640 KV blocks / context 8192 / B=4,8,12,16,19;
+- Quest:
+  top-16, minimum sequence length 512;
+- remote root:
+  `/data00/home/sitian/tllm/kvcapacity-runs/`;
+- performance tags:
+  `20260915-kv8quest-bf16-eager-b986b9d4-r1`,
+  `20260915-kv8quest-kv8-eager-b986b9d4-r1`,
+  `20260915-kv8quest-kv8q16-eager-b986b9d4-r1`;
+- quality tag:
+  `20260915-kv8quest-quality-343f5939-r1`.
+
+### Result table
+
+| B | bf16 ms | KV8 ms | KV8+Quest ms | Quest vs KV8 |
+| ---: | ---: | ---: | ---: | ---: |
+| 4 | 41.568 | 65.892 | 82.521 | 25.236% slower |
+| 8 | 44.221 | 114.430 | 81.580 | 28.707% faster |
+| 12 | 49.077 | 166.306 | 96.423 | 42.021% faster |
+| 16 | 51.654 | 215.853 | 122.162 | 43.405% faster |
+| 19 | 56.268 | 252.753 | 142.164 | 43.754% faster |
+
+Quality is 25/25 for bf16, KV8 full, and KV8+Quest. All five depths are 100%.
+The paired quality workload throughput is 22.98 tok/s for KV8 full and
+25.74 tok/s for Quest, a diagnostic 11.994% gain.
+
+### What remains valid
+
+This run establishes a useful batch-dependent crossover: the current
+selective-dequant path amortizes at B>=8, but its fixed selector/launch cost
+dominates at B=4. A materially new follow-up may test:
+
+1. an amortization-aware activation policy that keeps KV8 full attention below
+   a predeclared batch/work threshold; or
+2. a fused selector plus dequant-inside-attention kernel that removes the
+   low-batch fixed cost.
+
+Either route needs a new design, immutable tags, and a gate that includes
+boundary batches around the crossover. Do not retune the completed top-16
+candidate post hoc and call it a pass.
+
+### Local implementation and verification
+
+- source-bound quality runner:
+  `tools/run_kv8_quest_quality_remote.sh`;
+- independent analyzer:
+  `tools/kvcapacity_kv8_quest_gate.py`;
+- mutation tests:
+  `tools/test_kvcapacity_kv8_quest_gate.py`;
+- complete task suite:
+  `203 passed, 5 skipped`;
+- all 14 task JSON artifacts parse; remote/local quality hashes match;
+- `bash -n`, `py_compile`, source-path equivalence, and both staged/worktree
+  `git diff --check` checks pass;
+- focused local code review found no remaining P0-P2 issue after adding quality
+  engine/provenance validation and independent answer-versus-magic recomputation;
+- analyzer classification:
+  `NO_GO_KV8_QUEST`;
+- only threshold failure:
+  `quest_not_faster_in_every_cell`.
+
+Unsupported claims: graph-path, production, TP2/TP4, other-model, sampling,
+real-request quality, or fused-kernel benefit.
+
+```text
+KV8_QUEST_CLASSIFICATION=NO_GO_KV8_QUEST
+KV8_QUEST_PROMOTION=NOT_AUTHORIZED
+KV8_QUEST_NEXT_ACTION=DESIGN_NEW_AMORTIZATION_AWARE_OR_FUSED_GATE
+```

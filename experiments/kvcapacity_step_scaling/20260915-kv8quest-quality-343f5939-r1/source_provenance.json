@@ -1,0 +1,14 @@
+{
+  "source_revision": "343f59399bc410c40c7a558a491c3bbff1a462e1",
+  "source_dirty_paths": 0,
+  "remote_dir": "/data00/home/sitian/tllm/kvcapacity-runs/20260915-kv8quest-quality-343f5939-r1",
+  "cuda_device": "2",
+  "model": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+  "fixed_prompts": true,
+  "needle_style": "newline",
+  "context_lens": [8192],
+  "depths": [0.0, 0.25, 0.5, 0.75, 1.0],
+  "num_trials": 5,
+  "quest_top_k_blocks": 16,
+  "quest_min_seq_len": 512
+}

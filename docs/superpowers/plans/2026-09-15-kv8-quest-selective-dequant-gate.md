@@ -34,7 +34,7 @@
 - Consumes: `quest_top_k_blocks: int`, `quest_min_seq_len: int`
 - Produces: worker CLI flags, runner environment passthrough, requested payload configuration, and resolved engine identity
 
-- [ ] **Step 1: Write failing worker CLI and payload tests**
+- [x] **Step 1: Write failing worker CLI and payload tests**
 
 Add tests asserting:
 
@@ -53,7 +53,7 @@ assert args.quest_min_seq_len == 512
 and asserting that `build_payload(...)["configuration"]` contains
 `kv_quant_bits`, `quest_top_k_blocks`, and `quest_min_seq_len`.
 
-- [ ] **Step 2: Write a failing engine-construction passthrough test**
+- [x] **Step 2: Write a failing engine-construction passthrough test**
 
 Replace the imported `tinyvllm.LLM` with a capturing fake and assert that
 `_load_engine(...)` passes:
@@ -64,13 +64,13 @@ quest_top_k_blocks=16
 quest_min_seq_len=512
 ```
 
-- [ ] **Step 3: Write a failing runner-source test**
+- [x] **Step 3: Write a failing runner-source test**
 
 Read `tools/run_kvcapacity_step_scaling_remote.sh` and assert that non-default
 `QUEST_TOP_K_BLOCKS` and `QUEST_MIN_SEQ_LEN` become
 `--quest-top-k-blocks` and `--quest-min-seq-len` worker arguments.
 
-- [ ] **Step 4: Run RED**
+- [x] **Step 4: Run RED**
 
 Run:
 
@@ -82,13 +82,13 @@ python3 -m pytest -q \
 
 Expected: failures because the new CLI, payload, and passthrough do not exist.
 
-- [ ] **Step 5: Implement the minimum passthrough**
+- [x] **Step 5: Implement the minimum passthrough**
 
 Thread the two Quest values through `parse_args`, `main`, `run`,
 `_load_engine`, `_engine_identity`, and `build_payload`. Add runner defaults
 and append the worker flags only when Quest is enabled.
 
-- [ ] **Step 6: Run GREEN and adjacent tests**
+- [x] **Step 6: Run GREEN and adjacent tests**
 
 Run:
 
@@ -101,7 +101,7 @@ python3 -m pytest -q \
 
 Expected: all tests pass.
 
-- [ ] **Step 7: Commit and push the source-bound harness**
+- [x] **Step 7: Commit and push the source-bound harness**
 
 Stage only the three task files plus this design and plan. Commit with:
 
@@ -122,13 +122,13 @@ Push and verify the exact remote SHA before launching experiments.
 - Consumes: pushed Task-1 source SHA
 - Produces: three source-bound sweep bundles
 
-- [ ] **Step 1: Check the remote GPU state**
+- [x] **Step 1: Check the remote GPU state**
 
 Use a read-only SSH command with the existing Kerberos cache. Select one A100
 with enough free memory and no active foreign compute process. Do not terminate
 any process.
 
-- [ ] **Step 2: Run bf16 eager**
+- [x] **Step 2: Run bf16 eager**
 
 Run the existing remote runner with:
 
@@ -142,11 +142,11 @@ WARMUP_STEPS=24
 MEASURED_STEPS=24
 ```
 
-- [ ] **Step 3: Run KV8 eager**
+- [x] **Step 3: Run KV8 eager**
 
 Use the same values with `KV_QUANT_BITS=8`.
 
-- [ ] **Step 4: Run KV8+Quest eager**
+- [x] **Step 4: Run KV8+Quest eager**
 
 Use the same values with:
 
@@ -156,7 +156,7 @@ QUEST_TOP_K_BLOCKS=16
 QUEST_MIN_SEQ_LEN=512
 ```
 
-- [ ] **Step 5: Validate every raw artifact**
+- [x] **Step 5: Validate every raw artifact**
 
 Require all five cells per arm to be measured, stable at their target batch,
 and fully eager. Verify source SHA, model, pool, grid, seed, warmup, and sample
@@ -172,17 +172,17 @@ counts match.
 - Produces: paired accuracy and throughput rows for bf16, KV8 full, and
   KV8+Quest
 
-- [ ] **Step 1: Run bf16 baseline**
+- [x] **Step 1: Run bf16 baseline**
 
 Use `tools/eval_needle.py` with context 8192, five fixed depths, five trials,
 greedy decoding, and `top_k=-1`.
 
-- [ ] **Step 2: Run KV8 full plus KV8+Quest**
+- [x] **Step 2: Run KV8 full plus KV8+Quest**
 
 Use one KV8 engine with fixed prompts and `top_k=-1 16`, clearing prefix-cache
 metadata between settings.
 
-- [ ] **Step 3: Validate pairing and completeness**
+- [x] **Step 3: Validate pairing and completeness**
 
 Require 25 cases per setting, identical `(context, depth, trial, magic)` keys,
 and nonempty outputs.
@@ -198,13 +198,13 @@ and nonempty outputs.
 - Consumes: three performance sweep bundles and two quality bundles
 - Produces: `GO_TO_FUSED_KERNEL_SCOPE`, `NO_GO_KV8_QUEST`, or `INCONCLUSIVE`
 
-- [ ] **Step 1: Write failing mutation tests**
+- [x] **Step 1: Write failing mutation tests**
 
 Cover mismatched source identity, pool, grid, execution path, incomplete
 cells, non-improving Quest cells, insufficient wall-cell excess-latency
 recovery, overall accuracy loss, and per-depth accuracy loss.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run:
 
@@ -212,12 +212,12 @@ Run:
 python3 -m pytest -q tools/test_kvcapacity_kv8_quest_gate.py
 ```
 
-- [ ] **Step 3: Implement independent validation and classification**
+- [x] **Step 3: Implement independent validation and classification**
 
 Compute per-cell latency ratios, wall-cell excess-latency recovery, overall
 and per-depth accuracy deltas, and fixed failure precedence.
 
-- [ ] **Step 4: Run GREEN and the complete adjacent suite**
+- [x] **Step 4: Run GREEN and the complete adjacent suite**
 
 Run:
 
@@ -230,7 +230,7 @@ python3 -m pytest -q \
   tools/test_eval_needle_fixed_prompts.py
 ```
 
-- [ ] **Step 5: Classify the real artifacts**
+- [x] **Step 5: Classify the real artifacts**
 
 Write a compact JSON result and Markdown report. Do not copy large raw remote
 artifacts into the repository.
@@ -241,13 +241,13 @@ artifacts into the repository.
 - Modify: `docs/superpowers/audits/2026-08-16-phase1-completion-audit.md`
 - Modify: `AGENT_HANDOFF_STATE.md`
 
-- [ ] **Step 1: Append the prompt-to-artifact checklist**
+- [x] **Step 1: Append the prompt-to-artifact checklist**
 
 Record source SHA, immutable tags, remote paths, model/hardware identity,
 performance and quality metrics, all gate checks, and explicit unsupported
 claims.
 
-- [ ] **Step 2: Verify the complete task**
+- [x] **Step 2: Verify the complete task**
 
 Run all Task-4 tests, parse every JSON artifact, run `git diff --check`, and
 confirm the staged-path manifest contains only task files.

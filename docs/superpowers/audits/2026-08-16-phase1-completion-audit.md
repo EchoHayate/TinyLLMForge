@@ -4929,3 +4929,141 @@ SLO_COHORT_BURST_TERMINAL_DECISION=STOP_NO_GO_CORRECTNESS_AND_PERFORMANCE
 SLO_COHORT_BURST_PROMOTION=NOT_AUTHORIZED
 SLO_COHORT_BURST_NEXT_ACTION=ARCHIVE_FAILURE_DO_NOT_RERUN_SAME_DESIGN
 ```
+
+## 2026-09-14 reconciliation: KV8 + Quest selective-dequant diagnostic
+
+### Terminal result
+
+The Qwen3-8B eager-only KV8 + Quest top-16 gate is closed as:
+
+```text
+NO_GO_KV8_QUEST
+```
+
+The immutable run tags use the remote host's `20260915` clock date; this
+reconciliation is recorded on the controller's applicable date, 2026-09-14.
+
+The candidate has a real high-concurrency benefit and no loss on the frozen
+needle workload, but it fails the predeclared requirement that Quest improve
+every measured performance cell. At batch 4, Quest is 25.236% slower than KV8
+full dequantization. This prevents an unconditional runtime promotion.
+
+### Source, tags, and storage boundary
+
+| Item | Frozen value |
+| --- | --- |
+| Performance source revision | `b986b9d40e1eadee57c63d6ab50f3f424d133ba1` |
+| Quality runner revision | `343f59399bc410c40c7a558a491c3bbff1a462e1` |
+| Source-path equivalence | `git diff b986b9d4..343f5939 -- tinyvllm tools/eval_needle.py` is empty |
+| Branch | `feat/kv-sparse-attention` |
+| Model / hardware / topology | Qwen3-8B / NVIDIA A100 80GB PCIe / TP1 |
+| Decode path | eager only |
+| KV pool / context | 640 blocks / 8192 tokens |
+| Performance batches | 4, 8, 12, 16, 19 |
+| Quest policy | top-16 blocks, minimum sequence length 512 |
+| bf16 tag | `20260915-kv8quest-bf16-eager-b986b9d4-r1` |
+| KV8 tag | `20260915-kv8quest-kv8-eager-b986b9d4-r1` |
+| KV8+Quest tag | `20260915-kv8quest-kv8q16-eager-b986b9d4-r1` |
+| Quality tag | `20260915-kv8quest-quality-343f5939-r1` |
+| Remote root | `/data00/home/sitian/tllm/kvcapacity-runs/` |
+
+The quality-runner commit changes only the runner and its source test. The
+runtime and `eval_needle.py` content used by the performance and quality arms
+are identical. All remote data stayed below the mounted remote root.
+
+### Performance benefit and cost
+
+All 15 requested performance cells were measured with stable target batches,
+24 warmup steps, 24 measured steps, matching prompts, a pinned 640-block pool,
+and zero measured CUDA-graph steps.
+
+| Batch | bf16 eager | KV8 full | KV8+Quest | Quest vs KV8 | Excess-latency recovery |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | `41.568 ms` | `65.892 ms` | `82.521 ms` | `25.236%` slower | `-68.364%` |
+| 8 | `44.221 ms` | `114.430 ms` | `81.580 ms` | `28.707%` faster | `46.789%` |
+| 12 | `49.077 ms` | `166.306 ms` | `96.423 ms` | `42.021%` faster | `59.613%` |
+| 16 | `51.654 ms` | `215.853 ms` | `122.162 ms` | `43.405%` faster | `57.059%` |
+| 19 | `56.268 ms` | `252.753 ms` | `142.164 ms` | `43.754%` faster | `56.283%` |
+
+At B=19, sequence throughput rises from `75.17 seq/s` for KV8 full dequant to
+`133.65 seq/s` with Quest. However, KV8+Quest is still 152.657% slower than
+bf16 eager at that cell. The result isolates a crossover: selective dequant
+amortizes well at B>=8, while selector and launch overhead dominate at B=4.
+
+Performance payload SHA-256 values:
+
+- bf16: `443e561c594c4149cca0b4225064049c46dd94b42653b2c92469ae8e403f2993`
+- KV8: `1b270b9c94a78e1df3072042a984711ad7caba5af5a57cc2bf1c14a382dd6439`
+- KV8+Quest: `c0cb315684ed86a7914b1a039494bfeda9c351fddef715fe2108fec367ee8b9c`
+
+### Quality benefit and cost
+
+The fixed-prompt quality run used 25 identical cases per setting: context
+8192, five depths, five trials per depth, greedy decoding, newline-delimited
+needles, and prefix-cache metadata clearing between the paired KV8 settings.
+
+| Arm | Overall accuracy | Per-depth accuracy | Workload throughput |
+| --- | ---: | --- | ---: |
+| bf16 full attention | `100%` | `100%` at all five depths | `30.12 tok/s` |
+| KV8 full attention | `100%` | `100%` at all five depths | `22.98 tok/s` |
+| KV8 + Quest top-16 | `100%` | `100%` at all five depths | `25.74 tok/s` |
+
+Quest loses `0.0 pp` overall and `0.0 pp` at every depth relative to KV8 full
+attention on this workload. Its quality-run throughput is 11.994% above KV8
+full attention, but this secondary number does not override the dedicated
+step-scaling failure.
+
+Remote/local quality JSON SHA-256 values match:
+
+- bf16: `d827db4cd8d8ba1e5ab71ab3be569baa1e6af2dcdb4bec8f7fe6845f0f4e1ad7`
+- KV8 paired: `2374d9122022df1d4e4b11e51656d380ee47fc466e1dbf924fbd504a75b155d0`
+
+### Prompt-to-artifact checklist
+
+| Contract requirement | Evidence | Verdict |
+| --- | --- | --- |
+| Source-bound execution | all arms bind to pushed revisions; runtime/evaluator source paths are byte-equivalent | `PASS` |
+| Mounted remote storage only | every tag is below `/data00/home/sitian/tllm/kvcapacity-runs/` | `PASS` |
+| Same-path performance comparison | all 15 cells report eager dispatch and zero graph steps | `PASS` |
+| Frozen arm identity | model, pool, context, batches, seed, warmup, samples, and prompts match | `PASS` |
+| Complete stable cells | 5/5 cells per arm, all at requested batch | `PASS` |
+| Quest faster in every cell | B=4 regresses by 25.236% | `FAIL` |
+| B=19 excess-latency recovery | `56.283%`, threshold at least `50%` | `PASS` |
+| Fixed-prompt quality pairing | 25/25 identical case keys and magic numbers | `PASS` |
+| Overall quality protection | `0.0 pp` loss, limit `5 pp` | `PASS` |
+| Per-depth quality protection | `0.0 pp` loss at every depth, limit `20 pp` | `PASS` |
+| Independent classification | analyzer returns only `quest_not_faster_in_every_cell` | `NO_GO_KV8_QUEST` |
+
+Final verification: `203 passed, 5 skipped`; 14 task JSON files parse; quality
+JSON local hashes match the remote receipts; shell syntax, Python compilation,
+source-path equivalence, and staged/worktree diff checks pass. Focused local
+review found no remaining P0-P2 issue after strengthening quality identity,
+provenance, and independent answer validation.
+
+### Executive matrix update
+
+| Objective item | Current evidence | Classification |
+| --- | --- | --- |
+| KV8 selective-dequant high-concurrency recovery | 42.0-43.8% lower step time at B=12-19 | `POSITIVE_DIAGNOSTIC` |
+| Low-concurrency protection | B=4 is 25.236% slower | `FAIL` |
+| Wall-cell recovery | 56.283% of KV8 excess latency removed | `PASS` |
+| Frozen needle quality | 100% for bf16, KV8, and KV8+Quest | `PASS_LIMITED` |
+| Unconditional runtime promotion | every-cell gate fails | `NOT_AUTHORIZED` |
+| Next viable design | amortization-aware activation or fused selector/dequant kernel with a new gate | `OPEN_NEW_DESIGN_ONLY` |
+
+Unsupported claims: graph-path benefit, production QPS/latency, TP2/TP4,
+sampling quality, other models, real-request quality, or a fused kernel that
+has not been implemented.
+
+```text
+KV8_QUEST_PERFORMANCE_SOURCE=b986b9d40e1eadee57c63d6ab50f3f424d133ba1
+KV8_QUEST_QUALITY_RUNNER_SOURCE=343f59399bc410c40c7a558a491c3bbff1a462e1
+KV8_QUEST_CLASSIFICATION=NO_GO_KV8_QUEST
+KV8_QUEST_ONLY_FAILURE=QUEST_NOT_FASTER_IN_EVERY_CELL
+KV8_QUEST_B4_REGRESSION=25_236_PERCENT
+KV8_QUEST_B19_IMPROVEMENT=43_754_PERCENT
+KV8_QUEST_B19_EXCESS_RECOVERY=56_283_PERCENT
+KV8_QUEST_QUALITY_DELTA=0_0_PP
+KV8_QUEST_PROMOTION=NOT_AUTHORIZED
+KV8_QUEST_NEXT_ACTION=NEW_AMORTIZATION_AWARE_OR_FUSED_DESIGN
+```
