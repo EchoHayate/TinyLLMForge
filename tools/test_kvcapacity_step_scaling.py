@@ -1515,6 +1515,36 @@ def test_load_engine_passes_kv8_quest_configuration(monkeypatch):
     assert captured["quest_min_saved_blocks"] == 128
 
 
+def test_load_engine_preserves_disabled_quest_identity(monkeypatch):
+    captured = {}
+
+    class FakeLLM:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "tinyvllm",
+        types.SimpleNamespace(LLM=FakeLLM),
+    )
+    worker._load_engine(
+        model_path="m",
+        max_model_len=8192,
+        enforce_eager=True,
+        gpu_memory_utilization=0.85,
+        max_num_seqs=19,
+        kv_blocks=640,
+        kv_quant_bits=8,
+        quest_top_k_blocks=-1,
+        quest_min_seq_len=512,
+        quest_min_saved_blocks=0,
+    )
+
+    assert captured["quest_top_k_blocks"] == -1
+    assert captured["quest_min_seq_len"] == 512
+    assert captured["quest_min_saved_blocks"] == 0
+
+
 def test_runner_passes_nondefault_quest_configuration_to_worker():
     source = (
         HERE / "run_kvcapacity_step_scaling_remote.sh"

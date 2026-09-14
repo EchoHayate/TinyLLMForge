@@ -622,12 +622,11 @@ def _load_engine(*, model_path, max_model_len, enforce_eager, gpu_memory_utiliza
         # path supports it is not assumed: the per-step dispatch labels will say
         # so, and a silent eager fallback would otherwise read as a slope win.
         extra["kv_quant_bits"] = int(kv_quant_bits)
-    if quest_top_k_blocks > 0:
-        extra["quest_top_k_blocks"] = int(quest_top_k_blocks)
-        extra["quest_min_seq_len"] = int(quest_min_seq_len)
-        extra["quest_min_saved_blocks"] = int(
-            quest_min_saved_blocks
-        )
+    extra["quest_top_k_blocks"] = int(quest_top_k_blocks)
+    extra["quest_min_seq_len"] = int(quest_min_seq_len)
+    extra["quest_min_saved_blocks"] = int(
+        quest_min_saved_blocks
+    )
 
     engine = LLM(
         model=model_path,
