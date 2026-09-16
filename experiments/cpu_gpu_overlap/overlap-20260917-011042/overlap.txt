@@ -1,0 +1,24 @@
+[1/4] PCIe round trips
+      per_layer mean=1.355 ms (37.6 us per round trip), fused mean=0.068 ms
+[2/4] GPU decode alone
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:00<00:00, 109.45it/s]
+      mean=33.787 ms median=33.787
+[3/4] GPU decode while the CPU attention benchmark saturates the cores
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:00<00:00, 66.71it/s]
+      mean=49.993 ms median=49.847
+[4/4] verdict
+{
+  "window_ms": 12.113,
+  "gpu_alone_ms": 33.787,
+  "gpu_under_cpu_load_ms": 49.847,
+  "gpu_inflation_ms": 16.06,
+  "gpu_inflation_pct": 47.53,
+  "pcie_round_trip_ms": 1.355,
+  "cpu_attention_ms": 2.051,
+  "unconditional_overhead_ms": 17.415,
+  "headroom_ms": -7.353,
+  "verdict": "NOT_HIDEABLE",
+  "note": "headroom assumes perfect overlap of the CPU attention with independent GPU work; within a single sequence layer i's attention is on the critical path and this headroom is not available",
+  "inflation_source": "HF decode loop, which is launch-bound at ~34 ms/step and therefore more sensitive to host contention than the engine; the engine's own inflation is measured by tools/engine_step_cpu_interference.py and should replace this term"
+}
+wrote /data00/home/sitian/tllm/overlap-runs/overlap-20260917-011042/overlap.json

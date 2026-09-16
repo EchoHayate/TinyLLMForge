@@ -1,0 +1,49 @@
+{
+  "model": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+  "seq_len": 8192,
+  "cpu_threads": 64,
+  "cpu_tokens_per_step": 912,
+  "engine_alone": {
+    "step_ms_median": 14.05066988809267,
+    "step_ms_all": [
+      14.129,
+      14.051,
+      14.002
+    ],
+    "short_total_ms": [
+      904.3,
+      907.6,
+      909.9
+    ],
+    "long_total_ms": [
+      1808.6,
+      1806.9,
+      1806.0
+    ],
+    "n_short": 16,
+    "n_long": 80
+  },
+  "engine_under_cpu_load": {
+    "step_ms_median": 15.57403730112128,
+    "step_ms_all": [
+      16.204,
+      15.574,
+      15.087
+    ],
+    "short_total_ms": [
+      928.9,
+      949.3,
+      932.3
+    ],
+    "long_total_ms": [
+      1965.9,
+      1946.1,
+      1897.9
+    ],
+    "n_short": 16,
+    "n_long": 80
+  },
+  "inflation_ms": 1.523,
+  "inflation_pct": 10.84,
+  "c0_reference_ms": 12.113
+}

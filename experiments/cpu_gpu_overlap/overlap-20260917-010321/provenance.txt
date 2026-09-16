@@ -1,0 +1,8 @@
+run_tag=overlap-20260917-010321
+model=/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B
+seq_len=8192 steps=30
+cpu_tokens_per_step=912 cpu_threads=64
+cpu_attn_ms_reference=2.051
+gpu=2
+source_revision=117f00747ab28b69ef6681530ae02ff449826261
+source_dirty_files=33

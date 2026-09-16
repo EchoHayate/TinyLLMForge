@@ -1,0 +1,18 @@
+[rank0]:W0917 01:11:17.273000 139681024476160 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0917 01:11:17.412000 139681024476160 torch/fx/experimental/symbolic_shapes.py:4449] [1/0] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0917 01:11:48.596000 139681024476160 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0917 01:11:48.732000 139681024476160 torch/fx/experimental/symbolic_shapes.py:4449] [1/1] ps1 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0917 01:12:03.033000 139681024476160 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0917 01:12:03.085000 139681024476160 torch/fx/experimental/symbolic_shapes.py:4449] [1/2] xindex is not in var_ranges, defaulting to unknown range.
+[rank0]:W0917 01:12:26.233000 139681024476160 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps0 is not in var_ranges, defaulting to unknown range.
+[rank0]:W0917 01:12:26.348000 139681024476160 torch/fx/experimental/symbolic_shapes.py:4449] [1/3] ps1 is not in var_ranges, defaulting to unknown range.
+[1/2] engine decode alone
+      step=14.051 ms [14.129, 14.051, 14.002]
+[2/2] engine decode while the CPU attention benchmark saturates the cores
+      step=15.574 ms [16.204, 15.574, 15.087]
+{
+  "inflation_ms": 1.523,
+  "inflation_pct": 10.84,
+  "c0_reference_ms": 12.113
+}
+wrote /data00/home/sitian/tllm/overlap-runs/overlap-20260917-011042/engine-interference.json

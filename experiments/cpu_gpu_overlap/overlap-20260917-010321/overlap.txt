@@ -1,0 +1,23 @@
+[1/4] GPU decode alone
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:00<00:00, 108.04it/s]
+      mean=33.804 ms median=33.803
+[2/4] GPU decode while the CPU attention benchmark saturates the cores
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:00<00:00, 66.03it/s]
+      mean=36.867 ms median=36.864
+[3/4] PCIe round trips
+      per_layer mean=1.329 ms (36.9 us per round trip), fused mean=1.080 ms
+[4/4] verdict
+{
+  "window_ms": 12.113,
+  "gpu_alone_ms": 33.803,
+  "gpu_under_cpu_load_ms": 36.864,
+  "gpu_inflation_ms": 3.062,
+  "gpu_inflation_pct": 9.06,
+  "pcie_round_trip_ms": 1.329,
+  "cpu_attention_ms": 2.051,
+  "unconditional_overhead_ms": 4.39,
+  "headroom_ms": 5.672,
+  "verdict": "HIDEABLE",
+  "note": "headroom assumes perfect overlap of the CPU attention with independent GPU work; within a single sequence layer i's attention is on the critical path and this headroom is not available"
+}
+wrote /data00/home/sitian/tllm/overlap-runs/overlap-20260917-010321/overlap.json

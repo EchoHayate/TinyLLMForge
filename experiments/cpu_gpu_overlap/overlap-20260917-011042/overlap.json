@@ -1,0 +1,54 @@
+{
+  "model": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+  "seq_len": 8192,
+  "steps": 30,
+  "cpu_threads": 64,
+  "cpu_tokens_per_step": 912,
+  "pcie": {
+    "per_layer": {
+      "mean_ms": 1.3546471297740936,
+      "median_ms": 1.3530510477721691,
+      "bytes_per_step": 1179648,
+      "per_round_trip_us": 37.629086938169266
+    },
+    "fused": {
+      "mean_ms": 0.06798157468438148,
+      "median_ms": 0.06727082654833794,
+      "bytes_per_step": 1179648
+    }
+  },
+  "gpu_alone": {
+    "steps": 30,
+    "mean_ms": 33.78695324063301,
+    "median_ms": 33.78685703501105,
+    "p10_ms": 33.747229259461164,
+    "p90_ms": 33.82976772263646,
+    "n_layers": 36,
+    "tokenizer_vocab": 151669
+  },
+  "pcie_n_layers_assumed": 36,
+  "model_n_layers": 36,
+  "gpu_under_cpu_load": {
+    "steps": 30,
+    "mean_ms": 49.99303470055262,
+    "median_ms": 49.84712600708008,
+    "p10_ms": 49.365001264959574,
+    "p90_ms": 50.827651750296354,
+    "n_layers": 36,
+    "tokenizer_vocab": 151669
+  },
+  "summary": {
+    "window_ms": 12.113,
+    "gpu_alone_ms": 33.787,
+    "gpu_under_cpu_load_ms": 49.847,
+    "gpu_inflation_ms": 16.06,
+    "gpu_inflation_pct": 47.53,
+    "pcie_round_trip_ms": 1.355,
+    "cpu_attention_ms": 2.051,
+    "unconditional_overhead_ms": 17.415,
+    "headroom_ms": -7.353,
+    "verdict": "NOT_HIDEABLE",
+    "note": "headroom assumes perfect overlap of the CPU attention with independent GPU work; within a single sequence layer i's attention is on the critical path and this headroom is not available",
+    "inflation_source": "HF decode loop, which is launch-bound at ~34 ms/step and therefore more sensitive to host contention than the engine; the engine's own inflation is measured by tools/engine_step_cpu_interference.py and should replace this term"
+  }
+}

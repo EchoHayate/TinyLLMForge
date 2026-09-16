@@ -1,0 +1,51 @@
+{
+  "model": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+  "seq_len": 8192,
+  "steps": 30,
+  "cpu_threads": 64,
+  "cpu_tokens_per_step": 912,
+  "gpu_alone": {
+    "steps": 30,
+    "mean_ms": 33.804083444798984,
+    "median_ms": 33.80250418558717,
+    "p10_ms": 33.77257799729705,
+    "p90_ms": 33.84017804637551,
+    "n_layers": 36,
+    "tokenizer_vocab": 151669
+  },
+  "gpu_under_cpu_load": {
+    "steps": 30,
+    "mean_ms": 36.86713556138178,
+    "median_ms": 36.86400502920151,
+    "p10_ms": 36.10678296536207,
+    "p90_ms": 37.648075725883245,
+    "n_layers": 36,
+    "tokenizer_vocab": 151669
+  },
+  "pcie": {
+    "per_layer": {
+      "mean_ms": 1.3286624755710363,
+      "median_ms": 1.3250070624053478,
+      "bytes_per_step": 1179648,
+      "per_round_trip_us": 36.90729098808434
+    },
+    "fused": {
+      "mean_ms": 1.0802150890231133,
+      "median_ms": 1.08027970418334,
+      "bytes_per_step": 1179648
+    }
+  },
+  "summary": {
+    "window_ms": 12.113,
+    "gpu_alone_ms": 33.803,
+    "gpu_under_cpu_load_ms": 36.864,
+    "gpu_inflation_ms": 3.062,
+    "gpu_inflation_pct": 9.06,
+    "pcie_round_trip_ms": 1.329,
+    "cpu_attention_ms": 2.051,
+    "unconditional_overhead_ms": 4.39,
+    "headroom_ms": 5.672,
+    "verdict": "HIDEABLE",
+    "note": "headroom assumes perfect overlap of the CPU attention with independent GPU work; within a single sequence layer i's attention is on the critical path and this headroom is not available"
+  }
+}
