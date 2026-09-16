@@ -1,0 +1,126 @@
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:00<00:00, 107.84it/s]
+[prefill] variant=natural prompt_len=8192 answer=60494
+[prefill] done in 1.8s
+[dense] correct=True 1.54s text=' The magic number is 60494. Remember it.\nOkay, let me try to figure out what the magic number is here. The user provided a'
+[gran=  32 k/L=0.020 quest_shared_heads] correct=False agree=0.24 touched=0.0215 1.87s
+[gran=  32 k/L=0.020     quest_per_head] correct=False agree=0.27 touched=0.0215 4.08s
+[gran=  32 k/L=0.020            recency] correct=False agree=0.03 touched=0.0215 1.59s
+[gran=  32 k/L=0.020       sink_recency] correct=False agree=0.12 touched=0.0215 1.71s
+[gran=  32 k/L=0.020             random] correct=False agree=0.06 touched=0.0215 1.82s
+[gran=  32 k/L=0.035 quest_shared_heads] correct=True  agree=0.42 touched=0.0332 1.82s
+[gran=  32 k/L=0.035     quest_per_head] correct=True  agree=0.39 touched=0.0332 4.08s
+[gran=  32 k/L=0.035            recency] correct=False agree=0.03 touched=0.0332 1.59s
+[gran=  32 k/L=0.035       sink_recency] correct=False agree=0.12 touched=0.0332 1.73s
+[gran=  32 k/L=0.035             random] correct=False agree=0.06 touched=0.0332 1.8s
+[gran=  32 k/L=0.051 quest_shared_heads] correct=True  agree=0.42 touched=0.0527 1.83s
+[gran=  32 k/L=0.051     quest_per_head] correct=True  agree=0.33 touched=0.0527 4.26s
+[gran=  32 k/L=0.051            recency] correct=False agree=0.03 touched=0.0527 1.64s
+[gran=  32 k/L=0.051       sink_recency] correct=False agree=0.15 touched=0.0527 1.76s
+[gran=  32 k/L=0.051             random] correct=False agree=0.06 touched=0.0527 1.82s
+[gran=  32 k/L=0.110 quest_shared_heads] correct=True  agree=0.42 touched=0.1112 1.82s
+[gran=  32 k/L=0.110     quest_per_head] correct=True  agree=0.39 touched=0.1112 4.08s
+[gran=  32 k/L=0.110            recency] correct=False agree=0.03 touched=0.1112 1.59s
+[gran=  32 k/L=0.110       sink_recency] correct=False agree=0.15 touched=0.1112 1.71s
+[gran=  32 k/L=0.110             random] correct=False agree=0.03 touched=0.1112 1.79s
+[gran=  32 k/L=0.250 quest_shared_heads] correct=True  agree=0.42 touched=0.2515 1.8s
+[gran=  32 k/L=0.250     quest_per_head] correct=True  agree=0.42 touched=0.2515 4.01s
+[gran=  32 k/L=0.250            recency] correct=False agree=0.03 touched=0.2515 1.59s
+[gran=  32 k/L=0.250       sink_recency] correct=False agree=0.15 touched=0.2515 1.71s
+[gran=  32 k/L=0.250             random] correct=False agree=0.03 touched=0.2515 1.78s
+[gran= 256 k/L=0.020 quest_shared_heads] correct=False agree=0.03 touched=0.0312 1.79s
+[gran= 256 k/L=0.020     quest_per_head] correct=False agree=0.03 touched=0.0312 3.92s
+[gran= 256 k/L=0.020            recency] correct=False agree=0.06 touched=0.0020 1.6s
+[gran= 256 k/L=0.020       sink_recency] correct=False agree=0.03 touched=0.0312 1.72s
+[gran= 256 k/L=0.020             random] correct=False agree=0.06 touched=0.0332 1.77s
+[gran= 256 k/L=0.035 quest_shared_heads] correct=False agree=0.06 touched=0.0332 1.83s
+[gran= 256 k/L=0.035     quest_per_head] correct=False agree=0.06 touched=0.0332 4.11s
+[gran= 256 k/L=0.035            recency] correct=False agree=0.03 touched=0.0332 1.61s
+[gran= 256 k/L=0.035       sink_recency] correct=False agree=0.06 touched=0.0332 1.72s
+[gran= 256 k/L=0.035             random] correct=False agree=0.06 touched=0.0332 1.77s
+[gran= 256 k/L=0.051 quest_shared_heads] correct=False agree=0.06 touched=0.0332 1.83s
+[gran= 256 k/L=0.051     quest_per_head] correct=False agree=0.06 touched=0.0332 4.09s
+[gran= 256 k/L=0.051            recency] correct=False agree=0.03 touched=0.0332 1.6s
+[gran= 256 k/L=0.051       sink_recency] correct=False agree=0.06 touched=0.0332 1.72s
+[gran= 256 k/L=0.051             random] correct=False agree=0.06 touched=0.0332 1.76s
+[gran= 256 k/L=0.110 quest_shared_heads] correct=False agree=0.06 touched=0.0956 1.87s
+[gran= 256 k/L=0.110     quest_per_head] correct=False agree=0.27 touched=0.0956 4.27s
+[gran= 256 k/L=0.110            recency] correct=False agree=0.03 touched=0.0956 1.66s
+[gran= 256 k/L=0.110       sink_recency] correct=False agree=0.12 touched=0.0956 1.76s
+[gran= 256 k/L=0.110             random] correct=False agree=0.03 touched=0.0956 1.86s
+[gran= 256 k/L=0.250 quest_shared_heads] correct=True  agree=0.42 touched=0.2515 1.88s
+[gran= 256 k/L=0.250     quest_per_head] correct=True  agree=0.39 touched=0.2515 4.21s
+[gran= 256 k/L=0.250            recency] correct=False agree=0.03 touched=0.2515 1.64s
+[gran= 256 k/L=0.250       sink_recency] correct=False agree=0.15 touched=0.2515 1.75s
+[gran= 256 k/L=0.250             random] correct=False agree=0.15 touched=0.2515 1.81s
+{
+  "verdict": "DISCRIMINATIVE",
+  "discriminative_cells": [
+    {
+      "granularity": 32,
+      "k_frac": 0.035,
+      "primary_touched_frac": 0.0332,
+      "primary_agreement": 0.4242,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 32,
+      "k_frac": 0.051,
+      "primary_touched_frac": 0.05269,
+      "primary_agreement": 0.4242,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 32,
+      "k_frac": 0.11,
+      "primary_touched_frac": 0.11117,
+      "primary_agreement": 0.4242,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 32,
+      "k_frac": 0.25,
+      "primary_touched_frac": 0.25151,
+      "primary_agreement": 0.4242,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 256,
+      "k_frac": 0.25,
+      "primary_touched_frac": 0.25151,
+      "primary_agreement": 0.4242,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    }
+  ],
+  "cheapest_passing": {
+    "granularity": 32,
+    "k_frac": 0.035,
+    "primary_touched_frac": 0.0332,
+    "primary_agreement": 0.4242,
+    "failing_bad_arms": [
+      "recency",
+      "sink_recency",
+      "random"
+    ]
+  }
+}
+wrote /data00/home/sitian/tllm/e2e-sparse-runs/e2e-sparse-margin-20260917-003529/e2e-natural.json

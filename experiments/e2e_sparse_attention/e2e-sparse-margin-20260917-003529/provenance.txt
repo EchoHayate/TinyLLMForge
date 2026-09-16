@@ -1,0 +1,12 @@
+run_tag=e2e-sparse-margin-20260917-003529
+model=/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B
+seq_len=8192
+variants=natural distractor repetitive
+granularities=32 256
+k_fracs=0.02 0.035 0.051 0.11 0.25
+arms=quest_shared_heads quest_per_head recency sink_recency random
+dense_layers=0
+max_new_tokens=32
+source_revision=762e3801f541d4b0356c45b5589da381aea1fee4
+source_dirty_files=33
+gpu=2

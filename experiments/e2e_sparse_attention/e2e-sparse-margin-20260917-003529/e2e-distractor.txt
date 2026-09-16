@@ -1,0 +1,137 @@
+Loading checkpoint shards:   0%|          | 0/5 [00:00<?, ?it/s]Loading checkpoint shards: 100%|██████████| 5/5 [00:00<00:00, 109.69it/s]
+[prefill] variant=distractor prompt_len=8192 answer=60494
+[prefill] done in 1.8s
+[dense] correct=True 1.54s text=' The magic number for the harbor is 60494. Remember it.\n\nWhat is the magic number for the ledger? Answer with only the digits, nothing'
+[gran=  32 k/L=0.020 quest_shared_heads] correct=True  agree=0.42 touched=0.0215 1.85s
+[gran=  32 k/L=0.020     quest_per_head] correct=False agree=0.24 touched=0.0215 4.03s
+[gran=  32 k/L=0.020            recency] correct=False agree=0.03 touched=0.0215 1.57s
+[gran=  32 k/L=0.020       sink_recency] correct=False agree=0.24 touched=0.0215 1.69s
+[gran=  32 k/L=0.020             random] correct=False agree=0.03 touched=0.0215 1.8s
+[gran=  32 k/L=0.035 quest_shared_heads] correct=True  agree=0.48 touched=0.0332 1.79s
+[gran=  32 k/L=0.035     quest_per_head] correct=True  agree=0.48 touched=0.0332 4.14s
+[gran=  32 k/L=0.035            recency] correct=False agree=0.03 touched=0.0332 1.61s
+[gran=  32 k/L=0.035       sink_recency] correct=False agree=0.24 touched=0.0332 1.73s
+[gran=  32 k/L=0.035             random] correct=False agree=0.03 touched=0.0332 1.8s
+[gran=  32 k/L=0.051 quest_shared_heads] correct=True  agree=0.48 touched=0.0527 1.88s
+[gran=  32 k/L=0.051     quest_per_head] correct=True  agree=0.48 touched=0.0527 4.1s
+[gran=  32 k/L=0.051            recency] correct=False agree=0.03 touched=0.0527 1.58s
+[gran=  32 k/L=0.051       sink_recency] correct=False agree=0.24 touched=0.0527 1.69s
+[gran=  32 k/L=0.051             random] correct=False agree=0.03 touched=0.0527 1.77s
+[gran=  32 k/L=0.110 quest_shared_heads] correct=True  agree=1.00 touched=0.1112 1.79s
+[gran=  32 k/L=0.110     quest_per_head] correct=True  agree=0.48 touched=0.1112 4.03s
+[gran=  32 k/L=0.110            recency] correct=False agree=0.03 touched=0.1112 1.58s
+[gran=  32 k/L=0.110       sink_recency] correct=False agree=0.24 touched=0.1112 1.68s
+[gran=  32 k/L=0.110             random] correct=False agree=0.03 touched=0.1112 1.76s
+[gran=  32 k/L=0.250 quest_shared_heads] correct=True  agree=0.73 touched=0.2515 1.78s
+[gran=  32 k/L=0.250     quest_per_head] correct=True  agree=1.00 touched=0.2515 3.97s
+[gran=  32 k/L=0.250            recency] correct=False agree=0.27 touched=0.2515 1.57s
+[gran=  32 k/L=0.250       sink_recency] correct=False agree=0.30 touched=0.2515 1.69s
+[gran=  32 k/L=0.250             random] correct=False agree=0.03 touched=0.2515 1.76s
+[gran= 256 k/L=0.020 quest_shared_heads] correct=False agree=0.03 touched=0.0312 1.78s
+[gran= 256 k/L=0.020     quest_per_head] correct=False agree=0.03 touched=0.0312 3.88s
+[gran= 256 k/L=0.020            recency] correct=False agree=0.03 touched=0.0020 1.58s
+[gran= 256 k/L=0.020       sink_recency] correct=False agree=0.03 touched=0.0312 1.74s
+[gran= 256 k/L=0.020             random] correct=False agree=0.03 touched=0.0332 1.81s
+[gran= 256 k/L=0.035 quest_shared_heads] correct=False agree=0.03 touched=0.0332 1.87s
+[gran= 256 k/L=0.035     quest_per_head] correct=False agree=0.03 touched=0.0332 4.05s
+[gran= 256 k/L=0.035            recency] correct=False agree=0.03 touched=0.0332 1.59s
+[gran= 256 k/L=0.035       sink_recency] correct=False agree=0.03 touched=0.0332 1.71s
+[gran= 256 k/L=0.035             random] correct=False agree=0.03 touched=0.0332 1.76s
+[gran= 256 k/L=0.051 quest_shared_heads] correct=False agree=0.03 touched=0.0332 1.81s
+[gran= 256 k/L=0.051     quest_per_head] correct=False agree=0.03 touched=0.0332 4.04s
+[gran= 256 k/L=0.051            recency] correct=False agree=0.03 touched=0.0332 1.59s
+[gran= 256 k/L=0.051       sink_recency] correct=False agree=0.03 touched=0.0332 1.7s
+[gran= 256 k/L=0.051             random] correct=False agree=0.03 touched=0.0332 1.74s
+[gran= 256 k/L=0.110 quest_shared_heads] correct=False agree=0.03 touched=0.0956 1.81s
+[gran= 256 k/L=0.110     quest_per_head] correct=False agree=0.27 touched=0.0956 4.03s
+[gran= 256 k/L=0.110            recency] correct=False agree=0.03 touched=0.0956 1.58s
+[gran= 256 k/L=0.110       sink_recency] correct=False agree=0.24 touched=0.0956 1.71s
+[gran= 256 k/L=0.110             random] correct=False agree=0.03 touched=0.0956 1.78s
+[gran= 256 k/L=0.250 quest_shared_heads] correct=True  agree=1.00 touched=0.2515 1.81s
+[gran= 256 k/L=0.250     quest_per_head] correct=True  agree=0.48 touched=0.2515 4.05s
+[gran= 256 k/L=0.250            recency] correct=False agree=0.27 touched=0.2515 1.59s
+[gran= 256 k/L=0.250       sink_recency] correct=False agree=0.27 touched=0.2515 1.71s
+[gran= 256 k/L=0.250             random] correct=False agree=0.15 touched=0.2515 1.8s
+{
+  "verdict": "DISCRIMINATIVE",
+  "discriminative_cells": [
+    {
+      "granularity": 32,
+      "k_frac": 0.02,
+      "primary_touched_frac": 0.0215,
+      "primary_agreement": 0.4242,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 32,
+      "k_frac": 0.035,
+      "primary_touched_frac": 0.0332,
+      "primary_agreement": 0.4848,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 32,
+      "k_frac": 0.051,
+      "primary_touched_frac": 0.05269,
+      "primary_agreement": 0.4848,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 32,
+      "k_frac": 0.11,
+      "primary_touched_frac": 0.11117,
+      "primary_agreement": 1.0,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 32,
+      "k_frac": 0.25,
+      "primary_touched_frac": 0.25151,
+      "primary_agreement": 0.7273,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    },
+    {
+      "granularity": 256,
+      "k_frac": 0.25,
+      "primary_touched_frac": 0.25151,
+      "primary_agreement": 1.0,
+      "failing_bad_arms": [
+        "recency",
+        "sink_recency",
+        "random"
+      ]
+    }
+  ],
+  "cheapest_passing": {
+    "granularity": 32,
+    "k_frac": 0.02,
+    "primary_touched_frac": 0.0215,
+    "primary_agreement": 0.4242,
+    "failing_bad_arms": [
+      "recency",
+      "sink_recency",
+      "random"
+    ]
+  }
+}
+wrote /data00/home/sitian/tllm/e2e-sparse-runs/e2e-sparse-margin-20260917-003529/e2e-distractor.json
