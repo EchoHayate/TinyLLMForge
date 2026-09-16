@@ -1,0 +1,10 @@
+run_tag=selector-fidelity-20260916-2248
+model=/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B
+seq_len=8192
+layers=auto6
+variants=repetitive natural distractor
+granularities=256 64 32
+k_fracs=0.02 0.05 0.11 0.25 0.50
+source_revision=8aa5fa76a4e533d3b8e708cfe8edfc618b8f7789
+source_dirty_files=34
+gpu=2

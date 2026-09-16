@@ -1,0 +1,40 @@
+{
+  "variant": "repetitive",
+  "model": "/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B",
+  "seq_len": 8192,
+  "layers": [
+    0,
+    7,
+    14,
+    21,
+    28,
+    35
+  ],
+  "answer": "60494",
+  "answer_needle_positions": [
+    4080,
+    4081,
+    4082,
+    4083,
+    4084,
+    4085,
+    4086,
+    4087,
+    4088,
+    4089,
+    4090,
+    4091,
+    4092,
+    4093,
+    4094
+  ],
+  "decoy_positions": [],
+  "num_decoys": 0,
+  "depth": 0.5,
+  "seed": 0,
+  "n_q_heads": 32,
+  "n_kv_heads": 8,
+  "head_dim": 128,
+  "greedy_completion": " The magic number is 60494. Remember",
+  "model_answered_correctly": true
+}
