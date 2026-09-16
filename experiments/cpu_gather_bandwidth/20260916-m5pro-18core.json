@@ -1,0 +1,20 @@
+{"buffer_gib":8.0,"cores":18,"results":[
+  {"chunk_bytes":4096,"threads":1,"seq_gb_s":77.06,"rand_gb_s":13.00,"rand_over_seq":0.1687},
+  {"chunk_bytes":4096,"threads":2,"seq_gb_s":134.99,"rand_gb_s":26.61,"rand_over_seq":0.1971},
+  {"chunk_bytes":4096,"threads":4,"seq_gb_s":209.50,"rand_gb_s":44.89,"rand_over_seq":0.2143},
+  {"chunk_bytes":4096,"threads":8,"seq_gb_s":222.53,"rand_gb_s":73.42,"rand_over_seq":0.3299},
+  {"chunk_bytes":4096,"threads":16,"seq_gb_s":241.96,"rand_gb_s":100.48,"rand_over_seq":0.4153},
+  {"chunk_bytes":4096,"threads":18,"seq_gb_s":243.15,"rand_gb_s":102.60,"rand_over_seq":0.4220},
+  {"chunk_bytes":131072,"threads":1,"seq_gb_s":76.17,"rand_gb_s":62.03,"rand_over_seq":0.8145},
+  {"chunk_bytes":131072,"threads":2,"seq_gb_s":135.62,"rand_gb_s":111.88,"rand_over_seq":0.8250},
+  {"chunk_bytes":131072,"threads":4,"seq_gb_s":215.04,"rand_gb_s":187.57,"rand_over_seq":0.8722},
+  {"chunk_bytes":131072,"threads":8,"seq_gb_s":219.11,"rand_gb_s":190.94,"rand_over_seq":0.8714},
+  {"chunk_bytes":131072,"threads":16,"seq_gb_s":155.76,"rand_gb_s":192.06,"rand_over_seq":1.2331},
+  {"chunk_bytes":131072,"threads":18,"seq_gb_s":232.81,"rand_gb_s":211.56,"rand_over_seq":0.9087},
+  {"chunk_bytes":1048576,"threads":1,"seq_gb_s":62.74,"rand_gb_s":66.22,"rand_over_seq":1.0555},
+  {"chunk_bytes":1048576,"threads":2,"seq_gb_s":124.31,"rand_gb_s":125.01,"rand_over_seq":1.0057},
+  {"chunk_bytes":1048576,"threads":4,"seq_gb_s":197.31,"rand_gb_s":201.52,"rand_over_seq":1.0214},
+  {"chunk_bytes":1048576,"threads":8,"seq_gb_s":226.24,"rand_gb_s":219.10,"rand_over_seq":0.9684},
+  {"chunk_bytes":1048576,"threads":16,"seq_gb_s":232.23,"rand_gb_s":230.24,"rand_over_seq":0.9914},
+  {"chunk_bytes":1048576,"threads":18,"seq_gb_s":234.34,"rand_gb_s":229.89,"rand_over_seq":0.9810}
+]}

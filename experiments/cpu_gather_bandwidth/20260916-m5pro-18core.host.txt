@@ -1,0 +1,2 @@
+Apple M5 Pro
+cores=18 mem_gb=48
