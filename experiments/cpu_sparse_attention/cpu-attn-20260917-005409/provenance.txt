@@ -1,0 +1,8 @@
+run_tag=cpu-attn-20260917-005409
+layers=36 seq=8192 kv_heads=8 group_size=4 dim=128
+granularity=32
+token_budgets=272 448 912 2048 8192
+thread_counts=16 32 64 128
+iters=20 warmup=3
+source_revision=3a9ebd9c5200e77e202ef52242545e9eca8bb536
+source_dirty_files=32

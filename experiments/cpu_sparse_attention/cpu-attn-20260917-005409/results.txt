@@ -1,0 +1,120 @@
+threads=16 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=272 tokens_selected=256 (3.12% of context)
+step_ms mean=1.190 best=1.135 worst=1.294
+bytes_per_step=36.0 MiB eff_bandwidth=31.7 GB/s eff_gflops=126.9
+checksum=6624.000000
+---
+threads=32 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=272 tokens_selected=256 (3.12% of context)
+step_ms mean=0.613 best=0.520 worst=0.668
+bytes_per_step=36.0 MiB eff_bandwidth=61.6 GB/s eff_gflops=246.3
+checksum=6624.000000
+---
+threads=64 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=272 tokens_selected=256 (3.12% of context)
+step_ms mean=0.416 best=0.401 worst=0.431
+bytes_per_step=36.0 MiB eff_bandwidth=90.8 GB/s eff_gflops=363.2
+checksum=6624.000000
+---
+threads=128 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=272 tokens_selected=256 (3.12% of context)
+step_ms mean=12.213 best=6.435 worst=17.915
+bytes_per_step=36.0 MiB eff_bandwidth=3.1 GB/s eff_gflops=12.4
+checksum=6624.000000
+---
+threads=16 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=448 tokens_selected=448 (5.47% of context)
+step_ms mean=2.070 best=1.723 worst=2.258
+bytes_per_step=63.0 MiB eff_bandwidth=31.9 GB/s eff_gflops=127.6
+checksum=6623.983023
+---
+threads=32 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=448 tokens_selected=448 (5.47% of context)
+step_ms mean=1.161 best=1.084 worst=1.245
+bytes_per_step=63.0 MiB eff_bandwidth=56.9 GB/s eff_gflops=227.7
+checksum=6623.983023
+---
+threads=64 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=448 tokens_selected=448 (5.47% of context)
+step_ms mean=0.796 best=0.746 worst=0.858
+bytes_per_step=63.0 MiB eff_bandwidth=83.0 GB/s eff_gflops=332.0
+checksum=6623.983023
+---
+threads=128 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=448 tokens_selected=448 (5.47% of context)
+step_ms mean=12.810 best=6.656 worst=18.141
+bytes_per_step=63.0 MiB eff_bandwidth=5.2 GB/s eff_gflops=20.6
+checksum=6623.983023
+---
+threads=16 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=912 tokens_selected=896 (10.94% of context)
+step_ms mean=4.804 best=4.701 worst=5.159
+bytes_per_step=126.0 MiB eff_bandwidth=27.5 GB/s eff_gflops=110.0
+checksum=6624.067120
+---
+threads=32 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=912 tokens_selected=896 (10.94% of context)
+step_ms mean=2.595 best=2.550 worst=2.652
+bytes_per_step=126.0 MiB eff_bandwidth=50.9 GB/s eff_gflops=203.7
+checksum=6624.067120
+---
+threads=64 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=912 tokens_selected=896 (10.94% of context)
+step_ms mean=2.051 best=1.726 worst=7.571
+bytes_per_step=126.0 MiB eff_bandwidth=64.4 GB/s eff_gflops=257.7
+checksum=6624.067120
+---
+threads=128 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=912 tokens_selected=896 (10.94% of context)
+step_ms mean=13.588 best=8.036 worst=19.317
+bytes_per_step=126.0 MiB eff_bandwidth=9.7 GB/s eff_gflops=38.9
+checksum=6624.067120
+---
+threads=16 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=2048 tokens_selected=2048 (25.00% of context)
+step_ms mean=12.452 best=12.186 worst=12.610
+bytes_per_step=288.0 MiB eff_bandwidth=24.3 GB/s eff_gflops=97.0
+checksum=6624.000000
+---
+threads=32 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=2048 tokens_selected=2048 (25.00% of context)
+step_ms mean=7.122 best=5.706 worst=7.444
+bytes_per_step=288.0 MiB eff_bandwidth=42.4 GB/s eff_gflops=169.6
+checksum=6624.000000
+---
+threads=64 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=2048 tokens_selected=2048 (25.00% of context)
+step_ms mean=4.744 best=4.555 worst=4.922
+bytes_per_step=288.0 MiB eff_bandwidth=63.7 GB/s eff_gflops=254.6
+checksum=6624.000000
+---
+threads=128 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=2048 tokens_selected=2048 (25.00% of context)
+step_ms mean=17.107 best=11.113 worst=22.325
+bytes_per_step=288.0 MiB eff_bandwidth=17.7 GB/s eff_gflops=70.6
+checksum=6624.000000
+---
+threads=16 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=8192 tokens_selected=8192 (100.00% of context)
+step_ms mean=56.007 best=49.966 worst=57.972
+bytes_per_step=1152.0 MiB eff_bandwidth=21.6 GB/s eff_gflops=86.3
+checksum=6624.000000
+---
+threads=32 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=8192 tokens_selected=8192 (100.00% of context)
+step_ms mean=31.068 best=29.105 worst=31.548
+bytes_per_step=1152.0 MiB eff_bandwidth=38.9 GB/s eff_gflops=155.5
+checksum=6624.000000
+---
+threads=64 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=8192 tokens_selected=8192 (100.00% of context)
+step_ms mean=20.103 best=19.835 worst=20.692
+bytes_per_step=1152.0 MiB eff_bandwidth=60.1 GB/s eff_gflops=240.4
+checksum=6624.000000
+---
+threads=128 layers=36 seq=8192 kv_heads=8 group=4 dim=128 gran=32
+tokens_per_step_requested=8192 tokens_selected=8192 (100.00% of context)
+step_ms mean=31.522 best=25.822 worst=38.681
+bytes_per_step=1152.0 MiB eff_bandwidth=38.3 GB/s eff_gflops=153.3
+checksum=6624.000000
+---
