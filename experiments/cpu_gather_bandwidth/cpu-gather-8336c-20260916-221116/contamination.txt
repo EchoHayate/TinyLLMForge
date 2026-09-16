@@ -1,0 +1,6 @@
+ 22:11:28 up 30 days, 10:48, 30 users,  load average: 108.42, 103.87, 106.58
+---
+node 0 free: 28635 MB
+node 1 free: 19838 MB
+node 2 free: 16520 MB
+node 3 free: 28487 MB

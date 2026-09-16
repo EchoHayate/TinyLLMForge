@@ -1,0 +1,12 @@
+avx2
+avx512_bitalg
+avx512bw
+avx512cd
+avx512dq
+avx512f
+avx512ifma
+avx512vbmi
+avx512_vbmi2
+avx512vl
+avx512_vnni
+avx512_vpopcntdq

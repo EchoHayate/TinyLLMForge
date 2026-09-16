@@ -42,15 +42,31 @@ ssh "$HOST" 'grep -m1 ^flags /proc/cpuinfo | tr " " "\n" | grep -Ei "avx512|vnni
     > "$OUT/isa_flags.txt" 2>&1 || true
 ssh "$HOST" 'cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null || echo THP_UNKNOWN' \
     > "$OUT/thp.txt" 2>&1 || true
+# Contamination provenance. This box is shared: a bandwidth number taken while
+# other tenants are running is a LOWER BOUND, not the machine's capability, and
+# claiming otherwise is the same mistake that invalidated the early GPU sweeps.
+ssh "$HOST" 'uptime; echo ---; numactl -H 2>/dev/null | grep -E "node [0-9]+ free"' \
+    > "$OUT/contamination.txt" 2>&1 || true
+echo ">>> load at start:"; head -1 "$OUT/contamination.txt"
 
-NPROC="$(tr -d '[:space:]' < "$OUT/nproc.txt" 2>/dev/null || echo 8)"
-MEM_GB="$(awk '/^Mem:/{print $2}' "$OUT/free.txt" 2>/dev/null || echo 32)"
-# Buffer must comfortably exceed last-level cache but must not push the shared
-# box into swap; a quarter of RAM capped at 32 GiB satisfies both.
-BUF_GIB=$(( MEM_GB / 4 ))
+NPROC="${NPROC_OVERRIDE:-$(tr -d '[:space:]' < "$OUT/nproc.txt" 2>/dev/null || echo 8)}"
+# Buffer sizing must respect the FREE memory of the smallest NUMA node, not total
+# RAM: the membind=0 arm allocates entirely out of one node, so sizing off total
+# RAM on a 2 TB box would try to allocate more than a node has free and either
+# fail or push the shared machine into swap.
+MIN_NODE_FREE_MB="$(grep -Eo 'node [0-9]+ free: [0-9]+' "$OUT/numactl.txt" 2>/dev/null \
+    | awk '{print $4}' | sort -n | head -1)"
+if [ -n "$MIN_NODE_FREE_MB" ]; then
+    BUF_GIB=$(( MIN_NODE_FREE_MB / 1024 / 2 ))   # half the tightest node's free
+else
+    MEM_GB="$(awk '/^Mem:/{print $2}' "$OUT/free.txt" 2>/dev/null || echo 32)"
+    BUF_GIB=$(( MEM_GB / 4 ))
+fi
+BUF_GIB="${BUF_GIB_OVERRIDE:-$BUF_GIB}"
 [ "$BUF_GIB" -gt 32 ] && BUF_GIB=32
 [ "$BUF_GIB" -lt 4 ] && BUF_GIB=4
-echo ">>> cores=$NPROC  ram=${MEM_GB}GB  buffer=${BUF_GIB}GiB"
+echo ">>> tightest NUMA node free: ${MIN_NODE_FREE_MB:-unknown} MB"
+echo ">>> cores=$NPROC  buffer=${BUF_GIB}GiB"
 
 echo ">>> building"
 ssh "$HOST" "cd '$REMOTE_DIR' && cc -O3 -o cpu_kv_gather_bandwidth cpu_kv_gather_bandwidth.c -lpthread" \
