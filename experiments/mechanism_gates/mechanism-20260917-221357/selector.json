@@ -1,0 +1,352 @@
+{
+  "shape": {
+    "layers": 36,
+    "seq": 8192,
+    "kv_heads": 8,
+    "group_size": 4,
+    "dim": 128,
+    "k_frac": 0.111
+  },
+  "bound_math_check": {
+    "max_abs_err": 0.0,
+    "ok": true
+  },
+  "measurements": [
+    {
+      "device": "cuda",
+      "cpu_threads": null,
+      "summary_dtype": "float32",
+      "units": 256,
+      "top_k": 28,
+      "granularity": 32,
+      "summary_bytes": 75497472,
+      "scoring_ms": {
+        "median_ms": 0.2825,
+        "mean_ms": 0.283,
+        "p90_ms": 0.2867
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0452,
+        "mean_ms": 0.0457,
+        "p90_ms": 0.048
+      },
+      "selector_total_ms": 0.3277,
+      "scoring_gb_s": 267.25
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 1,
+      "summary_dtype": "float32",
+      "units": 256,
+      "top_k": 28,
+      "granularity": 32,
+      "summary_bytes": 75497472,
+      "scoring_ms": {
+        "median_ms": 62.8158,
+        "mean_ms": 62.8056,
+        "p90_ms": 63.7104
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.033,
+        "mean_ms": 0.0333,
+        "p90_ms": 0.0333
+      },
+      "selector_total_ms": 62.8488,
+      "scoring_gb_s": 1.2
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 8,
+      "summary_dtype": "float32",
+      "units": 256,
+      "top_k": 28,
+      "granularity": 32,
+      "summary_bytes": 75497472,
+      "scoring_ms": {
+        "median_ms": 18.2966,
+        "mean_ms": 18.3397,
+        "p90_ms": 18.8429
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0323,
+        "mean_ms": 0.0325,
+        "p90_ms": 0.0327
+      },
+      "selector_total_ms": 18.3289,
+      "scoring_gb_s": 4.13
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 64,
+      "summary_dtype": "float32",
+      "units": 256,
+      "top_k": 28,
+      "granularity": 32,
+      "summary_bytes": 75497472,
+      "scoring_ms": {
+        "median_ms": 17.4035,
+        "mean_ms": 18.3556,
+        "p90_ms": 21.5989
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.055,
+        "mean_ms": 0.0554,
+        "p90_ms": 0.0575
+      },
+      "selector_total_ms": 17.4585,
+      "scoring_gb_s": 4.34
+    },
+    {
+      "device": "cuda",
+      "cpu_threads": null,
+      "summary_dtype": "bfloat16",
+      "units": 256,
+      "top_k": 28,
+      "granularity": 32,
+      "summary_bytes": 37748736,
+      "scoring_ms": {
+        "median_ms": 0.2128,
+        "mean_ms": 0.2129,
+        "p90_ms": 0.2162
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.045,
+        "mean_ms": 0.0454,
+        "p90_ms": 0.0476
+      },
+      "selector_total_ms": 0.2578,
+      "scoring_gb_s": 177.39
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 1,
+      "summary_dtype": "bfloat16",
+      "units": 256,
+      "top_k": 28,
+      "granularity": 32,
+      "summary_bytes": 37748736,
+      "scoring_ms": {
+        "median_ms": 32.922,
+        "mean_ms": 33.0376,
+        "p90_ms": 33.957
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.044,
+        "mean_ms": 0.0441,
+        "p90_ms": 0.0442
+      },
+      "selector_total_ms": 32.966,
+      "scoring_gb_s": 1.15
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 8,
+      "summary_dtype": "bfloat16",
+      "units": 256,
+      "top_k": 28,
+      "granularity": 32,
+      "summary_bytes": 37748736,
+      "scoring_ms": {
+        "median_ms": 10.5472,
+        "mean_ms": 10.4004,
+        "p90_ms": 11.0142
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0403,
+        "mean_ms": 0.0406,
+        "p90_ms": 0.0418
+      },
+      "selector_total_ms": 10.5875,
+      "scoring_gb_s": 3.58
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 64,
+      "summary_dtype": "bfloat16",
+      "units": 256,
+      "top_k": 28,
+      "granularity": 32,
+      "summary_bytes": 37748736,
+      "scoring_ms": {
+        "median_ms": 7.8079,
+        "mean_ms": 8.4843,
+        "p90_ms": 10.4002
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0502,
+        "mean_ms": 0.0515,
+        "p90_ms": 0.0534
+      },
+      "selector_total_ms": 7.8581,
+      "scoring_gb_s": 4.83
+    },
+    {
+      "device": "cuda",
+      "cpu_threads": null,
+      "summary_dtype": "float32",
+      "units": 32,
+      "top_k": 4,
+      "granularity": 256,
+      "summary_bytes": 9437184,
+      "scoring_ms": {
+        "median_ms": 0.1016,
+        "mean_ms": 0.1034,
+        "p90_ms": 0.1099
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0451,
+        "mean_ms": 0.0455,
+        "p90_ms": 0.0467
+      },
+      "selector_total_ms": 0.1467,
+      "scoring_gb_s": 92.89
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 1,
+      "summary_dtype": "float32",
+      "units": 32,
+      "top_k": 4,
+      "granularity": 256,
+      "summary_bytes": 9437184,
+      "scoring_ms": {
+        "median_ms": 1.3938,
+        "mean_ms": 1.4372,
+        "p90_ms": 1.5553
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0326,
+        "mean_ms": 0.0327,
+        "p90_ms": 0.0328
+      },
+      "selector_total_ms": 1.4264,
+      "scoring_gb_s": 6.77
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 8,
+      "summary_dtype": "float32",
+      "units": 32,
+      "top_k": 4,
+      "granularity": 256,
+      "summary_bytes": 9437184,
+      "scoring_ms": {
+        "median_ms": 0.3333,
+        "mean_ms": 0.334,
+        "p90_ms": 0.3412
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.035,
+        "mean_ms": 0.0362,
+        "p90_ms": 0.0414
+      },
+      "selector_total_ms": 0.3683,
+      "scoring_gb_s": 28.31
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 64,
+      "summary_dtype": "float32",
+      "units": 32,
+      "top_k": 4,
+      "granularity": 256,
+      "summary_bytes": 9437184,
+      "scoring_ms": {
+        "median_ms": 0.2392,
+        "mean_ms": 0.2455,
+        "p90_ms": 0.2611
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0541,
+        "mean_ms": 0.0557,
+        "p90_ms": 0.0622
+      },
+      "selector_total_ms": 0.2933,
+      "scoring_gb_s": 39.45
+    },
+    {
+      "device": "cuda",
+      "cpu_threads": null,
+      "summary_dtype": "bfloat16",
+      "units": 32,
+      "top_k": 4,
+      "granularity": 256,
+      "summary_bytes": 4718592,
+      "scoring_ms": {
+        "median_ms": 0.1233,
+        "mean_ms": 0.1171,
+        "p90_ms": 0.1295
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.045,
+        "mean_ms": 0.0452,
+        "p90_ms": 0.0469
+      },
+      "selector_total_ms": 0.1683,
+      "scoring_gb_s": 38.27
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 1,
+      "summary_dtype": "bfloat16",
+      "units": 32,
+      "top_k": 4,
+      "granularity": 256,
+      "summary_bytes": 4718592,
+      "scoring_ms": {
+        "median_ms": 1.2014,
+        "mean_ms": 1.2026,
+        "p90_ms": 1.2065
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0439,
+        "mean_ms": 0.0441,
+        "p90_ms": 0.0441
+      },
+      "selector_total_ms": 1.2453,
+      "scoring_gb_s": 3.93
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 8,
+      "summary_dtype": "bfloat16",
+      "units": 32,
+      "top_k": 4,
+      "granularity": 256,
+      "summary_bytes": 4718592,
+      "scoring_ms": {
+        "median_ms": 0.2941,
+        "mean_ms": 0.2951,
+        "p90_ms": 0.3013
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.04,
+        "mean_ms": 0.0404,
+        "p90_ms": 0.0408
+      },
+      "selector_total_ms": 0.3341,
+      "scoring_gb_s": 16.04
+    },
+    {
+      "device": "cpu",
+      "cpu_threads": 64,
+      "summary_dtype": "bfloat16",
+      "units": 32,
+      "top_k": 4,
+      "granularity": 256,
+      "summary_bytes": 4718592,
+      "scoring_ms": {
+        "median_ms": 0.21,
+        "mean_ms": 0.2155,
+        "p90_ms": 0.2189
+      },
+      "summary_maintenance_ms": {
+        "median_ms": 0.0615,
+        "mean_ms": 0.0635,
+        "p90_ms": 0.0638
+      },
+      "selector_total_ms": 0.2715,
+      "scoring_gb_s": 22.47
+    }
+  ]
+}

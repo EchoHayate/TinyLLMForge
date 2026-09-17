@@ -1,0 +1,17 @@
+gran=  32 cuda/float32       units=  256 score=  0.2825 ms maint=0.0452 ms total=  0.3277 ms summary=  72.0 MiB  267.25 GB/s
+gran=  32 cpu1/float32       units=  256 score= 62.8158 ms maint=0.0330 ms total= 62.8488 ms summary=  72.0 MiB    1.20 GB/s
+gran=  32 cpu8/float32       units=  256 score= 18.2966 ms maint=0.0323 ms total= 18.3289 ms summary=  72.0 MiB    4.13 GB/s
+gran=  32 cpu64/float32      units=  256 score= 17.4035 ms maint=0.0550 ms total= 17.4585 ms summary=  72.0 MiB    4.34 GB/s
+gran=  32 cuda/bfloat16      units=  256 score=  0.2128 ms maint=0.0450 ms total=  0.2578 ms summary=  36.0 MiB  177.39 GB/s
+gran=  32 cpu1/bfloat16      units=  256 score= 32.9220 ms maint=0.0440 ms total= 32.9660 ms summary=  36.0 MiB    1.15 GB/s
+gran=  32 cpu8/bfloat16      units=  256 score= 10.5472 ms maint=0.0403 ms total= 10.5875 ms summary=  36.0 MiB    3.58 GB/s
+gran=  32 cpu64/bfloat16     units=  256 score=  7.8079 ms maint=0.0502 ms total=  7.8581 ms summary=  36.0 MiB    4.83 GB/s
+gran= 256 cuda/float32       units=   32 score=  0.1016 ms maint=0.0451 ms total=  0.1467 ms summary=   9.0 MiB   92.89 GB/s
+gran= 256 cpu1/float32       units=   32 score=  1.3938 ms maint=0.0326 ms total=  1.4264 ms summary=   9.0 MiB    6.77 GB/s
+gran= 256 cpu8/float32       units=   32 score=  0.3333 ms maint=0.0350 ms total=  0.3683 ms summary=   9.0 MiB   28.31 GB/s
+gran= 256 cpu64/float32      units=   32 score=  0.2392 ms maint=0.0541 ms total=  0.2933 ms summary=   9.0 MiB   39.45 GB/s
+gran= 256 cuda/bfloat16      units=   32 score=  0.1233 ms maint=0.0450 ms total=  0.1683 ms summary=   4.5 MiB   38.27 GB/s
+gran= 256 cpu1/bfloat16      units=   32 score=  1.2014 ms maint=0.0439 ms total=  1.2453 ms summary=   4.5 MiB    3.93 GB/s
+gran= 256 cpu8/bfloat16      units=   32 score=  0.2941 ms maint=0.0400 ms total=  0.3341 ms summary=   4.5 MiB   16.04 GB/s
+gran= 256 cpu64/bfloat16     units=   32 score=  0.2100 ms maint=0.0615 ms total=  0.2715 ms summary=   4.5 MiB   22.47 GB/s
+wrote /data00/home/sitian/tllm/mechanism-gates/mechanism-20260917-221357/selector.json

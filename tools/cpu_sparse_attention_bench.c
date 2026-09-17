@@ -277,6 +277,10 @@ static int self_test(void) {
     return 0;
 }
 
+// The pipeline prototype links this same translation unit as a shared library so that the
+// scheduling experiment uses the exact kernel that produced the 2.051 ms number, instead of
+// a re-implementation that could quietly differ. It defines this guard to drop main().
+#ifndef CPU_SPARSE_ATTENTION_NO_MAIN
 int main(int argc, char **argv) {
     Config cfg = {.layers = 36, .seq = 8192, .kv_heads = 8, .group_size = 4, .dim = 128,
                   .granularity = 32, .tokens_per_step = 912, .iters = 20, .threads = 0,
@@ -389,3 +393,4 @@ int main(int argc, char **argv) {
     free(K); free(V); free(Q); free(sel); free(scratch);
     return 0;
 }
+#endif  // CPU_SPARSE_ATTENTION_NO_MAIN

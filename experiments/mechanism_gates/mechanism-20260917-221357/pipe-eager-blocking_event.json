@@ -1,0 +1,76 @@
+{
+  "config": {
+    "so": "/data00/home/sitian/tllm/mechanism-gates/mechanism-20260917-221357/source/tools/libcpu_sparse_attn.so",
+    "layers": 36,
+    "seq": 8192,
+    "kv_heads": 8,
+    "group_size": 4,
+    "dim": 128,
+    "granularity": 32,
+    "tokens_per_step": 912,
+    "cpu_threads": 64,
+    "weight_gb": 16.0,
+    "batches": [
+      1
+    ],
+    "iters": 20,
+    "warmup": 5,
+    "device": "cuda",
+    "gpu_mode": "eager",
+    "gpu_wait": "blocking_event",
+    "out_json": "/data00/home/sitian/tllm/mechanism-gates/mechanism-20260917-221357/pipe-eager-blocking_event.json"
+  },
+  "gpu_weight_gb_actual": 16.0,
+  "results": {
+    "gpu_only": {
+      "median_ms": 11.353,
+      "mean_ms": 11.347,
+      "p90_ms": 11.371
+    },
+    "cpu_only": {
+      "median_ms": 2.088,
+      "mean_ms": 2.09,
+      "p90_ms": 2.24
+    },
+    "serial": {
+      "median_ms": 13.482,
+      "mean_ms": 13.48,
+      "p90_ms": 13.522
+    },
+    "pipelined": {
+      "median_ms": 11.476,
+      "mean_ms": 11.466,
+      "p90_ms": 11.488
+    },
+    "pipelined_pythread": {
+      "median_ms": 12.148,
+      "mean_ms": 17.411,
+      "p90_ms": 33.473
+    },
+    "analysis": {
+      "ideal_ms": 11.353,
+      "pipelined_ms": 11.476,
+      "overlap_efficiency": 0.989,
+      "cost_of_imperfect_overlap_ms": 0.123,
+      "saving_vs_serial_ms": 2.006,
+      "cpu_time_hidden_pct": 96.1
+    },
+    "analysis_pythread": {
+      "ideal_ms": 11.353,
+      "pipelined_ms": 12.148,
+      "overlap_efficiency": 0.935,
+      "cost_of_imperfect_overlap_ms": 0.795,
+      "saving_vs_serial_ms": 1.334,
+      "cpu_time_hidden_pct": 63.9
+    },
+    "batch_sweep": [
+      {
+        "median_ms": 2.098,
+        "mean_ms": 2.134,
+        "p90_ms": 2.427,
+        "batch": 1,
+        "per_seq_ms": 2.098
+      }
+    ]
+  }
+}

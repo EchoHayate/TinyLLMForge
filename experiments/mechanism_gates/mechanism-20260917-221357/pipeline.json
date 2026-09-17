@@ -1,0 +1,85 @@
+{
+  "config": {
+    "so": "/data00/home/sitian/tllm/mechanism-gates/mechanism-20260917-221357/source/tools/libcpu_sparse_attn.so",
+    "layers": 36,
+    "seq": 8192,
+    "kv_heads": 8,
+    "group_size": 4,
+    "dim": 128,
+    "granularity": 32,
+    "tokens_per_step": 912,
+    "cpu_threads": 64,
+    "weight_gb": 16.0,
+    "batches": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "iters": 20,
+    "warmup": 5,
+    "device": "cuda",
+    "out_json": "/data00/home/sitian/tllm/mechanism-gates/mechanism-20260917-221357/pipeline.json"
+  },
+  "gpu_weight_gb_actual": 16.0,
+  "results": {
+    "gpu_only": {
+      "median_ms": 11.321,
+      "mean_ms": 11.313,
+      "p90_ms": 11.337
+    },
+    "cpu_only": {
+      "median_ms": 2.037,
+      "mean_ms": 2.052,
+      "p90_ms": 2.161
+    },
+    "serial": {
+      "median_ms": 13.423,
+      "mean_ms": 13.419,
+      "p90_ms": 13.475
+    },
+    "pipelined": {
+      "median_ms": 15.565,
+      "mean_ms": 17.611,
+      "p90_ms": 28.21
+    },
+    "analysis": {
+      "ideal_ms": 11.321,
+      "pipelined_ms": 15.565,
+      "overlap_efficiency": 0.727,
+      "cost_of_imperfect_overlap_ms": 4.244,
+      "saving_vs_serial_ms": -2.142,
+      "cpu_time_hidden_pct": -105.2
+    },
+    "batch_sweep": [
+      {
+        "median_ms": 1.998,
+        "mean_ms": 2.013,
+        "p90_ms": 2.104,
+        "batch": 1,
+        "per_seq_ms": 1.998
+      },
+      {
+        "median_ms": 4.048,
+        "mean_ms": 4.04,
+        "p90_ms": 4.106,
+        "batch": 2,
+        "per_seq_ms": 2.024
+      },
+      {
+        "median_ms": 8.128,
+        "mean_ms": 8.215,
+        "p90_ms": 8.808,
+        "batch": 4,
+        "per_seq_ms": 2.032
+      },
+      {
+        "median_ms": 16.418,
+        "mean_ms": 16.346,
+        "p90_ms": 16.491,
+        "batch": 8,
+        "per_seq_ms": 2.052
+      }
+    ]
+  }
+}

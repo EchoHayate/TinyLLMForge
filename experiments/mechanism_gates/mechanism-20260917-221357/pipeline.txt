@@ -1,0 +1,13 @@
+gpu workload: 16.00 GB read per step
+batch ceiling sweep
+gpu_only     11.321 ms
+cpu_only      2.037 ms
+serial       13.423 ms
+pipelined    15.565 ms
+ideal max(gpu,cpu)=11.321 ms  pipelined=15.565 ms  efficiency=0.727
+hides -105.2% of the CPU time versus serial
+batch= 1  cpu=   1.998 ms  per_seq=1.998 ms
+batch= 2  cpu=   4.048 ms  per_seq=2.024 ms
+batch= 4  cpu=   8.128 ms  per_seq=2.032 ms
+batch= 8  cpu=  16.418 ms  per_seq=2.052 ms
+wrote /data00/home/sitian/tllm/mechanism-gates/mechanism-20260917-221357/pipeline.json

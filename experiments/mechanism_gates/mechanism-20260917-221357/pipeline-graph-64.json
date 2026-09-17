@@ -1,0 +1,70 @@
+{
+  "config": {
+    "so": "/data00/home/sitian/tllm/mechanism-gates/mechanism-20260917-221357/source/tools/libcpu_sparse_attn.so",
+    "layers": 36,
+    "seq": 8192,
+    "kv_heads": 8,
+    "group_size": 4,
+    "dim": 128,
+    "granularity": 32,
+    "tokens_per_step": 912,
+    "cpu_threads": 64,
+    "weight_gb": 16.0,
+    "batches": [
+      1,
+      4
+    ],
+    "iters": 20,
+    "warmup": 5,
+    "device": "cuda",
+    "gpu_mode": "graph",
+    "out_json": "/data00/home/sitian/tllm/mechanism-gates/mechanism-20260917-221357/pipeline-graph-64.json"
+  },
+  "gpu_weight_gb_actual": 16.0,
+  "results": {
+    "gpu_only": {
+      "median_ms": 11.28,
+      "mean_ms": 11.271,
+      "p90_ms": 11.292
+    },
+    "cpu_only": {
+      "median_ms": 2.054,
+      "mean_ms": 2.063,
+      "p90_ms": 2.146
+    },
+    "serial": {
+      "median_ms": 13.348,
+      "mean_ms": 13.345,
+      "p90_ms": 13.409
+    },
+    "pipelined": {
+      "median_ms": 17.877,
+      "mean_ms": 20.204,
+      "p90_ms": 33.97
+    },
+    "analysis": {
+      "ideal_ms": 11.28,
+      "pipelined_ms": 17.877,
+      "overlap_efficiency": 0.631,
+      "cost_of_imperfect_overlap_ms": 6.597,
+      "saving_vs_serial_ms": -4.529,
+      "cpu_time_hidden_pct": -220.5
+    },
+    "batch_sweep": [
+      {
+        "median_ms": 2.03,
+        "mean_ms": 2.028,
+        "p90_ms": 2.123,
+        "batch": 1,
+        "per_seq_ms": 2.03
+      },
+      {
+        "median_ms": 8.026,
+        "mean_ms": 8.024,
+        "p90_ms": 8.109,
+        "batch": 4,
+        "per_seq_ms": 2.006
+      }
+    ]
+  }
+}
