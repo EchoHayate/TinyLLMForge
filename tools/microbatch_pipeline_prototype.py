@@ -198,6 +198,10 @@ def main() -> int:
                    help="graph replays the whole GPU pass as one launch, like the engine")
     p.add_argument("--gpu-wait", default="spin", choices=["spin", "blocking_event"],
                    help="spin = torch.cuda.synchronize; blocking_event sleeps instead")
+    p.add_argument("--pin-host-core", type=int, default=-1,
+                   help="pin the host thread to this core, applied AFTER the CPU worker and "
+                        "its OpenMP team exist so they do not inherit the mask. Tests whether "
+                        "the graph+spin failure is core contention or sync semantics.")
     p.add_argument("--out-json", required=True)
     args = p.parse_args()
 
@@ -236,6 +240,10 @@ def main() -> int:
     # never takes the GIL, and wait blocks on a condition variable
     lib.csa_submit(handle, args.tokens_per_step, args.cpu_threads)
     lib.csa_wait(handle)
+    if args.pin_host_core >= 0 and hasattr(os, "sched_setaffinity"):
+        os.sched_setaffinity(0, {args.pin_host_core})
+        print(f"host thread pinned to core {args.pin_host_core} "
+              f"(after the worker team was created)", flush=True)
     for _ in range(args.iters):
         t0 = time.perf_counter()
         lib.csa_submit(handle, args.tokens_per_step, args.cpu_threads)

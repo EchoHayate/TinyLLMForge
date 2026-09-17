@@ -117,11 +117,38 @@ Why: `torch.cuda.synchronize()` polls, so in graph mode the host thread does not
 64-thread OpenMP team whose parallel-for ends in a barrier - the slowest thread sets the step
 time. In eager mode the host is interleaving 36 kernel launches, which gives the scheduler
 natural yield points, so spinning there is harmless. Capping the CPU team to 63 threads did
-**not** fix the graph case, which rules out the simple "reserve a core" story: this machine is
-at load ~105, there is no idle core to reserve, and the spinner is unpinned so it lands
-wherever it wants. I can prove the fix (blocking wait) and the necessary conditions; the exact
-scheduler mechanics deserve a clean-machine rerun with a pinned host thread before I claim
-more.
+**not** fix the graph case - but *pinning* the host thread did:
+
+| GPU mode | host wait | CPU team | host thread | **pipelined** | efficiency |
+|---|---|---|---|---|---|
+| graph | spin | 63 threads on cores 0-62 | unpinned | 13.020 ms | 0.863 |
+| graph | spin | 63 threads on cores 0-62 | **pinned to cpu 127** | **11.275 ms** | **0.999** |
+| graph | blocking event | 63 threads on cores 0-62 | pinned to cpu 127 | 11.324 ms | 0.997 |
+
+cpu 127 is the SMT sibling of cpu 63, so a host thread pinned there shares no physical core
+with a team bound to 0-62. That closes the causal story: **the failure is an unpinned,
+never-yielding host poll loop landing on a core the OpenMP team needs**, and the barrier at the
+end of the parallel-for makes the whole team pay for the one thread that got descheduled.
+Merely lowering the thread count does not help because on a machine at load ~105 there is no
+idle core to fall into - the spinner has to be *told* where to go, or told to sleep.
+
+Two independent fixes therefore exist, and the engine should prefer the second:
+pin the host thread off the CPU team's cores, or wait with a blocking event. Pinning depends on
+knowing what else is on the machine; sleeping does not.
+
+Two side observations from the pinned arms, both worth remembering:
+
+- Hard-binding the CPU team (`GOMP_CPU_AFFINITY=0-62`) made the attention itself *faster*
+  (1.51-1.89 ms versus 2.05 ms unpinned) but inflated the `serial` and Python-thread arms to
+  18-22 ms and 32-52 ms. The leading explanation is thread wake-up: between iterations the team
+  sleeps, and on hard-pinned cores under foreign load it cannot be woken promptly, while the
+  back-to-back `cpu_only` loop never sleeps in the first place. A persistent, warm CPU team is
+  therefore part of the mechanism, not an optimisation.
+- Pushing that further with `OMP_WAIT_POLICY=active` and `GOMP_SPINCOUNT=3e7` was a disaster:
+  `cpu_only` went from 2.05 ms to 33-47 ms. 63 hard-spinning threads pinned to cores that
+  already carry foreign load is the worst of both worlds. Re-running the plain baseline
+  immediately afterwards reproduced 2.047 ms exactly, so this was self-inflicted by the
+  environment variables and not a change in the machine.
 
 The Python-thread control arm in the same runs tracks this too: 23.5 ms with graph+spin vs
 12.3 ms with graph+blocking - the GIL holder and the spinner compound each other.
@@ -139,6 +166,66 @@ and raising the batch is the entire reason to offload KV:
 | 8 | 16.330 ms |
 
 Linear at ~2.04 ms/sequence, no shared work to exploit.
+
+
+## Gate 7 - is it the same mechanism? (correctness)
+
+Everything above is performance, and none of it had produced a single token through the offload
+path. That is a gap worth naming: four gates of stand-ins can agree with each other and still be
+measuring something that does not compute attention correctly.
+
+`tools/cpu_offload_correctness.py` closes it. The KV cache lives in pinned CPU DRAM and is
+written one token per step; the min/max summaries live on the GPU and are maintained
+*incrementally*; the selector ranks units on the GPU (Gate 5) and ships **indices** down; the
+CPU gathers the selected units out of its own mirror and computes the attention in fp32; the
+output goes back up. The selection math is imported from `tools/e2e_sparse_attention.py` rather
+than reimplemented, because a correctness harness that quietly disagrees with the fidelity
+harness proves nothing.
+
+Three failures are possible and they are reported separately, because only one of them is a bug:
+a different selection (incremental-maintenance bug), different arithmetic (gather/attention bug),
+or the same selection and arithmetic with a different continuation (that is the fidelity story,
+already measured).
+
+Run: Qwen3-8B's *per-layer shape* (36 layers, 32 q heads, 8 kv heads, head_dim 128), 8192
+context, gran=32, k_frac=0.051, 16 decode steps, every sparse call verified.
+
+| check | result | bound |
+|---|---|---|
+| incremental summaries vs from-scratch recompute | **0.0** drift, 560 checks | must be exactly 0 |
+| selection from maintained vs recomputed summaries | **0 mismatches / 560** | must be 0 |
+| CPU fp32 output vs GPU **fp32** with identical indices | **max 1.209e-06** (mean 7.3e-07) | < 1e-4 |
+| CPU fp32 output vs GPU **bf16** with identical indices | max 3.924e-03 (mean 2.4e-03) | context: this is bf16 |
+| tokens vs the GPU sparse arm | **1.0000 agreement**, no divergence | must be 1.0 |
+| context touched | 5.18% | k_frac was 0.051 |
+| traffic | D2H 1154 MiB (1.125 GiB prefill KV + 1 token/step), H2D 4.38 MiB | |
+| **verdict** | **PASS** | |
+
+So the offload path computes the same attention the GPU computes, selects the same units the
+selector would select from a recomputed summary, and produces the same tokens as the GPU sparse
+arm - **a token has now come out of the CPU.** The bf16 column is the useful context: the CPU's
+fp32 output differs from the GPU's bf16 output by 3.9e-03, i.e. by exactly the noise the model
+already runs on, and it differs from the GPU's fp32 output by 1.2e-06.
+
+Two honest limits on this run:
+
+- **Weights are random.** The checkpoint is no longer on the box (`/data00` is 96% full and a
+  cleanup ran today), so the harness builds a Qwen3 with the right per-layer shape and
+  meaningless weights. That is legitimate here and only here: every check compares two paths
+  through the *same* weights. It is not legitimate for fidelity, and the "tokens vs dense"
+  number this run prints (0.0588) is therefore meaningless - with random weights there is no
+  answer to preserve. Answer-level fidelity was measured separately with real weights.
+- **This is a correctness harness, not a fast one.** It computes fp32 references and recomputes
+  summaries on every sparse call. The 3.8 s for 16 steps says nothing about the mechanism's
+  speed; the gates above are where speed lives.
+
+Test coverage: `tools/test_cpu_offload_correctness.py`, 14 tests, model-free and CPU-only. The
+weight of them sits on the incremental min/max maintenance - a unit that is starting must not
+inherit the +-inf sentinel, and a half-filled unit must not be widened by tokens it does not yet
+hold. That bug does not crash and does not produce NaNs; it produces a slightly different
+selection, which would then be misread as "sparse attention costs a little quality" - the most
+expensive kind of bug in this project, since the entire fidelity gate is denominated in exactly
+those units.
 
 ## Revised budget, one sequence, 8192 context, gran=32
 
@@ -160,7 +247,12 @@ Alive, with a much more specific shape than "put the KV on the CPU":
 - **selector + min/max summaries on the GPU**, K/V bytes and attention on the CPU (Gate 5,
   reverses the earlier assumption)
 - cross-microbatch pipelining orchestrated **in C**, not Python (Gate 6)
-- the engine's GPU wait **must be a blocking/sleeping wait**, not a spin (Gate 6)
+- the engine's GPU wait **must be a blocking/sleeping wait**, not a spin, or the host thread
+  must be pinned off the CPU team's cores (Gate 6)
+- the CPU attention team must be kept **warm**; letting it sleep between steps costs more than
+  the attention (Gate 6, side observation)
+- the path is **verified correct** end to end: same selection, same arithmetic to 1.2e-06, same
+  tokens as the GPU sparse arm (Gate 7)
 - coordination costs ~1.3 ms/step until the handshake moves out of PyTorch or the transfers
   are batched across microbatches (Gate 4)
 
@@ -173,11 +265,14 @@ sublinearly, an int8/VNNI kernel, or more cores.
 
 ## Open questions, in the order they should be answered
 
-1. Clean-machine rerun with a pinned host thread: confirm the spin/blocking result is not an
-   artifact of load ~105, and get uncontaminated CPU numbers.
+1. Clean-machine rerun: the spin-versus-sleep and pinning results are now causally clear, but
+   the CPU numbers themselves are still measured against load ~105 - including two of the
+   user's own 8-day-old processes burning ~10.7 cores.
 2. A C++/CUDA handshake microbenchmark: can per-layer transfer without per-layer host sync
    approach the 0.067 ms bound, or is 1.3 ms structural?
 3. A hand-written AVX-512 selector: does CPU selection become viable (which would remove the
    36 MiB of GPU summaries and the index transfer), or is the GPU split final?
-4. Correctness before more performance: a CPU full-attention prototype that matches the GPU
-   path numerically, then selector + CPU attention + output return, then scheduling.
+4. Re-run Gate 7 with a real checkpoint once one is back on the box, to add the answer-level
+   arm to a path that is already numerically verified.
+5. Replace the harness's PyTorch CPU attention with the AVX-512 kernel from the compute gate,
+   and check that the verified path stays verified at 2.05 ms.

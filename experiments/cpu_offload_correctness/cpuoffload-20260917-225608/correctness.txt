@@ -1,0 +1,41 @@
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/transformers/utils/hub.py", line 424, in cached_files
+    hf_hub_download(
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/huggingface_hub/utils/_validators.py", line 106, in _inner_fn
+    validate_repo_id(arg_value)
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/huggingface_hub/utils/_validators.py", line 154, in validate_repo_id
+    raise HFValidationError(
+huggingface_hub.errors.HFValidationError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': '/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B'. Use `repo_type` argument if needed.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/source/tools/cpu_offload_correctness.py", line 503, in <module>
+    raise SystemExit(main())
+                     ^^^^^^
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/source/tools/cpu_offload_correctness.py", line 413, in main
+    tokenizer = AutoTokenizer.from_pretrained(args.model)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/transformers/models/auto/tokenization_auto.py", line 946, in from_pretrained
+    tokenizer_config = get_tokenizer_config(pretrained_model_name_or_path, **kwargs)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/transformers/models/auto/tokenization_auto.py", line 778, in get_tokenizer_config
+    resolved_config_file = cached_file(
+                           ^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/transformers/utils/hub.py", line 266, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/transformers/utils/hub.py", line 470, in cached_files
+    resolved_files = [
+                     ^
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/transformers/utils/hub.py", line 471, in <listcomp>
+    _get_cache_file_to_return(path_or_repo_id, filename, cache_dir, revision) for filename in full_filenames
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/transformers/utils/hub.py", line 134, in _get_cache_file_to_return
+    resolved_file = try_to_load_from_cache(path_or_repo_id, full_filename, cache_dir=cache_dir, revision=revision)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/huggingface_hub/utils/_validators.py", line 106, in _inner_fn
+    validate_repo_id(arg_value)
+  File "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-20260917-225608/sitepatch/huggingface_hub/utils/_validators.py", line 154, in validate_repo_id
+    raise HFValidationError(
+huggingface_hub.errors.HFValidationError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': '/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B'. Use `repo_type` argument if needed.
