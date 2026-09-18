@@ -227,17 +227,103 @@ selection, which would then be misread as "sparse attention costs a little quali
 expensive kind of bug in this project, since the entire fidelity gate is denominated in exactly
 those units.
 
+
+## Re-baseline on a quiet machine (2026-09-18)
+
+Every number above was measured at load 103-111. The box went quiet on 2026-09-18 (load 8-14),
+so all three gates were re-run with the engine-relevant configuration (`--gpu-mode graph`,
+blocking wait). This was the first open question from the day before, and the answer is mostly
+boring, which is the useful kind of boring:
+
+| measurement | at load ~105 | at load ~10 | moved? |
+|---|---|---|---|
+| handshake `device_sync` | 1.3161 ms | 1.3074 ms | no |
+| handshake `fused` bound | 0.0673 ms | 0.0672 ms | no |
+| handshake `event/stream/lookahead` | 1.95-1.98 ms | 1.92-1.94 ms | no, still worse than naive |
+| selector, GPU gran=32 bf16 | 0.2578 ms | 0.2597 ms | no |
+| selector, CPU gran=32 bf16 x64 | 7.858 ms | 8.073 ms | no |
+| **CPU sparse attention** | 2.05 ms | **1.676 ms** | **yes, -18%** |
+| pipeline efficiency (graph + blocking) | 0.992 | 0.99 | no |
+| CPU time hidden | 97.5% | 96.9% | no |
+| per-sequence CPU cost | 2.04 ms | 1.86-1.91 ms | tracks the attention number |
+
+Two things changed and neither changes a conclusion:
+
+1. **CPU attention is 18% faster on a quiet machine** (2.05 -> 1.676 ms). Every CPU-side budget
+   number in this document was therefore pessimistic, not optimistic - the direction that does
+   not invalidate anything.
+2. **The Python-thread arm stopped being a false negative** (11.614 ms, 87.3% hidden, versus
+   17-23 ms under load). This retroactively confirms the earlier diagnosis: that arm was
+   measuring contention, not orchestration. The C-level submit is still better and is still the
+   right design, but the reason the Python version looked catastrophic was the machine.
+
+Everything structural survived a 10x change in background load: the handshake is 1.31 ms, the
+CPU selector in torch is unusable at gran=32, and the per-sequence CPU cost is linear in batch.
+
+### One finding the clean run sharpened: the CPU selector is implementation-bound, not hardware-bound
+
+The selector gate now reports achieved bandwidth, and the gap is the whole story:
+
+| placement | gran=32 bf16 | achieved bandwidth |
+|---|---|---|
+| CUDA | 0.2597 ms | **176 GB/s** |
+| CPU x64 | 8.073 ms | **4.71 GB/s** |
+| CPU x8 | 10.736 ms | 3.53 GB/s |
+| CPU x1 | 33.570 ms | 1.13 GB/s |
+
+4.7 GB/s on a dual-socket Xeon is roughly **2% of what the machine's DRAM can do**, and the
+scoring is a pure streaming min/max-bound reduction - the most bandwidth-friendly shape there is.
+So "the CPU selector costs 8 ms" is a statement about PyTorch's CPU reduction path, not about the
+CPU. The earlier verdict needs softening in exactly one word: CPU-side selection is dead **in
+torch**, and a hand-written AVX-512 selector - the same move that took CPU attention from dumb to
+1.68 ms - has one to two orders of magnitude of headroom to reclaim. That is now a worthwhile
+experiment rather than a consolation prize, because keeping selection on the CPU would remove
+both the GPU-side summaries and the index transfer.
+
+### Defaults changed, because a default is a finding
+
+`tools/microbatch_pipeline_prototype.py` now defaults to `--gpu-wait blocking_event`. It used to
+default to `spin`, which meant running the prototype with no arguments reproduced the broken
+result (-2.3% of the CPU time hidden) - a trap to hand to the next reader, including a future me.
+`--pin-host-core` stays opt-in at `-1`, because pinning requires knowing what else runs on the
+machine while sleeping does not. Both defaults are now pinned by tests in
+`tools/test_new_gates.py`.
+
+### Correctness is reproducible
+
+Gate 7 was re-run twice with different seeds *and* a different granularity, since repeating one
+configuration would only prove determinism:
+
+| run | seed | gran | k_frac | summary drift | selection | rel err vs fp32 | tokens vs GPU sparse |
+|---|---|---|---|---|---|---|---|
+| 1 | 0 | 32 | 0.051 | 0.0 | 0/560 | 1.209e-06 | 1.0000 |
+| 2 | 1 | 32 | 0.051 | 0.0 | 0/560 | 1.202e-06 | 1.0000 |
+| 3 | 2 | **256** | 0.11 | 0.0 | 0/560 | 1.546e-06 | 1.0000 |
+
+All PASS. The gran=256 run matters more than the reseeded one: it exercises the unit arithmetic
+with 32 units instead of 256, including a differently shaped partial last unit.
+
+### Correction to yesterday's note about background load
+
+Yesterday this document blamed part of the load on two of the user's own 8-day-old processes
+(about 10.5 cores). They are **still running** (now 9 days) and the load still fell from ~105 to
+~9, so they were never the main contaminant - other tenants' jobs were. The earlier note
+overstated their role.
+
 ## Revised budget, one sequence, 8192 context, gran=32
 
 | item | cost | note |
 |---|---|---|
 | GPU weight-read window | 12.113 ms | what we have to hide inside |
 | engine inflation under saturated CPU | 1.523 ms | measured, CUDA-graph engine |
-| per-layer handshake | 1.316 ms | Gate 4; async did not help |
-| GPU selector (bf16 summaries) | 0.258 ms | Gate 5 |
-| CPU sparse attention | 2.051 ms | **~97% hideable** if the host sleeps (Gate 6) |
-| **visible overhead** | **~3.10 ms (25.6% of window)** | |
-| **CPU budget left inside the window** | **~9.0 ms** | ~**4 sequences** at 2.04 ms each |
+| per-layer handshake | 1.307 ms | Gate 4; async did not help, load-independent |
+| GPU selector (bf16 summaries) | 0.260 ms | Gate 5 |
+| CPU sparse attention | 1.676 ms | **~97% hideable** if the host sleeps (Gate 6) |
+| **visible overhead** | **about 3.09 ms (25.5% of window)** | |
+| **CPU budget left inside the window** | **about 9.0 ms** | about **4-5 sequences** at 1.9 ms each |
+
+(Quiet-machine numbers. CPU attention and the per-sequence cost improved by 18% versus the
+loaded runs; the coordination costs did not move at all.)
 
 ## Where this leaves the route
 
@@ -256,7 +342,7 @@ Alive, with a much more specific shape than "put the KV on the CPU":
 - coordination costs ~1.3 ms/step until the handshake moves out of PyTorch or the transfers
   are batched across microbatches (Gate 4)
 
-Dead: naive per-layer synchronous offload; gran=256; CPU-side selection in PyTorch; any hope
+Dead: naive per-layer synchronous offload; gran=256; CPU-side selection **in PyTorch** (the achieved 4.7 GB/s says the CPU itself was never the problem); any hope
 that async event plumbing in Python fixes the handshake; and the throughput framing - at
 ~2.04 ms/sequence the CPU becomes the critical path around **4 concurrent sequences at 8k**.
 This is a *capacity* mechanism (longer context, more sequences resident in DRAM), not a
@@ -265,13 +351,13 @@ sublinearly, an int8/VNNI kernel, or more cores.
 
 ## Open questions, in the order they should be answered
 
-1. Clean-machine rerun: the spin-versus-sleep and pinning results are now causally clear, but
-   the CPU numbers themselves are still measured against load ~105 - including two of the
-   user's own 8-day-old processes burning ~10.7 cores.
+1. ~~Clean-machine rerun~~ **done 2026-09-18**: nothing structural moved and CPU attention
+   improved 18% to 1.676 ms. See "Re-baseline on a quiet machine".
 2. A C++/CUDA handshake microbenchmark: can per-layer transfer without per-layer host sync
    approach the 0.067 ms bound, or is 1.3 ms structural?
-3. A hand-written AVX-512 selector: does CPU selection become viable (which would remove the
-   36 MiB of GPU summaries and the index transfer), or is the GPU split final?
+3. A hand-written AVX-512 selector, now the most promising open item: torch achieves only
+   4.7 GB/s on a pure streaming reduction, so there is 1-2 orders of magnitude to reclaim. If it
+   lands near DRAM bandwidth, the GPU-side summaries and the index transfer both disappear.
 4. Re-run Gate 7 with a real checkpoint once one is back on the box, to add the answer-level
    arm to a path that is already numerically verified.
 5. Replace the harness's PyTorch CPU attention with the AVX-512 kernel from the compute gate,

@@ -1,0 +1,6 @@
+device_sync      1.3074 ms    36.32 us/layer  syncs= 72  x1.0
+event_sync       1.9442 ms    54.00 us/layer  syncs= 72  x0.67
+stream_sync      1.9248 ms    53.47 us/layer  syncs= 72  x0.68
+lookahead        1.9324 ms    53.68 us/layer  syncs= 36  x0.68
+fused            0.0672 ms     1.87 us/layer  syncs=  2  x19.46
+wrote /data00/home/sitian/tllm/mechanism-gates/mechanism-clean-20260918-170003/handshake.json

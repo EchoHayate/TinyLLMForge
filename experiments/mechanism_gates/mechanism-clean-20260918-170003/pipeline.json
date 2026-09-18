@@ -1,0 +1,101 @@
+{
+  "config": {
+    "so": "/data00/home/sitian/tllm/mechanism-gates/mechanism-clean-20260918-170003/source/tools/libcpu_sparse_attn.so",
+    "layers": 36,
+    "seq": 8192,
+    "kv_heads": 8,
+    "group_size": 4,
+    "dim": 128,
+    "granularity": 32,
+    "tokens_per_step": 912,
+    "cpu_threads": 64,
+    "weight_gb": 16.0,
+    "batches": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "iters": 20,
+    "warmup": 5,
+    "device": "cuda",
+    "gpu_mode": "graph",
+    "gpu_wait": "blocking_event",
+    "pin_host_core": -1,
+    "out_json": "/data00/home/sitian/tllm/mechanism-gates/mechanism-clean-20260918-170003/pipeline.json"
+  },
+  "gpu_weight_gb_actual": 16.0,
+  "results": {
+    "gpu_only": {
+      "median_ms": 11.335,
+      "mean_ms": 11.33,
+      "p90_ms": 11.352
+    },
+    "cpu_only": {
+      "median_ms": 1.676,
+      "mean_ms": 1.711,
+      "p90_ms": 1.897
+    },
+    "serial": {
+      "median_ms": 13.077,
+      "mean_ms": 13.095,
+      "p90_ms": 13.319
+    },
+    "pipelined": {
+      "median_ms": 11.453,
+      "mean_ms": 11.452,
+      "p90_ms": 11.485
+    },
+    "pipelined_pythread": {
+      "median_ms": 11.614,
+      "mean_ms": 11.62,
+      "p90_ms": 11.642
+    },
+    "analysis": {
+      "ideal_ms": 11.335,
+      "pipelined_ms": 11.453,
+      "overlap_efficiency": 0.99,
+      "cost_of_imperfect_overlap_ms": 0.118,
+      "saving_vs_serial_ms": 1.624,
+      "cpu_time_hidden_pct": 96.9
+    },
+    "analysis_pythread": {
+      "ideal_ms": 11.335,
+      "pipelined_ms": 11.614,
+      "overlap_efficiency": 0.976,
+      "cost_of_imperfect_overlap_ms": 0.279,
+      "saving_vs_serial_ms": 1.463,
+      "cpu_time_hidden_pct": 87.3
+    },
+    "batch_sweep": [
+      {
+        "median_ms": 1.901,
+        "mean_ms": 1.914,
+        "p90_ms": 2.043,
+        "batch": 1,
+        "per_seq_ms": 1.901
+      },
+      {
+        "median_ms": 3.788,
+        "mean_ms": 3.812,
+        "p90_ms": 4.024,
+        "batch": 2,
+        "per_seq_ms": 1.894
+      },
+      {
+        "median_ms": 7.657,
+        "mean_ms": 7.657,
+        "p90_ms": 8.016,
+        "batch": 4,
+        "per_seq_ms": 1.914
+      },
+      {
+        "median_ms": 14.886,
+        "mean_ms": 15.15,
+        "p90_ms": 17.711,
+        "batch": 8,
+        "per_seq_ms": 1.861
+      }
+    ]
+  }
+}

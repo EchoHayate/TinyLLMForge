@@ -98,3 +98,27 @@ def test_cpu_bound_case_uses_the_cpu_as_the_ideal():
     a = analyse(_res(gpu=5.0, cpu=20.0, serial=25.0, pipe=21.0))
     assert a["ideal_ms"] == 20.0
     assert a["overlap_efficiency"] == pytest.approx(20.0 / 21.0, abs=1e-3)
+
+
+def test_the_default_gpu_wait_is_the_safe_one():
+    """Defaults are findings too.
+
+    graph+spin hid -2.3% of the CPU time on the measured box, graph+blocking_event hid 97.5%.
+    A prototype whose no-argument invocation reproduces the broken number will eventually be
+    quoted as evidence that the mechanism does not work, so the default is pinned by a test.
+    """
+    import argparse
+    import tools.microbatch_pipeline_prototype as mp
+
+    src = open(mp.__file__).read()
+    assert 'default="blocking_event"' in src, "the default host wait must be the blocking one"
+
+    # and the fast-but-wrong option must still be reachable, because the comparison is the point
+    assert '"spin"' in src
+
+
+def test_pin_host_core_default_does_not_pin():
+    """Pinning is a diagnostic, not a default: it depends on knowing what else runs on the box."""
+    import tools.microbatch_pipeline_prototype as mp
+    src = open(mp.__file__).read()
+    assert '"--pin-host-core", type=int, default=-1' in src

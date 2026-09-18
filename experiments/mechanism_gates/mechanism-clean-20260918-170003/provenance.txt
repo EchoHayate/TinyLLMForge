@@ -1,0 +1,6 @@
+run_tag=mechanism-clean-20260918-170003
+layers=36 seq=8192 tokens_per_step=912
+cpu_threads=64 weight_gb=16.0 batches=1 2 4 8
+gpu=2
+source_revision=9526aa6d26d4dd4e084e2fe2bec5f0418f703fd1
+source_dirty_files=36

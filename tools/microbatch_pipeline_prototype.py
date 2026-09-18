@@ -196,8 +196,14 @@ def main() -> int:
     p.add_argument("--device", default="cuda")
     p.add_argument("--gpu-mode", default="eager", choices=["eager", "graph"],
                    help="graph replays the whole GPU pass as one launch, like the engine")
-    p.add_argument("--gpu-wait", default="spin", choices=["spin", "blocking_event"],
-                   help="spin = torch.cuda.synchronize; blocking_event sleeps instead")
+    # Default is the *safe* wait, not the PyTorch-idiomatic one. Measured on this box: with a
+    # CUDA-graph GPU pass, spinning hid -2.3% of the CPU time (i.e. exactly serial) while a
+    # blocking event hid 97.5%. Leaving spin as the default meant "run the prototype without
+    # arguments" reproduced the broken result, which is a trap to hand to the next reader.
+    p.add_argument("--gpu-wait", default="blocking_event",
+                   choices=["spin", "blocking_event"],
+                   help="blocking_event (default) sleeps; spin = torch.cuda.synchronize, kept "
+                        "opt-in because it serialises the CPU offload")
     p.add_argument("--pin-host-core", type=int, default=-1,
                    help="pin the host thread to this core, applied AFTER the CPU worker and "
                         "its OpenMP team exist so they do not inherit the mask. Tests whether "

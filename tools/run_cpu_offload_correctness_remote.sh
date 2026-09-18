@@ -23,6 +23,7 @@ K_FRAC="${K_FRAC:-0.051}"
 DENSE_LAYERS="${DENSE_LAYERS:-0}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-16}"
 VERIFY_EVERY="${VERIFY_EVERY:-1}"
+SEED="${SEED:-0}"
 # RANDOM_MODEL=1 builds a Qwen3 with Qwen3-8B's per-layer shape and meaningless weights. Use it
 # when the checkpoint is not on the box: every check in this harness compares two paths through
 # the same weights, so the weights' meaning is irrelevant here (fidelity is a separate gate).
@@ -98,6 +99,7 @@ GIT_DIRTY="$(git status --porcelain | wc -l | tr -d ' ')"
   echo "dense_layers=${DENSE_LAYERS}"
   echo "max_new_tokens=${MAX_NEW_TOKENS}"
   echo "verify_every=${VERIFY_EVERY}"
+  echo "seed=${SEED}"
   echo "source_revision=${GIT_REV}"
   echo "source_dirty_files=${GIT_DIRTY}"
   echo "gpu=${GPU}"
@@ -119,7 +121,7 @@ fi
   '${REMOTE_PYTHON}' tools/cpu_offload_correctness.py ${MODEL_ARGS} \
   --seq-len ${SEQ_LEN} --variant ${VARIANT} --granularity ${GRANULARITY} \
   --k-frac ${K_FRAC} --dense-layers '${DENSE_LAYERS}' \
-  --max-new-tokens ${MAX_NEW_TOKENS} --verify-every ${VERIFY_EVERY} \
+  --max-new-tokens ${MAX_NEW_TOKENS} --verify-every ${VERIFY_EVERY} --seed ${SEED} \
   --out-json '${REMOTE_DIR}/correctness.json' 2>&1 | tee '${REMOTE_DIR}/correctness.txt'"
 RC=$?
 set -e

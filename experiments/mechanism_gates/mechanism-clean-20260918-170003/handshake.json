@@ -1,0 +1,53 @@
+{
+  "layers": 36,
+  "q_heads": 32,
+  "dim": 128,
+  "bytes_per_step": 1179648,
+  "variants": {
+    "device_sync": {
+      "mean_ms": 1.322,
+      "median_ms": 1.3074,
+      "p90_ms": 1.3152,
+      "per_layer_us": 36.32,
+      "host_syncs_per_step": 72,
+      "speedup_vs_device_sync": 1.0,
+      "removable_fraction_captured": 0.0
+    },
+    "event_sync": {
+      "mean_ms": 1.9491,
+      "median_ms": 1.9442,
+      "p90_ms": 1.9656,
+      "per_layer_us": 54.0,
+      "host_syncs_per_step": 72,
+      "speedup_vs_device_sync": 0.67,
+      "removable_fraction_captured": -0.513
+    },
+    "stream_sync": {
+      "mean_ms": 1.9263,
+      "median_ms": 1.9248,
+      "p90_ms": 1.9395,
+      "per_layer_us": 53.47,
+      "host_syncs_per_step": 72,
+      "speedup_vs_device_sync": 0.68,
+      "removable_fraction_captured": -0.498
+    },
+    "lookahead": {
+      "mean_ms": 1.9353,
+      "median_ms": 1.9324,
+      "p90_ms": 1.9576,
+      "per_layer_us": 53.68,
+      "host_syncs_per_step": 36,
+      "speedup_vs_device_sync": 0.68,
+      "removable_fraction_captured": -0.504
+    },
+    "fused": {
+      "mean_ms": 0.0672,
+      "median_ms": 0.0672,
+      "p90_ms": 0.0677,
+      "per_layer_us": 1.87,
+      "host_syncs_per_step": 2,
+      "speedup_vs_device_sync": 19.46,
+      "removable_fraction_captured": 1.0
+    }
+  }
+}

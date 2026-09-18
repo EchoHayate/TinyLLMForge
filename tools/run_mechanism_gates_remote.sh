@@ -21,6 +21,10 @@ CPU_THREADS="${CPU_THREADS:-64}"
 WEIGHT_GB="${WEIGHT_GB:-16.0}"
 BATCHES="${BATCHES:-1 2 4 8}"
 GPU="${GPU:-2}"
+# graph is what the engine actually does; the default host wait is the blocking one because
+# spinning serialises the offload (measured: -2.3% vs 97.5% CPU time hidden)
+GPU_MODE="${GPU_MODE:-graph}"
+GPU_WAIT="${GPU_WAIT:-blocking_event}"
 REMOTE_USER_SITE="${REMOTE_USER_SITE:-/data00/home/sitian/.local/lib/python3.11/site-packages}"
 REMOTE_SITE_EXCLUDE="${REMOTE_SITE_EXCLUDE:-flash_attn torchvision}"
 REMOTE_LD_LIBRARY_PATH="${REMOTE_LD_LIBRARY_PATH:-/data00/home/sitian/tllm/miniforge/lib}"
@@ -91,7 +95,7 @@ echo ">>> host state:"; head -1 "${LOCAL_OUT}/contamination.txt"
 
 echo ">>> building the CPU kernel as a shared library"
 "${SSH[@]}" "cd '${REMOTE_DIR}/source/tools' && gcc -O3 -march=native -fopenmp -shared -fPIC \
-  -o libcpu_sparse_attn.so cpu_sparse_attention_lib.c -lm && echo build ok"
+  -o libcpu_sparse_attn.so cpu_sparse_attention_lib.c -lm -lpthread && echo build ok"
 
 echo ">>> [1/3] async handshake gate"
 "${SSH[@]}" "set -o pipefail; cd '${REMOTE_DIR}/source' && CUDA_VISIBLE_DEVICES=${GPU} \
@@ -111,6 +115,7 @@ echo ">>> [3/3] cross-microbatch pipeline prototype"
   numactl --interleave=all '${REMOTE_PYTHON}' tools/microbatch_pipeline_prototype.py \
   --so '${REMOTE_DIR}/source/tools/libcpu_sparse_attn.so' \
   --layers ${LAYERS} --seq ${SEQ} --tokens-per-step ${TOKENS_PER_STEP} \
+  --gpu-mode ${GPU_MODE} --gpu-wait ${GPU_WAIT} \
   --cpu-threads ${CPU_THREADS} --weight-gb ${WEIGHT_GB} --batches ${BATCHES} \
   --out-json '${REMOTE_DIR}/pipeline.json' 2>&1 | tee '${REMOTE_DIR}/pipeline.txt'"
 

@@ -1,0 +1,15 @@
+run_tag=cpuoffload-20260918-165837
+model=/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B
+random_model=1
+random_layers=36
+seq_len=8192
+variant=distractor
+granularity=256
+k_frac=0.11
+dense_layers=0
+max_new_tokens=16
+verify_every=1
+seed=2
+source_revision=9526aa6d26d4dd4e084e2fe2bec5f0418f703fd1
+source_dirty_files=33
+gpu=2

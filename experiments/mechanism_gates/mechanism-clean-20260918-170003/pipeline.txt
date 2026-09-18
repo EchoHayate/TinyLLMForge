@@ -1,0 +1,15 @@
+gpu workload: 16.00 GB read per step, mode=graph, wait=blocking_event
+batch ceiling sweep
+gpu_only               11.335 ms
+cpu_only                1.676 ms
+serial                 13.077 ms
+pipelined              11.453 ms
+pipelined_pythread     11.614 ms
+ideal max(gpu,cpu)=11.335 ms  pipelined=11.453 ms  efficiency=0.99
+hides 96.9% of the CPU time versus serial
+python-thread control: 11.614 ms  efficiency=0.976  hides 87.3%
+batch= 1  cpu=   1.901 ms  per_seq=1.901 ms
+batch= 2  cpu=   3.788 ms  per_seq=1.894 ms
+batch= 4  cpu=   7.657 ms  per_seq=1.914 ms
+batch= 8  cpu=  14.886 ms  per_seq=1.861 ms
+wrote /data00/home/sitian/tllm/mechanism-gates/mechanism-clean-20260918-170003/pipeline.json
