@@ -1,0 +1,368 @@
+{
+  "config": {
+    "model": null,
+    "random_model": true,
+    "random_layers": 36,
+    "seq_len": 8192,
+    "variant": "distractor",
+    "depth": 0.5,
+    "num_decoys": 4,
+    "granularity": 32,
+    "k_frac": 0.051,
+    "dense_layers": "0",
+    "max_new_tokens": 16,
+    "verify_every": 1,
+    "no_pin": false,
+    "cpu_impl": "both",
+    "so": "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-avx512-seed3-20260920-122218/source/tools/libcpu_sparse_attn.so",
+    "cpu_threads": 0,
+    "seed": 3,
+    "device": "cuda",
+    "out_json": "/data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-avx512-seed3-20260920-122218/correctness.json"
+  },
+  "prompt_len": 8192,
+  "answer": null,
+  "dense": {
+    "ids": [
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364,
+      364
+    ],
+    "text": "",
+    "seconds": 0.68,
+    "answer_correct": null,
+    "margins": [
+      0.6406,
+      0.5312,
+      0.4688,
+      0.3438,
+      0.3125,
+      0.3438,
+      0.4062,
+      0.4688,
+      0.4688,
+      0.375,
+      0.4062,
+      0.375,
+      0.375,
+      0.375,
+      0.3438,
+      0.2188,
+      0.1562
+    ]
+  },
+  "gpu_sparse": {
+    "ids": [
+      364,
+      613,
+      328,
+      970,
+      613,
+      328,
+      970,
+      368,
+      328,
+      613,
+      613,
+      613,
+      613,
+      368,
+      328,
+      368,
+      328
+    ],
+    "text": "",
+    "seconds": 0.95,
+    "answer_correct": null,
+    "margins": [
+      0.6406,
+      0.2188,
+      0.1875,
+      0.0469,
+      0.5312,
+      0.0,
+      0.2344,
+      0.1406,
+      0.2812,
+      0.1562,
+      0.1719,
+      0.1562,
+      0.1094,
+      0.0,
+      0.1562,
+      0.0781,
+      0.375
+    ]
+  },
+  "cpu_offload": {
+    "ids": [
+      364,
+      613,
+      328,
+      970,
+      613,
+      328,
+      970,
+      368,
+      328,
+      613,
+      613,
+      613,
+      613,
+      368,
+      328,
+      368,
+      328
+    ],
+    "text": "",
+    "seconds": 2.78,
+    "answer_correct": null,
+    "margins": [
+      0.6406,
+      0.2031,
+      0.1562,
+      0.0469,
+      0.5625,
+      0.0312,
+      0.2188,
+      0.0625,
+      0.0781,
+      0.1094,
+      0.0938,
+      0.1719,
+      0.0469,
+      0.0156,
+      0.125,
+      0.0312,
+      0.3594
+    ]
+  },
+  "cpu_stats": {
+    "cpu_impl": "avx512",
+    "sparse_calls": 560,
+    "dense_calls": 16,
+    "touched_frac": 0.05177,
+    "summary_drift": {
+      "n": 560,
+      "max": 0.0,
+      "mean": 0.0,
+      "min": 0.0
+    },
+    "index_checks": 560,
+    "index_mismatches": 0,
+    "rel_err_vs_gpu_fp32": {
+      "n": 560,
+      "max": 1.82184987806977e-06,
+      "mean": 1.0778101943133476e-06,
+      "min": 5.679994501406327e-07
+    },
+    "rel_err_vs_gpu_bf16": {
+      "n": 560,
+      "max": 0.003843262791633606,
+      "mean": 0.002377353012187606,
+      "min": 0.0017815553583204746
+    },
+    "rel_err_vs_torch_cpu": {
+      "n": 560,
+      "max": 1.8530869283495122e-06,
+      "mean": 1.0353466325544299e-06,
+      "min": 6.212443963704573e-07
+    },
+    "cpu_seconds": 0.089,
+    "d2h_mib": 1154.25,
+    "h2d_mib": 4.38
+  },
+  "cpu_impl": "avx512",
+  "cpu_arms": {
+    "torch": {
+      "run": {
+        "ids": [
+          364,
+          613,
+          328,
+          970,
+          613,
+          328,
+          970,
+          368,
+          328,
+          613,
+          613,
+          613,
+          613,
+          368,
+          328,
+          368,
+          328
+        ],
+        "text": "",
+        "seconds": 3.68,
+        "answer_correct": null,
+        "margins": [
+          0.6406,
+          0.2188,
+          0.2031,
+          0.0312,
+          0.5781,
+          0.0625,
+          0.1406,
+          0.0625,
+          0.2188,
+          0.1562,
+          0.0781,
+          0.2031,
+          0.1094,
+          0.0625,
+          0.125,
+          0.0156,
+          0.3438
+        ]
+      },
+      "stats": {
+        "cpu_impl": "torch",
+        "sparse_calls": 560,
+        "dense_calls": 16,
+        "touched_frac": 0.05177,
+        "summary_drift": {
+          "n": 560,
+          "max": 0.0,
+          "mean": 0.0,
+          "min": 0.0
+        },
+        "index_checks": 560,
+        "index_mismatches": 0,
+        "rel_err_vs_gpu_fp32": {
+          "n": 560,
+          "max": 1.3774309763903148e-06,
+          "mean": 7.280182680448531e-07,
+          "min": 4.4749856442649616e-07
+        },
+        "rel_err_vs_gpu_bf16": {
+          "n": 560,
+          "max": 0.003938332665711641,
+          "mean": 0.002369203146788225,
+          "min": 0.0017640333389863372
+        },
+        "rel_err_vs_torch_cpu": {
+          "n": 0
+        },
+        "cpu_seconds": 0.299,
+        "d2h_mib": 1154.25,
+        "h2d_mib": 4.38
+      }
+    },
+    "avx512": {
+      "run": {
+        "ids": [
+          364,
+          613,
+          328,
+          970,
+          613,
+          328,
+          970,
+          368,
+          328,
+          613,
+          613,
+          613,
+          613,
+          368,
+          328,
+          368,
+          328
+        ],
+        "text": "",
+        "seconds": 2.78,
+        "answer_correct": null,
+        "margins": [
+          0.6406,
+          0.2031,
+          0.1562,
+          0.0469,
+          0.5625,
+          0.0312,
+          0.2188,
+          0.0625,
+          0.0781,
+          0.1094,
+          0.0938,
+          0.1719,
+          0.0469,
+          0.0156,
+          0.125,
+          0.0312,
+          0.3594
+        ]
+      },
+      "stats": {
+        "cpu_impl": "avx512",
+        "sparse_calls": 560,
+        "dense_calls": 16,
+        "touched_frac": 0.05177,
+        "summary_drift": {
+          "n": 560,
+          "max": 0.0,
+          "mean": 0.0,
+          "min": 0.0
+        },
+        "index_checks": 560,
+        "index_mismatches": 0,
+        "rel_err_vs_gpu_fp32": {
+          "n": 560,
+          "max": 1.82184987806977e-06,
+          "mean": 1.0778101943133476e-06,
+          "min": 5.679994501406327e-07
+        },
+        "rel_err_vs_gpu_bf16": {
+          "n": 560,
+          "max": 0.003843262791633606,
+          "mean": 0.002377353012187606,
+          "min": 0.0017815553583204746
+        },
+        "rel_err_vs_torch_cpu": {
+          "n": 560,
+          "max": 1.8530869283495122e-06,
+          "mean": 1.0353466325544299e-06,
+          "min": 6.212443963704573e-07
+        },
+        "cpu_seconds": 0.089,
+        "d2h_mib": 1154.25,
+        "h2d_mib": 4.38
+      }
+    }
+  },
+  "cpu_impl_cross_check": {
+    "agreement": 1.0,
+    "first_divergence": -1
+  },
+  "verdict": {
+    "checks": {
+      "summaries_exact": true,
+      "selection_identical": true,
+      "arithmetic_matches_fp32": true,
+      "tokens_match_gpu_sparse": true,
+      "fast_kernel_matches_torch_cpu": true,
+      "cpu_impls_produce_the_same_tokens": true
+    },
+    "passed": true,
+    "note": "token agreement against the *dense* arm is a fidelity number, not a correctness one: the selector is allowed to change the continuation, the CPU is not.",
+    "agreement_vs_gpu_sparse": 1.0,
+    "agreement_vs_dense": 0.0588,
+    "answer_correct": null
+  }
+}

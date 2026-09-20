@@ -92,7 +92,7 @@ typedef struct {
     int warmup;
 } Config;
 
-// One (layer, kv_head) attention over the selected token list.
+// One (layer, kv_head) attention over the selected token list, for an arbitrary KV layout.
 // scores scratch: group_size * n_sel floats; out: group_size * dim floats.
 //
 // Structure matters more than it looks. The first version of this loop nested the q-head
@@ -102,13 +102,17 @@ typedef struct {
 // path below converts 16 bf16 lanes at a time and keeps one accumulator register per q
 // head, so K and V are each streamed exactly once and the group is amortised over that
 // stream.
-static void attend_head(const bf16 *restrict kbase, const bf16 *restrict vbase,
-                        const float *restrict q, const int *restrict sel, int n_sel,
-                        int kv_heads, int head, int dim, int group_size,
-                        float scale, float *restrict scores, float *restrict out) {
-    const size_t token_stride = (size_t)kv_heads * (size_t)dim;
-    const size_t head_off = (size_t)head * (size_t)dim;
-
+//
+// The layout is passed in as strides rather than derived from `kv_heads`, because the
+// correctness harness mirrors the engine's cache as [1, KVH, S, D] (head-major) while this
+// benchmark models [S, KVH, D] (token-major). Two copies of the loop below would let the
+// measured kernel and the verified kernel drift apart, which is exactly the failure this
+// whole line of work is trying to avoid, so there is one implementation and the callers
+// describe their own layout.
+static void attend_head_strided(const bf16 *restrict kbase, const bf16 *restrict vbase,
+                                const float *restrict q, const int *restrict sel, int n_sel,
+                                size_t token_stride, size_t head_off, int dim, int group_size,
+                                float scale, float *restrict scores, float *restrict out) {
 #if defined(__AVX512F__)
     const int nchunk = dim / 16;
     for (int t = 0; t < n_sel; ++t) {
@@ -176,6 +180,16 @@ static void attend_head(const bf16 *restrict kbase, const bf16 *restrict vbase,
         }
     }
 #endif
+}
+
+// The benchmark's own layout: K[token][kv_head][dim].
+static inline void attend_head(const bf16 *restrict kbase, const bf16 *restrict vbase,
+                               const float *restrict q, const int *restrict sel, int n_sel,
+                               int kv_heads, int head, int dim, int group_size,
+                               float scale, float *restrict scores, float *restrict out) {
+    attend_head_strided(kbase, vbase, q, sel, n_sel,
+                        (size_t)kv_heads * (size_t)dim, (size_t)head * (size_t)dim,
+                        dim, group_size, scale, scores, out);
 }
 
 // Draw whole units without replacement; always keep unit 0 and the last unit, which is

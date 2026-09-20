@@ -29,6 +29,14 @@ SEED="${SEED:-0}"
 # the same weights, so the weights' meaning is irrelevant here (fidelity is a separate gate).
 RANDOM_MODEL="${RANDOM_MODEL:-0}"
 RANDOM_LAYERS="${RANDOM_LAYERS:-36}"
+# Which CPU attention produces the tokens. 'both' is the default here (not in the harness) so
+# that a remote run always reports the AVX-512 kernel *and* how far it is from the torch path
+# that was accepted first - the pair is what closes the verified-vs-benchmarked gap, and the
+# extra arm costs one more decode loop.
+CPU_IMPL="${CPU_IMPL:-both}"
+CPU_THREADS="${CPU_THREADS:-0}"
+CC="${CC:-gcc}"
+CFLAGS_KERNEL="${CFLAGS_KERNEL:--O3 -march=native -fopenmp}"
 GPU="${GPU:-2}"
 REMOTE_USER_SITE="${REMOTE_USER_SITE:-/data00/home/sitian/.local/lib/python3.11/site-packages}"
 REMOTE_SITE_EXCLUDE="${REMOTE_SITE_EXCLUDE:-flash_attn torchvision}"
@@ -59,7 +67,20 @@ tar --no-xattrs -C . -cf - \
   tools/cpu_offload_correctness.py \
   tools/e2e_sparse_attention.py \
   tools/needle_haystack_variants.py \
+  tools/cpu_sparse_attention_lib.c \
+  tools/cpu_sparse_attention_bench.c \
   | "${SSH[@]}" "tar -C '${REMOTE_DIR}/source' -xf -"
+
+# Build the kernel on the box, not locally: -march=native has to mean the Xeon's AVX-512, and
+# the whole point of this run is that the verified arithmetic is the arithmetic that was timed
+# there. A stale .so shipped from a laptop would quietly take the scalar fallback.
+echo ">>> building the CPU sparse attention kernel on the host"
+"${SSH[@]}" "cd '${REMOTE_DIR}/source/tools' && ${CC} ${CFLAGS_KERNEL} -shared -fPIC \
+  -o libcpu_sparse_attn.so cpu_sparse_attention_lib.c -lm -lpthread && \
+  ls -l libcpu_sparse_attn.so"
+"${SSH[@]}" "cd '${REMOTE_DIR}/source/tools' && ${CC} ${CFLAGS_KERNEL} -dM -E -x c /dev/null \
+  | grep -c AVX512F || true" > "${LOCAL_OUT}/kernel_isa.txt" 2>&1 || true
+echo ">>> __AVX512F__ defined in the build: $(cat "${LOCAL_OUT}/kernel_isa.txt")"
 
 SITEPATCH="${REMOTE_DIR}/sitepatch"
 "${SSH[@]}" \
@@ -100,6 +121,9 @@ GIT_DIRTY="$(git status --porcelain | wc -l | tr -d ' ')"
   echo "max_new_tokens=${MAX_NEW_TOKENS}"
   echo "verify_every=${VERIFY_EVERY}"
   echo "seed=${SEED}"
+  echo "cpu_impl=${CPU_IMPL}"
+  echo "cpu_threads=${CPU_THREADS}"
+  echo "kernel_cflags=${CFLAGS_KERNEL}"
   echo "source_revision=${GIT_REV}"
   echo "source_dirty_files=${GIT_DIRTY}"
   echo "gpu=${GPU}"
@@ -109,7 +133,7 @@ GIT_DIRTY="$(git status --porcelain | wc -l | tr -d ' ')"
   > "${LOCAL_OUT}/contamination.txt" 2>&1 || true
 echo ">>> host state:"; head -1 "${LOCAL_OUT}/contamination.txt"
 
-echo ">>> cpu offload correctness: gran=${GRANULARITY} k_frac=${K_FRAC}"
+echo ">>> cpu offload correctness: gran=${GRANULARITY} k_frac=${K_FRAC} cpu_impl=${CPU_IMPL}"
 set +e
 if [[ "${RANDOM_MODEL}" == "1" ]]; then
   MODEL_ARGS="--random-model --random-layers ${RANDOM_LAYERS}"
@@ -122,6 +146,8 @@ fi
   --seq-len ${SEQ_LEN} --variant ${VARIANT} --granularity ${GRANULARITY} \
   --k-frac ${K_FRAC} --dense-layers '${DENSE_LAYERS}' \
   --max-new-tokens ${MAX_NEW_TOKENS} --verify-every ${VERIFY_EVERY} --seed ${SEED} \
+  --cpu-impl ${CPU_IMPL} --cpu-threads ${CPU_THREADS} \
+  --so '${REMOTE_DIR}/source/tools/libcpu_sparse_attn.so' \
   --out-json '${REMOTE_DIR}/correctness.json' 2>&1 | tee '${REMOTE_DIR}/correctness.txt'"
 RC=$?
 set -e

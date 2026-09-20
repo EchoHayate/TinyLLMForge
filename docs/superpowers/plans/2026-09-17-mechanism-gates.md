@@ -6,6 +6,12 @@ Host: `n232-195-203`, 8x A100 80GB PCIe, Xeon Platinum 8336C (64 physical cores 
 below is therefore pessimistic and every GPU-under-load number is realistic.
 Raw data: `experiments/mechanism_gates/mechanism-20260917-221357/`.
 
+Later additions to this document, on a quiet box (load 3-14): the re-baseline (2026-09-18,
+`experiments/mechanism_gates/mechanism-clean-20260918-170003/`), Gate 7 correctness
+(`experiments/cpu_offload_correctness/cpuoffload-*`) and Gate 8, which makes the benchmarked
+AVX-512 kernel the one that passes the correctness gate
+(`experiments/cpu_offload_correctness/cpuoffload-avx512-*`, 2026-09-20).
+
 The three gates before this one said: the answer survives at 2-3% of the context (gran=32,
 shared-head Quest), the CPU can compute that sparse attention in 2.05 ms, and a CUDA-graph
 engine only inflates 1.523 ms under a saturated CPU. What they could not say is whether the
@@ -310,6 +316,76 @@ Yesterday this document blamed part of the load on two of the user's own 8-day-o
 ~9, so they were never the main contaminant - other tenants' jobs were. The earlier note
 overstated their role.
 
+## Gate 8 - the verified path and the fast path are now one path (2026-09-20)
+
+Gate 7 proved the mechanism computes the right thing. It did so with `torch.nn.functional` on the
+CPU, while the 2.051 ms/step that makes this route worth considering at all was measured by the
+AVX-512 C kernel. Read carefully, that left two claims about two different programs: *a* CPU
+implementation is correct, and *another* CPU implementation is fast. Nothing had ever been both.
+
+The kernel is now callable on the harness's own buffers (`csa_attend_external` in
+`tools/cpu_sparse_attention_lib.c`) and `tools/cpu_offload_correctness.py --cpu-impl` chooses
+which implementation produces the tokens. Two deliberate decisions:
+
+- **One inner loop, not two.** `attend_head` in the benchmark was refactored into
+  `attend_head_strided`, which takes the KV layout as strides. The benchmark models the cache as
+  `[S, KVH, D]`; the harness mirrors the engine's real cache as `[1, KVH, S, D]`. A second copy of
+  the loop for the second layout is exactly how a measured kernel and a verified kernel drift
+  apart, so the layout is a parameter and the arithmetic is shared. The benchmark's own self-test
+  still passes (max abs err 3.5e-08), which is what says the refactor changed nothing.
+- **No staging gather on the C path.** The torch path calls `mirror.gather()` and materialises a
+  `[1, KVH, T, D]` tensor; the C path gets base pointers, strides and absolute token indices and
+  gathers while the line is hot - which is what the 2.05 ms was measured doing. Handing the
+  kernel a pre-gathered buffer would have verified a kernel nobody benchmarked.
+
+The gate gained a fourth check that only exists when the C kernel ran: the fast kernel against
+the torch path that was accepted first. Check (c) alone is not enough - a wrong kernel can pass a
+comparison against a wrong reference by being wrong in the same direction - and a clause that is
+vacuously true when the kernel did not run would read like evidence, so it is absent instead.
+`--cpu-impl both` additionally runs the decode loop twice and compares the *token streams*, since
+a discrepancy that only appears between verification steps would still change the continuation.
+
+Run on the quiet box (load 3.5), `gcc -O3 -march=native -fopenmp`, `__AVX512F__` confirmed
+defined in the build - so the vector path, not the scalar fallback, is the one that ran:
+
+| config | fast kernel vs torch CPU | vs GPU fp32 | tokens avx512 vs torch | tokens vs GPU sparse | verdict |
+|---|---|---|---|---|---|
+| seed 0, gran=32, k=0.051 | **max 1.810e-06** | max 1.880e-06 | **1.0000** | 1.0000 | PASS |
+| seed 3, gran=32, k=0.051 | **max 1.853e-06** | max 1.822e-06 | **1.0000** | 1.0000 | PASS |
+| seed 5, gran=256, k=0.11 | **max 2.431e-06** | max 2.380e-06 | **1.0000** | 1.0000 | PASS |
+
+Summary drift 0.0 and 0 selection mismatches out of 560 in all three, as before. The six-clause
+verdict now reads: summaries exact, selection identical, arithmetic matches fp32, tokens match the
+GPU sparse arm, **fast kernel matches the torch CPU path**, **both CPU kernels produce the same
+tokens**.
+
+So the sentence that was not previously available is available now: the kernel that was timed at
+2.051 ms/step is the kernel that produces correct tokens through a CPU-resident KV cache.
+
+Three things this run does **not** say, stated because the numbers invite the opposite reading:
+
+- **It is not a speed measurement.** The harness calls the kernel one layer at a time and
+  synchronously, so the only parallelism available is over 8 kv heads; the 2.051 ms figure came
+  from `collapse(2)` over 36 layers x 8 heads. The AVX arm's shorter wall time (2.85 s vs 3.68 s
+  for the torch arm, while doing *more* work - it also computes the torch reference for the new
+  check) is an observation, not a result.
+- **Weights are still random.** `/data00` is at 97% and the Qwen3-8B checkpoint is still gone.
+  Same reasoning as Gate 7: every check compares two paths through the same weights, so this is
+  legitimate for correctness and illegitimate for fidelity. The "tokens vs dense 0.0588" line
+  remains meaningless.
+- **fp32 accumulation is what was verified.** The kernel reads bf16 storage and accumulates in
+  fp32, and it refuses non-bf16 buffers rather than reinterpreting them (there is a test for
+  that, because the failure would be silent garbage). An int8/VNNI variant - the obvious next
+  speed step - is a different kernel and would need this gate re-run.
+
+Test coverage went from 14 to 22. The eight new ones pin the handover rather than the arithmetic,
+because that is where a wrong answer would come from: capacity-based strides (not live-length),
+the q-head-to-kv-head mapping, bf16 refusal, a missing `.so` failing before the prefill instead of
+40 layers into it. They are real: with correct strides the kernel agrees to 1.3e-07, and the three
+plausible bugs - live-length head stride, swapped K/V, q heads rolled by one - all come out at
+O(1) relative error.
+
+
 ## Revised budget, one sequence, 8192 context, gran=32
 
 | item | cost | note |
@@ -338,7 +414,8 @@ Alive, with a much more specific shape than "put the KV on the CPU":
 - the CPU attention team must be kept **warm**; letting it sleep between steps costs more than
   the attention (Gate 6, side observation)
 - the path is **verified correct** end to end: same selection, same arithmetic to 1.2e-06, same
-  tokens as the GPU sparse arm (Gate 7)
+  tokens as the GPU sparse arm (Gate 7), and the **AVX-512 kernel that was timed is the kernel
+  that passes those checks** - 1.8e-06 against the torch path, identical token streams (Gate 8)
 - coordination costs ~1.3 ms/step until the handshake moves out of PyTorch or the transfers
   are batched across microbatches (Gate 4)
 
@@ -360,5 +437,13 @@ sublinearly, an int8/VNNI kernel, or more cores.
    lands near DRAM bandwidth, the GPU-side summaries and the index transfer both disappear.
 4. Re-run Gate 7 with a real checkpoint once one is back on the box, to add the answer-level
    arm to a path that is already numerically verified.
-5. Replace the harness's PyTorch CPU attention with the AVX-512 kernel from the compute gate,
-   and check that the verified path stays verified at 2.05 ms.
+5. ~~Replace the harness's PyTorch CPU attention with the AVX-512 kernel from the compute gate~~
+   **done 2026-09-20**: the benchmarked kernel now produces the tokens and passes the same checks,
+   agreeing with the torch path to 1.8e-06 with identical token streams. See Gate 8. What remains
+   open from this item is the *scheduling* half: the harness calls the kernel one layer at a time
+   and synchronously, so nothing here re-confirms 2.05 ms/step. Re-confirming it means driving the
+   verified kernel from the Gate 6 pipeline (C-level submit/wait, blocking GPU wait) instead of
+   from the harness's per-layer call, i.e. one program that is correct *and* overlapped.
+6. An int8/VNNI CPU attention kernel is the obvious next speed step and would be a different
+   kernel: Gate 8 verified fp32 accumulation over bf16 storage, so that variant needs its own
+   correctness run rather than inheriting this one.

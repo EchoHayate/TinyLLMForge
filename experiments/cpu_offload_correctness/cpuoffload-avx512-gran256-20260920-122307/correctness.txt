@@ -1,0 +1,23 @@
+Sliding Window Attention is enabled but not implemented for `eager`; unexpected results may be encountered.
+[random model] layers=36 kv_heads=8 head_dim=128 (shape of Qwen3-8B, weights meaningless on purpose)
+[prefill] prompt_len=8192 answer=None
+[prefill] 1.3s
+[dense]      0.68s correct=None ''
+[gpu sparse] 0.96s correct=None ''
+[cpu offload:torch] 3.68s correct=None ''
+[cpu offload:avx512] 2.63s correct=None ''
+
+--- correctness ---
+cpu impl (verdict)     avx512
+summary drift max      0.0  (must be 0.0)
+selection mismatches   0 / 560
+rel err vs GPU fp32    max=2.380e-06 mean=1.390e-06
+rel err vs GPU bf16    max=3.757e-03 mean=2.450e-03
+rel err vs torch CPU   max=2.431e-06 mean=1.422e-06  (fast kernel vs the path verified first)
+tokens avx512 vs torch agree=1.0000 first_div=-1
+tokens vs gpu sparse   agree=1.0000 first_div=-1
+tokens vs dense        agree=0.0588 first_div=1
+touched frac           0.09469
+traffic                D2H 1154.25 MiB, H2D 4.38 MiB
+VERDICT                PASS  {'summaries_exact': True, 'selection_identical': True, 'arithmetic_matches_fp32': True, 'tokens_match_gpu_sparse': True, 'fast_kernel_matches_torch_cpu': True, 'cpu_impls_produce_the_same_tokens': True}
+wrote /data00/home/sitian/tllm/cpu-offload-correctness/cpuoffload-avx512-gran256-20260920-122307/correctness.json

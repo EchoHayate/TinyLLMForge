@@ -12,6 +12,8 @@ fidelity gate is measured in exactly those units.
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -22,6 +24,7 @@ import torch.nn.functional as F  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.cpu_offload_correctness import (  # noqa: E402
+    Avx512CpuAttention,
     CpuKvMirror,
     CpuOffloadController,
     cpu_sparse_attention,
@@ -36,6 +39,7 @@ from tools.e2e_sparse_attention import (  # noqa: E402
 GRAN = 8
 KVH = 2
 DIM = 4
+TOOLS = os.path.dirname(os.path.abspath(__file__))
 
 
 def _mirror(gran: int = GRAN) -> CpuKvMirror:
@@ -209,3 +213,156 @@ def test_controller_reset_clears_the_mirror_and_counters():
     ctl.reset("cpu")
     assert ctl.mirror.length == {} and ctl.err_fp32 == []
     assert ctl.sparse_calls == 0 and ctl.idx_mismatches == 0
+
+
+# --- the C kernel as the path that actually produces tokens -------------------------------
+#
+# These tests exist because of a specific gap: the 2.051 ms/step that makes this route worth
+# considering was measured by the AVX-512 C kernel, while the correctness checks above were
+# passed by a torch implementation. Verifying one and benchmarking the other proves nothing
+# about either, so the kernel now gets called on the mirror's own buffers and has to agree.
+#
+# On a laptop the compiled kernel takes its scalar fallback, so what these tests pin down here
+# is the handover - strides, q-head mapping, dtype, index semantics - which is where a wrong
+# answer would come from anyway. The vector path is exercised by the gate on the server, where
+# __AVX512F__ is defined.
+
+CK_KVH = 2
+CK_GROUP = 2
+CK_DIM = 16  # multiple of 16 so the server build takes the vector path under test
+
+
+@pytest.fixture(scope="session")
+def csa_so(tmp_path_factory) -> str:
+    """Build libcpu_sparse_attn.so into a temp dir, or skip if no compiler is available."""
+    cc = shutil.which("gcc") or shutil.which("cc") or shutil.which("clang")
+    if cc is None:
+        pytest.skip("no C compiler on this machine")
+    src = os.path.join(TOOLS, "cpu_sparse_attention_lib.c")
+    out = tmp_path_factory.mktemp("csa") / "libcpu_sparse_attn.so"
+    # -fopenmp is deliberately omitted: it is not available on every dev machine and the
+    # kernel's arithmetic does not depend on it (the pragmas degrade to serial execution).
+    proc = subprocess.run([cc, "-O3", "-shared", "-fPIC", "-o", str(out), src, "-lm",
+                           "-lpthread"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        pytest.skip(f"could not build the kernel: {proc.stderr[-400:]}")
+    return str(out)
+
+
+def _ck_mirror(seq: int, seed: int = 0) -> tuple[CpuKvMirror, torch.Tensor, torch.Tensor]:
+    """A bf16 mirror holding `seq` tokens, plus the source tensors."""
+    g = torch.Generator().manual_seed(seed)
+    k = torch.randn(1, CK_KVH, seq, CK_DIM, generator=g).to(torch.bfloat16)
+    v = torch.randn(1, CK_KVH, seq, CK_DIM, generator=g).to(torch.bfloat16)
+    m = CpuKvMirror(GRAN, device="cpu", pin=False)
+    m.append(0, k, v, capacity_hint=seq + 8)
+    return m, k, v
+
+
+def test_raw_reports_strides_of_the_capacity_buffer_not_the_live_length():
+    """The kernel indexes with absolute token positions, so the stride must be the capacity.
+
+    Using the live length would silently read the wrong head for every head above 0, and the
+    error would look like "the CPU path is slightly wrong" rather than like an indexing bug.
+    """
+    m, _, _ = _ck_mirror(20)
+    k, v, head_stride, token_stride = m.raw(0)
+    capacity = k.shape[2]
+    assert capacity == 28, "capacity_hint should have been honoured"
+    assert head_stride == capacity * CK_DIM
+    assert token_stride == CK_DIM
+    assert k.is_contiguous() and v.is_contiguous()
+    assert m.length[0] == 20, "raw() must not be confused with the live length"
+
+
+def test_c_kernel_matches_the_torch_cpu_path_over_the_same_indices(csa_so):
+    """The clause that retires the verified-vs-benchmarked gap."""
+    seq = 40
+    m, k_src, _ = _ck_mirror(seq, seed=7)
+    heads = CK_KVH * CK_GROUP
+    g = torch.Generator().manual_seed(11)
+    query = torch.randn(1, heads, 1, CK_DIM, generator=g).to(torch.bfloat16)
+    idx = units_to_token_index(torch.tensor([0, 2, 4]), GRAN, seq)
+    scaling = CK_DIM ** -0.5
+
+    k_sel, v_sel = m.gather(0, idx)
+    reference = cpu_sparse_attention(query, k_sel, v_sel, scaling, CK_GROUP)
+
+    kernel = Avx512CpuAttention(csa_so)
+    k_buf, v_buf, head_stride, token_stride = m.raw(0)
+    got = kernel(k_buf, v_buf, head_stride, token_stride, query, idx, scaling, CK_GROUP)
+
+    assert got.shape == reference.shape
+    rel = ((got - reference).abs().max() / reference.abs().max()).item()
+    assert rel < 1e-5, f"the fast kernel and the verified path disagree by {rel:.3e}"
+
+
+def test_c_kernel_maps_q_heads_to_the_right_kv_head(csa_so):
+    """A wrong q-head mapping still returns plausible numbers, so it needs its own test.
+
+    kv head 0 gets V=0 and kv head 1 gets V=1. Whatever the scores are, the output of the q
+    heads belonging to kv head 0 must be exactly 0 and the others exactly 1 - any crossed
+    mapping shows up immediately instead of as a small numerical difference.
+    """
+    seq = 16
+    m, _, _ = _ck_mirror(seq, seed=3)
+    m.v[0].zero_()
+    m.v[0][:, 1, :, :] = 1.0
+    heads = CK_KVH * CK_GROUP
+    g = torch.Generator().manual_seed(5)
+    query = torch.randn(1, heads, 1, CK_DIM, generator=g).to(torch.bfloat16)
+    idx = units_to_token_index(torch.tensor([0, 1]), GRAN, seq)
+
+    kernel = Avx512CpuAttention(csa_so)
+    k_buf, v_buf, head_stride, token_stride = m.raw(0)
+    out = kernel(k_buf, v_buf, head_stride, token_stride, query, idx, CK_DIM ** -0.5, CK_GROUP)
+
+    assert torch.allclose(out[0, :CK_GROUP], torch.zeros(CK_GROUP, 1, CK_DIM), atol=1e-6)
+    assert torch.allclose(out[0, CK_GROUP:], torch.ones(CK_GROUP, 1, CK_DIM), atol=1e-3)
+
+
+def test_c_kernel_refuses_non_bf16_storage(csa_so):
+    """The kernel reinterprets the buffer as bf16; fp32 would be read as garbage, quietly."""
+    g = torch.Generator().manual_seed(1)
+    k = torch.randn(1, CK_KVH, 16, CK_DIM, generator=g)      # fp32 on purpose
+    m = CpuKvMirror(GRAN, device="cpu", pin=False)
+    m.append(0, k, k.clone(), capacity_hint=24)
+    kernel = Avx512CpuAttention(csa_so)
+    k_buf, v_buf, hs, ts = m.raw(0)
+    query = torch.randn(1, CK_KVH * CK_GROUP, 1, CK_DIM, generator=g).to(torch.bfloat16)
+    with pytest.raises(TypeError):
+        kernel(k_buf, v_buf, hs, ts, query, torch.arange(8), CK_DIM ** -0.5, CK_GROUP)
+
+
+def test_missing_shared_library_fails_before_the_run_not_during_it():
+    with pytest.raises(FileNotFoundError):
+        Avx512CpuAttention("/nonexistent/libcpu_sparse_attn.so")
+
+
+def test_controller_rejects_an_unknown_cpu_impl():
+    with pytest.raises(ValueError):
+        CpuOffloadController(GRAN, 0.5, capacity=32, device="cpu", pin=False,
+                             cpu_impl="numpy-maybe")
+
+
+def test_verdict_adds_the_fast_kernel_clause_only_when_it_ran():
+    """A vacuously-true clause is worse than an absent one: it reads like evidence."""
+    base = {"summary_drift": {"max": 0.0}, "index_mismatches": 0,
+            "rel_err_vs_gpu_fp32": {"max": 1e-7}}
+
+    torch_arm = dict(base, rel_err_vs_torch_cpu={"n": 0})
+    assert "fast_kernel_matches_torch_cpu" not in verdict(torch_arm, 1.0, 0.9, True)["checks"]
+
+    fast_ok = dict(base, rel_err_vs_torch_cpu={"n": 10, "max": 1e-6})
+    v_ok = verdict(fast_ok, 1.0, 0.9, True)
+    assert v_ok["checks"]["fast_kernel_matches_torch_cpu"] and v_ok["passed"]
+
+    fast_bad = dict(base, rel_err_vs_torch_cpu={"n": 10, "max": 1e-2})
+    assert not verdict(fast_bad, 1.0, 0.9, True)["passed"]
+
+
+def test_cpu_impl_is_recorded_in_the_stats():
+    """Provenance: a JSON that does not say which kernel ran cannot be re-read later."""
+    ctl = CpuOffloadController(GRAN, 0.5, capacity=32, device="cpu", pin=False)
+    assert ctl.stats()["cpu_impl"] == "torch"
+    assert ctl.stats()["rel_err_vs_torch_cpu"] == {"n": 0}

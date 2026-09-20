@@ -44,15 +44,32 @@ is therefore *more* accurate than the bf16 GPU path, so the honest comparison ne
   - vs the GPU **bf16** reference: this shows how much of the difference is just bf16, i.e.
     the noise the model already tolerates.
 
+Which CPU kernel (`--cpu-impl`)
+-------------------------------
+The first version of this harness computed the CPU attention with `torch.nn.functional`, which
+proved that the *mechanism* is right and left a hole that matters: the 2.051 ms/step that makes
+the whole route worth considering was measured by the AVX-512 C kernel, not by torch. A verified
+slow path and a measured fast path are two different pieces of code, so "the mechanism is
+correct" and "the mechanism is fast" were still two claims about two programs.
+
+`--cpu-impl avx512` closes that by calling the benchmarked kernel (`csa_attend_external` in
+tools/cpu_sparse_attention_lib.c) directly on the mirror's pinned buffers - no staging gather,
+absolute token indices, the same inner loop the benchmark timed. `--cpu-impl both` runs the
+offload arm twice and additionally reports how far the fast kernel is from the torch path that
+was already accepted, which is the number that actually retires the hole.
+
 Usage (on a GPU box):
+    gcc -O3 -march=native -fopenmp -shared -fPIC -o tools/libcpu_sparse_attn.so \
+        tools/cpu_sparse_attention_lib.c -lm -lpthread
     python tools/cpu_offload_correctness.py \
         --model /path/to/Qwen3-8B --seq-len 8192 --granularity 32 --k-frac 0.051 \
-        --max-new-tokens 16 --out-json /tmp/cpu-offload-correctness.json
+        --max-new-tokens 16 --cpu-impl both --out-json /tmp/cpu-offload-correctness.json
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import math
 import os
@@ -187,6 +204,25 @@ class CpuKvMirror:
         v = self.v[layer][:, :, : self.length[layer], :]
         return k[:, :, idx_cpu, :], v[:, :, idx_cpu, :]
 
+    def raw(self, layer: int) -> tuple[torch.Tensor, torch.Tensor, int, int]:
+        """Base buffers plus their strides, for a kernel that gathers in place.
+
+        `gather` above materialises a [1, KVH, T, D] staging tensor, which is what the torch
+        path needs and what the measured C kernel deliberately does not do: a separate gather
+        pass reads KV twice, and the 2.051 ms/step figure was obtained by converting and
+        multiplying while the cache line is still hot. So the C path gets the whole capacity
+        buffers and the strides, and indexes with absolute token positions itself.
+
+        Returned strides are in elements: for a contiguous [1, KVH, capacity, D] tensor the
+        head stride is capacity*D and the token stride is D.
+        """
+        k, v = self.k[layer], self.v[layer]
+        if not k.is_contiguous() or not v.is_contiguous():
+            raise RuntimeError(f"layer {layer} mirror is not contiguous; the C kernel indexes "
+                               "it by raw strides and would read the wrong bytes")
+        capacity, dim = int(k.shape[2]), int(k.shape[3])
+        return k, v, capacity * dim, dim
+
     def drift_vs_recompute(self, layer: int, key_full: torch.Tensor) -> float:
         """Max abs difference between the maintained summaries and a from-scratch recompute.
 
@@ -211,6 +247,87 @@ def cpu_sparse_attention(query_cpu: torch.Tensor, k_sel: torch.Tensor, v_sel: to
     return F.scaled_dot_product_attention(q, k, v, attn_mask=None, scale=scaling)
 
 
+def default_so_path() -> str:
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "libcpu_sparse_attn.so")
+
+
+class Avx512CpuAttention:
+    """The benchmarked C kernel, called on the mirror's own pinned buffers.
+
+    This is the whole point of `--cpu-impl avx512`: the arithmetic that gets verified here is
+    the arithmetic that was timed at 2.051 ms/step, down to the inner loop, because both go
+    through `attend_head_strided` in tools/cpu_sparse_attention_bench.c. Nothing is
+    reimplemented on this side - only pointers, strides and an index list are handed over.
+
+    Two things are worth stating rather than discovering later:
+
+      - the kernel reads **bf16** storage, which is what the engine keeps, and accumulates in
+        fp32. The torch path converts to fp32 first and then accumulates in fp32, so the two
+        should agree to ~1e-6 and any larger gap is a bug, not dtype noise.
+      - `threads=0` leaves the OpenMP default. Only kv_heads-way parallelism exists in a
+        single-layer call, so this is not a throughput path and the harness does not report it
+        as one.
+    """
+
+    def __init__(self, so_path: str | None = None, threads: int = 0) -> None:
+        self.so_path = so_path or default_so_path()
+        if not os.path.exists(self.so_path):
+            raise FileNotFoundError(
+                f"{self.so_path} is missing; build it with\n"
+                "  gcc -O3 -march=native -fopenmp -shared -fPIC "
+                "-o tools/libcpu_sparse_attn.so tools/cpu_sparse_attention_lib.c -lm -lpthread")
+        self.threads = int(threads)
+        lib = ctypes.CDLL(self.so_path)
+        lib.csa_attend_external.restype = ctypes.c_int
+        lib.csa_attend_external.argtypes = [
+            ctypes.c_void_p,                    # k
+            ctypes.c_void_p,                    # v
+            ctypes.POINTER(ctypes.c_float),     # q  [QH, D] fp32
+            ctypes.POINTER(ctypes.c_int),       # sel, absolute token positions
+            ctypes.c_int,                       # n_sel
+            ctypes.c_int,                       # kv_heads
+            ctypes.c_int,                       # group_size
+            ctypes.c_int,                       # dim
+            ctypes.c_longlong,                  # head_stride (elements)
+            ctypes.c_longlong,                  # token_stride (elements)
+            ctypes.c_float,                     # scale
+            ctypes.c_int,                       # threads
+            ctypes.POINTER(ctypes.c_float),     # out [QH, D] fp32
+        ]
+        self.lib = lib
+
+    def __call__(self, k_buf: torch.Tensor, v_buf: torch.Tensor, head_stride: int,
+                 token_stride: int, query_cpu: torch.Tensor, idx_cpu: torch.Tensor,
+                 scaling: float, n_rep: int) -> torch.Tensor:
+        if k_buf.dtype is not torch.bfloat16 or v_buf.dtype is not torch.bfloat16:
+            raise TypeError(f"the C kernel reads bf16 storage, got {k_buf.dtype}/{v_buf.dtype}")
+        b, heads, q_len, dim = query_cpu.shape
+        if b != 1 or q_len != 1:
+            raise NotImplementedError("one sequence, one decode step, on purpose")
+        kv_heads = int(k_buf.shape[1])
+        if heads != kv_heads * n_rep:
+            raise ValueError(f"{heads} q heads is not {kv_heads} kv heads x {n_rep}")
+        if idx_cpu.numel() == 0:
+            raise ValueError("empty selection")
+
+        # repeat_kv orders q heads as kv*n_rep + r, which is the layout the kernel assumes,
+        # so a plain reshape is the right handover and not a lucky one.
+        q = query_cpu.reshape(heads, dim).to(torch.float32).contiguous()
+        sel = idx_cpu.to(dtype=torch.int32).contiguous()
+        out = torch.empty((heads, dim), dtype=torch.float32)
+
+        rc = self.lib.csa_attend_external(
+            ctypes.c_void_p(k_buf.data_ptr()), ctypes.c_void_p(v_buf.data_ptr()),
+            ctypes.cast(q.data_ptr(), ctypes.POINTER(ctypes.c_float)),
+            ctypes.cast(sel.data_ptr(), ctypes.POINTER(ctypes.c_int)),
+            int(sel.numel()), kv_heads, int(n_rep), int(dim),
+            int(head_stride), int(token_stride), float(scaling), self.threads,
+            ctypes.cast(out.data_ptr(), ctypes.POINTER(ctypes.c_float)))
+        if rc != 0:
+            raise RuntimeError(f"csa_attend_external rejected the call (rc={rc})")
+        return out.reshape(1, heads, 1, dim)
+
+
 class CpuOffloadController:
     """The offload path, installed in place of `modeling_qwen3.eager_attention_forward`.
 
@@ -222,7 +339,8 @@ class CpuOffloadController:
 
     def __init__(self, granularity: int, k_frac: float, *, dense_layers=(0,),
                  capacity: int, device: str, pin: bool = True, verify_every: int = 1,
-                 verify: bool = True) -> None:
+                 verify: bool = True, cpu_impl: str = "torch", so_path: str | None = None,
+                 cpu_threads: int = 0) -> None:
         self.granularity = int(granularity)
         self.k_frac = float(k_frac)
         self.dense_layers = {int(x) for x in dense_layers}
@@ -230,6 +348,11 @@ class CpuOffloadController:
         self.device = device
         self.verify_every = max(1, int(verify_every))
         self.verify = bool(verify)
+        if cpu_impl not in ("torch", "avx512"):
+            raise ValueError(f"cpu_impl must be torch or avx512, got {cpu_impl!r}")
+        self.cpu_impl = cpu_impl
+        # Built eagerly: a missing .so should fail before the prefill, not 40 layers into a run.
+        self.avx = Avx512CpuAttention(so_path, cpu_threads) if cpu_impl == "avx512" else None
         self.mirror = CpuKvMirror(granularity, device, pin=pin)
         self.reset(device)
 
@@ -242,6 +365,7 @@ class CpuOffloadController:
         self.total_tokens = 0
         self.err_fp32: list[float] = []
         self.err_bf16: list[float] = []
+        self.err_vs_torch_cpu: list[float] = []
         self.summary_drift: list[float] = []
         self.idx_mismatches = 0
         self.idx_checks = 0
@@ -290,8 +414,13 @@ class CpuOffloadController:
 
         # 4. gather and attend on the CPU
         t0 = time.perf_counter()
-        k_sel, v_sel = self.mirror.gather(layer_idx, idx_cpu)
-        out_cpu = cpu_sparse_attention(q_cpu, k_sel, v_sel, scaling, group)
+        if self.avx is None:
+            k_sel, v_sel = self.mirror.gather(layer_idx, idx_cpu)
+            out_cpu = cpu_sparse_attention(q_cpu, k_sel, v_sel, scaling, group)
+        else:
+            k_buf, v_buf, head_stride, token_stride = self.mirror.raw(layer_idx)
+            out_cpu = self.avx(k_buf, v_buf, head_stride, token_stride, q_cpu, idx_cpu,
+                               scaling, group)
         self.cpu_seconds += time.perf_counter() - t0
 
         # 5. output back up to the GPU
@@ -300,13 +429,13 @@ class CpuOffloadController:
 
         if self.verify and (self.sparse_calls % self.verify_every == 0):
             self._verify(key, value, query, scaling, group, idx, layer_idx, scores,
-                         k_units, n_units, out_cpu)
+                         k_units, n_units, out_cpu, idx_cpu, q_cpu)
 
         return out.transpose(1, 2).contiguous(), None
 
     # -- verification -------------------------------------------------------
     def _verify(self, key, value, query, scaling, group, idx, layer_idx, scores,
-                k_units, n_units, out_cpu) -> None:
+                k_units, n_units, out_cpu, idx_cpu=None, q_cpu=None) -> None:
         """Three independent checks, because they fail for different reasons."""
         # (a) did the incremental summaries stay identical to a recompute?
         drift = self.mirror.drift_vs_recompute(layer_idx, key[:, :, : self.mirror.length[layer_idx], :])
@@ -336,6 +465,17 @@ class CpuOffloadController:
         self.err_fp32.append(float(((cpu32 - ref32).abs().max() / scale).item()))
         self.err_bf16.append(float(((cpu32 - refbf.to(torch.float32)).abs().max() / scale).item()))
 
+        # (d) when the C kernel is the one producing tokens, is it the same as the torch path
+        # that was accepted first? (c) alone would let a wrong kernel pass by being wrong in
+        # the same direction as a wrong reference, and this is the clause that says the fast
+        # path and the verified path are one path.
+        if self.avx is not None and idx_cpu is not None and q_cpu is not None:
+            k_sel, v_sel = self.mirror.gather(layer_idx, idx_cpu)
+            torch_cpu = cpu_sparse_attention(q_cpu, k_sel, v_sel, scaling, group)
+            denom = torch_cpu.abs().max().clamp(min=1e-6)
+            self.err_vs_torch_cpu.append(
+                float(((out_cpu - torch_cpu).abs().max() / denom).item()))
+
     # -- reporting ----------------------------------------------------------
     @property
     def touched_frac(self) -> float:
@@ -348,6 +488,7 @@ class CpuOffloadController:
             return {"n": len(xs), "max": max(xs),
                     "mean": sum(xs) / len(xs), "min": min(xs)}
         return {
+            "cpu_impl": self.cpu_impl,
             "sparse_calls": self.sparse_calls,
             "dense_calls": self.dense_calls,
             "touched_frac": round(self.touched_frac, 5),
@@ -356,6 +497,7 @@ class CpuOffloadController:
             "index_mismatches": self.idx_mismatches,
             "rel_err_vs_gpu_fp32": summarise(self.err_fp32),
             "rel_err_vs_gpu_bf16": summarise(self.err_bf16),
+            "rel_err_vs_torch_cpu": summarise(self.err_vs_torch_cpu),
             "cpu_seconds": round(self.cpu_seconds, 3),
             "d2h_mib": round(self.mirror.d2h_bytes / (1 << 20), 2),
             "h2d_mib": round(self.mirror.h2d_bytes / (1 << 20), 2),
@@ -371,6 +513,11 @@ def verdict(stats: dict, agree_vs_gpu: float, agree_vs_dense: float,
         "arithmetic_matches_fp32": stats["rel_err_vs_gpu_fp32"].get("max", 1.0) < 1e-4,
         "tokens_match_gpu_sparse": agree_vs_gpu >= 0.999,
     }
+    # Only meaningful when the C kernel produced the tokens; the torch arm has nothing to
+    # compare against and a clause that is vacuously true would be worse than an absent one.
+    vs_torch = stats.get("rel_err_vs_torch_cpu", {"n": 0})
+    if vs_torch.get("n", 0) > 0:
+        checks["fast_kernel_matches_torch_cpu"] = vs_torch.get("max", 1.0) < 1e-4
     return {
         "checks": checks,
         "passed": all(checks.values()),
@@ -407,6 +554,16 @@ def main() -> int:
     p.add_argument("--verify-every", type=int, default=1,
                    help="verify every Nth sparse call; the fp32 reference is not free")
     p.add_argument("--no-pin", action="store_true", help="skip pinned memory for the mirror")
+    p.add_argument("--cpu-impl", default="avx512", choices=("torch", "avx512", "both"),
+                   help="which CPU attention computes the offloaded tokens. avx512 is the "
+                        "benchmarked C kernel and the default, because a correctness result "
+                        "about torch says nothing about the kernel that was timed. 'both' runs "
+                        "the offload arm twice and compares them token for token.")
+    p.add_argument("--so", default=None,
+                   help="path to libcpu_sparse_attn.so (default: next to this file)")
+    p.add_argument("--cpu-threads", type=int, default=0,
+                   help="OpenMP threads for the C kernel; 0 leaves the default. A single-layer "
+                        "call only has kv_heads-way parallelism, so this is not a perf knob.")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda")
     p.add_argument("--out-json", required=True)
@@ -491,26 +648,54 @@ def main() -> int:
     print(f"[gpu sparse] {gpu_sparse['seconds']}s correct={gpu_sparse['answer_correct']} "
           f"{gpu_sparse['text']!r}", flush=True)
 
-    cpu_ctl = CpuOffloadController(args.granularity, args.k_frac,
-                                   dense_layers=dense_layers, capacity=capacity,
-                                   device=args.device, pin=not args.no_pin,
-                                   verify_every=args.verify_every)
-    cpu = run(cpu_ctl)
-    stats = cpu_ctl.stats()
-    print(f"[cpu offload] {cpu['seconds']}s correct={cpu['answer_correct']} "
-          f"{cpu['text']!r}", flush=True)
+    cpu_impls = ["torch", "avx512"] if args.cpu_impl == "both" else [args.cpu_impl]
+    arms: dict[str, dict] = {}
+    for impl in cpu_impls:
+        cpu_ctl = CpuOffloadController(args.granularity, args.k_frac,
+                                       dense_layers=dense_layers, capacity=capacity,
+                                       device=args.device, pin=not args.no_pin,
+                                       verify_every=args.verify_every, cpu_impl=impl,
+                                       so_path=args.so, cpu_threads=args.cpu_threads)
+        res = run(cpu_ctl)
+        arms[impl] = {"run": res, "stats": cpu_ctl.stats()}
+        print(f"[cpu offload:{impl}] {res['seconds']}s correct={res['answer_correct']} "
+              f"{res['text']!r}", flush=True)
+
+    # The fast kernel is the claim under test whenever it ran, so it owns the verdict.
+    primary = "avx512" if "avx512" in arms else "torch"
+    cpu = arms[primary]["run"]
+    stats = arms[primary]["stats"]
 
     agree_gpu, first_div_gpu = token_agreement(gpu_sparse["ids"], cpu["ids"])
     agree_dense, first_div_dense = token_agreement(dense["ids"], cpu["ids"])
     v = verdict(stats, agree_gpu, agree_dense, cpu["answer_correct"])
 
+    # When both CPU kernels ran, the tokens themselves have to agree, not just the tensors at
+    # the verified steps: a discrepancy that only shows up between verifications would still
+    # change the continuation.
+    cross = None
+    if len(arms) > 1:
+        agree_impls, first_div_impls = token_agreement(arms["torch"]["run"]["ids"],
+                                                      arms["avx512"]["run"]["ids"])
+        cross = {"agreement": round(agree_impls, 4), "first_divergence": first_div_impls}
+        v["checks"]["cpu_impls_produce_the_same_tokens"] = agree_impls >= 0.999
+        v["passed"] = all(v["checks"].values())
+
     print("\n--- correctness ---", flush=True)
+    print(f"cpu impl (verdict)     {primary}")
     print(f"summary drift max      {stats['summary_drift'].get('max')}  (must be 0.0)")
     print(f"selection mismatches   {stats['index_mismatches']} / {stats['index_checks']}")
     print(f"rel err vs GPU fp32    max={stats['rel_err_vs_gpu_fp32'].get('max'):.3e} "
           f"mean={stats['rel_err_vs_gpu_fp32'].get('mean'):.3e}")
     print(f"rel err vs GPU bf16    max={stats['rel_err_vs_gpu_bf16'].get('max'):.3e} "
           f"mean={stats['rel_err_vs_gpu_bf16'].get('mean'):.3e}")
+    if stats["rel_err_vs_torch_cpu"].get("n", 0):
+        print(f"rel err vs torch CPU   max={stats['rel_err_vs_torch_cpu'].get('max'):.3e} "
+              f"mean={stats['rel_err_vs_torch_cpu'].get('mean'):.3e}  "
+              "(fast kernel vs the path verified first)")
+    if cross is not None:
+        print(f"tokens avx512 vs torch agree={cross['agreement']:.4f} "
+              f"first_div={cross['first_divergence']}")
     print(f"tokens vs gpu sparse   agree={agree_gpu:.4f} first_div={first_div_gpu}")
     print(f"tokens vs dense        agree={agree_dense:.4f} first_div={first_div_dense}")
     print(f"touched frac           {stats['touched_frac']}")
@@ -521,7 +706,8 @@ def main() -> int:
     modeling_qwen3.eager_attention_forward = original_eager
     payload = {"config": dict(vars(args)), "prompt_len": prompt_len,
                "answer": spec["answer"], "dense": dense, "gpu_sparse": gpu_sparse,
-               "cpu_offload": cpu, "cpu_stats": stats, "verdict": v}
+               "cpu_offload": cpu, "cpu_stats": stats, "cpu_impl": primary,
+               "cpu_arms": arms, "cpu_impl_cross_check": cross, "verdict": v}
     with open(args.out_json, "w") as f:
         json.dump(payload, f, indent=2)
     print(f"wrote {args.out_json}", flush=True)

@@ -1,0 +1,18 @@
+run_tag=cpuoffload-avx512-gran256-20260920-122307
+model=/data00/home/sitian/.ms_cache/Qwen/Qwen3-8B
+random_model=1
+random_layers=36
+seq_len=8192
+variant=distractor
+granularity=256
+k_frac=0.11
+dense_layers=0
+max_new_tokens=16
+verify_every=1
+seed=5
+cpu_impl=both
+cpu_threads=0
+kernel_cflags=-O3 -march=native -fopenmp
+source_revision=b9ea2d822e02aeec93f3c00fcfb81661beab0b34
+source_dirty_files=37
+gpu=3
