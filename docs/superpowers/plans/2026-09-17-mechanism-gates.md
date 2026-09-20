@@ -215,12 +215,14 @@ already runs on, and it differs from the GPU's fp32 output by 1.2e-06.
 
 Two honest limits on this run:
 
-- **Weights are random.** The checkpoint is no longer on the box (`/data00` is 96% full and a
-  cleanup ran today), so the harness builds a Qwen3 with the right per-layer shape and
-  meaningless weights. That is legitimate here and only here: every check compares two paths
-  through the *same* weights. It is not legitimate for fidelity, and the "tokens vs dense"
-  number this run prints (0.0588) is therefore meaningless - with random weights there is no
-  answer to preserve. Answer-level fidelity was measured separately with real weights.
+- **Weights are random.** The checkpoint is no longer on the box, so the harness builds a Qwen3
+  with the right per-layer shape and meaningless weights. That is legitimate here and only here:
+  every check compares two paths through the *same* weights. It is not legitimate for fidelity,
+  and the "tokens vs dense" number this run prints (0.0588) is therefore meaningless - with
+  random weights there is no answer to preserve. Answer-level fidelity was measured separately
+  with real weights.
+  (This bullet originally blamed `/data00` being 96% full. That was the wrong device - see the
+  correction dated 2026-09-20 below. The checkpoint's absence is real; the explanation was not.)
 - **This is a correctness harness, not a fast one.** It computes fp32 references and recomputes
   summaries on every sparse call. The 3.8 s for 16 steps says nothing about the mechanism's
   speed; the gates above are where speed lives.
@@ -369,8 +371,8 @@ Three things this run does **not** say, stated because the numbers invite the op
   from `collapse(2)` over 36 layers x 8 heads. The AVX arm's shorter wall time (2.85 s vs 3.68 s
   for the torch arm, while doing *more* work - it also computes the torch reference for the new
   check) is an observation, not a result.
-- **Weights are still random.** `/data00` is at 97% and the Qwen3-8B checkpoint is still gone.
-  Same reasoning as Gate 7: every check compares two paths through the same weights, so this is
+- **Weights are still random.** The Qwen3-8B checkpoint is still gone from the box, so the same
+  reasoning as Gate 7 applies: every check compares two paths through the same weights, which is
   legitimate for correctness and illegitimate for fidelity. The "tokens vs dense 0.0588" line
   remains meaningless.
 - **fp32 accumulation is what was verified.** The kernel reads bf16 storage and accumulates in
@@ -384,6 +386,44 @@ the q-head-to-kv-head mapping, bf16 refusal, a missing `.so` failing before the 
 40 layers into it. They are real: with correct strides the kernel agrees to 1.3e-07, and the three
 plausible bugs - live-length head stride, swapped K/V, q heads rolled by one - all come out at
 O(1) relative error.
+
+
+## Correction: the 97% disk was never our disk, and never the blocker (2026-09-20)
+
+Two earlier notes in this document explained the missing Qwen3-8B checkpoint by pointing at
+`/data00` being 96-97% full. That reasoning used the wrong device, and it mattered, because it
+turned a 10-minute download into something that looked like it had to wait for someone to clean
+a shared volume.
+
+`/data00/home/sitian` is **not** part of `/data00`. It is a separate block device mounted over
+that path:
+
+```
+/dev/nvme0n1p3  1.7T  1.5T   62G  97% /data00              <- the host disk, shared, nearly full
+/dev/nbd16      2.9T  2.6T  207G  93% /data00/home/sitian  <- our home, its own device
+```
+
+So the 97% figure describes a volume this work does not write to. Everything the gates produce -
+`/data00/home/sitian/tllm/...`, the staged sources, the JSON - lands on nbd16, which has **207 GB
+free**. A Qwen3-8B bf16 checkpoint is ~16 GB. **Disk space was never what stopped the real-weights
+run**; the checkpoint is simply absent (the whole `.ms_cache` directory is gone, not just
+`Qwen/`), and re-fetching it is unblocked right now.
+
+Three things found while checking, worth writing down because each one fails in a confusing way:
+
+- **Our own volume is at 93%, 207 GB left, and there is no quota** (`quota -s` reports none). So
+  nothing stops a run from filling it, and the failure mode is a write error mid-experiment
+  rather than a refusal up front. Current top consumers: `pypilot_workspace` 928G, `RL` 601G,
+  `tllm` 189G, `tinyllmforge-workspaces` 169G, `models` 141G. The per-run staging directories
+  under `tllm/` and `tinyllmforge-workspaces/` are the cheapest 350 GB to reclaim, since each is
+  a disposable copy of a source tree.
+- **Two filesystems are stacked on the home path**: `/dev/nbd2` mounted **ro**, with `/dev/nbd16`
+  mounted **rw** on top. The rw one wins today, so this is invisible. If nbd16 ever fails to
+  mount, the path still exists and is still readable - it just silently becomes read-only, and
+  the failure will read like a permissions bug rather than a mount problem. Worth recognising
+  the shape before losing an hour to it.
+- **`df -h /data00` is the wrong command for this question** and answered it wrongly for three
+  days. `findmnt -T <path>` is the right one: it names the device actually serving that path.
 
 
 ## Revised budget, one sequence, 8192 context, gran=32
@@ -435,8 +475,10 @@ sublinearly, an int8/VNNI kernel, or more cores.
 3. A hand-written AVX-512 selector, now the most promising open item: torch achieves only
    4.7 GB/s on a pure streaming reduction, so there is 1-2 orders of magnitude to reclaim. If it
    lands near DRAM bandwidth, the GPU-side summaries and the index transfer both disappear.
-4. Re-run Gate 7 with a real checkpoint once one is back on the box, to add the answer-level
-   arm to a path that is already numerically verified.
+4. Re-run Gate 7 with a real checkpoint, to add the answer-level arm to a path that is already
+   numerically verified. **No longer waiting on anything**: the home volume has 207 GB free and a
+   bf16 8B checkpoint is ~16 GB (see the 2026-09-20 correction). This is a download, not a
+   dependency.
 5. ~~Replace the harness's PyTorch CPU attention with the AVX-512 kernel from the compute gate~~
    **done 2026-09-20**: the benchmarked kernel now produces the tokens and passes the same checks,
    agreeing with the torch path to 1.8e-06 with identical token streams. See Gate 8. What remains
