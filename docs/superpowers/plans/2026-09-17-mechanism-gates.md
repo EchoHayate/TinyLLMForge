@@ -414,9 +414,31 @@ Three things found while checking, worth writing down because each one fails in 
 - **Our own volume is at 93%, 207 GB left, and there is no quota** (`quota -s` reports none). So
   nothing stops a run from filling it, and the failure mode is a write error mid-experiment
   rather than a refusal up front. Current top consumers: `pypilot_workspace` 928G, `RL` 601G,
-  `tllm` 189G, `tinyllmforge-workspaces` 169G, `models` 141G. The per-run staging directories
-  under `tllm/` and `tinyllmforge-workspaces/` are the cheapest 350 GB to reclaim, since each is
-  a disposable copy of a source tree.
+  `tllm` 189G, `tinyllmforge-workspaces` 169G, `models` 141G.
+
+  An earlier draft of this bullet called the per-run directories under `tllm/` and
+  `tinyllmforge-workspaces/` "the cheapest 350 GB to reclaim, since each is a disposable copy of a
+  source tree". **That was a guess and it was wrong**, in a way that would have mattered if acted
+  on. What is actually in there (inventoried 2026-09-20):
+
+  - `command-timeline-20260818/models/Qwen3.8-27B` is **52 GB of real weights** - 18 safetensors
+    shards, config, tokenizer, crc32 - not a copy of anything. Deleting it means re-downloading
+    it. It also contradicts "there is no checkpoint on the box": there is one, just not Qwen3-8B.
+  - `attempts/` is 57 GB over 52 run directories, and the `source/` copy inside each is **33 MB**;
+    the other 9.1 GB is `cases/` output. So these are experiment data, not source clones.
+  - `tllm/env` (6.2 GB) is the interpreter the remote runners use. Deleting it breaks every gate
+    script in this document.
+
+  The duplication that *is* real: **87.5 GB of `.pt` files across 3944 files**, because each run
+  copies the repo working tree and the tree carries ~715 MB of trained `.pt` artifacts. One 258 MB
+  file (`latent_projector_c22_compact_renderer_bridge_fixed.pt`) exists in **38 copies**, and
+  `needle_sq_results/` has been duplicated **30 times**. Those copies are safe to remove because
+  the originals are tracked in git. Separately,
+  `speculation-router-runs/...-canonical-20260717-154410/` holds an 18 GB `artifacts.failed-resume`
+  next to an 18 GB `artifacts` - the same data twice, from one failed resume.
+
+  Same root cause worth noting: committing 715 MB of `.pt` into git is why the local `.git` is
+  **52 GB**.
 - **Two filesystems are stacked on the home path**: `/dev/nbd2` mounted **ro**, with `/dev/nbd16`
   mounted **rw** on top. The rw one wins today, so this is invisible. If nbd16 ever fails to
   mount, the path still exists and is still readable - it just silently becomes read-only, and
@@ -478,7 +500,10 @@ sublinearly, an int8/VNNI kernel, or more cores.
 4. Re-run Gate 7 with a real checkpoint, to add the answer-level arm to a path that is already
    numerically verified. **No longer waiting on anything**: the home volume has 207 GB free and a
    bf16 8B checkpoint is ~16 GB (see the 2026-09-20 correction). This is a download, not a
-   dependency.
+   dependency. There is also a complete **Qwen3.8-27B** already on the box at
+   `tinyllmforge-workspaces/command-timeline-20260818/models/Qwen3.8-27B`, which would skip the
+   download entirely at the cost of a slower, 54 GB-of-weights run; either is fine, since this
+   gate needs *real* weights rather than *these* weights.
 5. ~~Replace the harness's PyTorch CPU attention with the AVX-512 kernel from the compute gate~~
    **done 2026-09-20**: the benchmarked kernel now produces the tokens and passes the same checks,
    agreeing with the torch path to 1.8e-06 with identical token streams. See Gate 8. What remains
