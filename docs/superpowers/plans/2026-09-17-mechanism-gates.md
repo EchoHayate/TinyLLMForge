@@ -514,3 +514,120 @@ sublinearly, an int8/VNNI kernel, or more cores.
 6. An int8/VNNI CPU attention kernel is the obvious next speed step and would be a different
    kernel: Gate 8 verified fp32 accumulation over bf16 storage, so that variant needs its own
    correctness run rather than inheriting this one.
+
+## Cleanup executed, and what the disk actually turned out to be (2026-09-21)
+
+The 2026-09-20 correction listed safe cleanup candidates. They were verified and removed today.
+Recording the procedure rather than just the outcome, because the verification step is the part
+worth reusing.
+
+### The originals were verified against Git LFS OIDs, not against `git show`
+
+`needle_sq_results/*.pt` are LFS-tracked, and the first verification attempt looked alarming:
+`shasum -a 256` on the working-tree file disagreed with
+`git show HEAD:<path> | shasum -a 256`, while `git status` reported the tree clean. Both facts
+were true. `git show` returns the **134-byte LFS pointer**, not the content, so the second hash
+was the hash of a pointer file.
+
+The pointer is the better authority anyway - it records the content's sha256 as its `oid`:
+
+```
+version https://git-lfs.github.com/spec/v1
+oid sha256:fd5f78d50b6af83b25cbd2a2cf34f38b5423464b7bd82c3398f626ab0ebff02a
+size 269683106
+```
+
+All 11 tracked originals match their pointer OID, and `.git/lfs` holds 705 MB of objects as a
+second copy. **Lesson: to verify an LFS-tracked file, compare the working tree's sha256 to the
+pointer's `oid`. `git show` will quietly hand you a pointer and a wrong answer.**
+
+### What was deleted
+
+Verification-then-deletion, dry run first (`tools/cleanup_verified_duplicates.sh`, default dry run):
+
+| target | size | why safe | result |
+|---|---|---|---|
+| `speculation-router-runs/...-20260717-154410/artifacts.failed-resume` | 18 GB | sibling `artifacts/` has the same 472 files and is intact | deleted; sibling re-checked afterwards, 18 GB / 472 files |
+| duplicated `needle_sq_results/*.pt` | 31.0 GB | 495 files whose sha256 equals a trusted original's LFS OID | deleted |
+
+496 deletions, 106 GB -> 149 GB free. The gain is 43 GB rather than 49 GB because
+`pypilot_workspace` was writing throughout.
+
+Two categories the script refused to touch, both correctly:
+
+- **1305 `.pt` files not in the trusted list.** The remote copies contain far more `.pt` files
+  than the repo tracks, so there is no original to fall back on. Conservative keep.
+- **11 files with a matching name but a different hash.** They turned out to be **130-134 bytes
+  each** - LFS pointers, from a `.staging` copy made from a checkout where `git lfs pull` never
+  ran. Not data at all. The hash check caught this without knowing why, which is the point of
+  hashing instead of comparing names.
+
+### The real disk story is not the duplicated `.pt` files
+
+`pypilot_workspace` grew from 928 GB to **1.1 TB in one day** and is still being written. The
+top-level `du -sh */` that produced the earlier inventory **missed it, because the mass is in a
+dotted directory**: `pypilot_workspace/.dbg` is **913 GB** - by itself a third of the 2.9 TB
+volume, and larger than everything the two cleanup targets above could ever have reclaimed.
+
+`.dbg` is not debug symbols. It is an active experiment scratch area (3127 top-level entries,
+written as recently as this morning). Inventory:
+
+| measure | value |
+|---|---|
+| total | 913 GB |
+| under a `staging/` path | **769.2 GB** across 887 staging dirs |
+| modified in the last 7 days | 21.6 GB |
+| older than 7 days | 901.8 GB |
+| older than 30 days | only 20.3 GB |
+
+So ~900 GB of this was created in the last month. The duplication is extreme, and `nlink=1`
+everywhere confirms these are independent copies rather than hardlinks:
+
+| file | size each | copies | redundant |
+|---|---|---|---|
+| `libhdfs_client.so` | 598 MB | **913** | ~533 GB |
+| `libnccl.so.2` | 261 MB | 293 | ~74 GB |
+| `liblagrange_torch_blade.so` | 2.56 GB | 17 | ~41 GB |
+| **total redundant bytes in files >=50 MB** | | | **655.5 GB** |
+
+One run directory (`runtime-marlin-intacc-coarse-v3`) even holds `libhdfs_client.so` twice
+within itself, under `csrc/lib/` and under `inference/.../llmrank/kernel/lib/`.
+
+### Why those staging trees are regenerable (evidence, not a guess)
+
+The previous cleanup note was wrong because it guessed, so this claim is sourced.
+`run_pypilot_2x2_abba.sh` creates the directory and then hands it to the container as an
+environment variable:
+
+```
+297:  mkdir -p "$run_dir/service" "$run_dir/staging" "$run_dir/nsys" ...
+341:    -e PYPILOT_MODEL_STAGING_ROOT="$run_dir/staging"
+```
+
+`staging/` is therefore populated **by the serving runtime at launch**, not curated by hand, and
+a re-run repopulates it. The results of a run live beside it in `service/`, `nsys/`,
+`flash-raw/`, `kv-cache-dump/`, `qkv-hook-dump/` and the per-run JSON and logs - which is where
+the 21.6 GB of recent writes mostly is.
+
+**Nothing in `.dbg` was touched.** It is an active work area, 769 GB is not a reversible
+deletion, and the decision about reproducibility of month-old runs is not the cleanup script's
+to make. Two options, in order of safety:
+
+1. **Hardlink-dedup the identical libraries** (ext4, one device, so hardlinks are possible;
+   no `jdupes`/`rdfind` on the box, so it would be a hash-verify-then-link script). Reclaims
+   ~655 GB and every path still resolves. The risk to state plainly: a later in-place overwrite
+   of a staged `.so` - `cp` over an existing path truncates and writes in place - would
+   propagate to every linked copy.
+2. **Delete `staging/` subtrees for finished runs**, recording a manifest of names, sizes and
+   hashes first so the provenance of an old run survives even though its staged bytes do not.
+   Reclaims most of 769 GB with no aliasing risk.
+
+The durable fix is neither: **stage by hardlink or symlink instead of by copy**, so the next
+month does not rebuild the same 655 GB. At the current rate (~900 GB/month into `.dbg`, 149 GB
+free) this volume fills again within weeks regardless of which option is chosen.
+
+**Two earlier numbers in this document are now stale.** "Open questions" item 4 and the
+2026-09-20 correction both quote **207 GB free**; after a day of `pypilot_workspace` growth and
+today's cleanup the figure is **149 GB**. The conclusion those passages draw is unaffected - a
+16 GB bf16 checkpoint still fits, and the real-weights Gate 7 run is still blocked by nothing -
+but the headroom is smaller than it reads, and `.dbg` is why.
