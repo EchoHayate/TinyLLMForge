@@ -1,109 +1,89 @@
 # TinyLLMForge
 
-**一个从零搭建、持续优化的个人 LLM 推理引擎项目。**
+TinyLLMForge 是一个用 PyTorch 和 Triton 写的 LLM 推理引擎，起步参考
+[nano-vllm](https://github.com/GeeeekExplorer/nano-vllm)。
+主要在 Qwen3-0.6B / 8B 上做实验：从分页 KV cache 和多卡推理，到量化、
+稀疏 attention，再到连续多步 decode。Qwen3.5 的混合状态与 MTP 也有单独的实验路径。
 
-以 Python、PyTorch 和 Triton 为基础，围绕 Qwen3-0.6B / Qwen3-8B，
-从请求调度、分页 KV cache 和模型执行做起，逐步扩展到 CUDA Graph、
-量化、稀疏 Attention、KV offload 和推测解码，并探索 Qwen3.5 混合状态模型。
+## Features
 
-核心关注点是：**推理时间花在哪里、显存被什么占用，以及一个优化究竟在什么条件下有效。**
+- **Runtime** — Paged KV cache、自动前缀复用、chunked prefill、混合调度、tensor parallel。
+- **Decoding** — CUDA Graph、Exact Greedy Decode Burst、n-gram / SAM / learned draft。
+- **Attention** — Quest 动态选块、Triton fused scoring、blockwise attention。
+- **Memory** — 权重与 KV cache 量化、A8 / SmoothQuant、CPU offload、KV staging。
 
-## 做了什么
+## Spotlight
 
-- **搭建推理引擎**：实现请求调度、prefill / decode、分页 KV cache、
-  自动前缀复用（APC）、采样和张量并行。
-- **优化执行与访存**：引入 CUDA Graph、Exact Greedy Decode Burst、
-  Triton kernel fusion、Quest 动态选块，以及权重、激活和 KV cache 量化。
-- **探索更复杂的运行时**：实现 chunked prefill、混合调度、CPU/GPU KV
-  staging 与 blockwise attention，研究多种 draft source 的推测解码。
-- **建立实验验证链路**：配套 profiler、质量评测、固定对照实验和独立 verifier，
-  同时记录性能收益、正确性问题和没有通过门槛的方向。
+### Decode Burst
 
-## Highlights
+CUDA Graph 减少了 kernel launch 开销，但普通 decode 仍要在每个 token 后回到
+CPU。Decode Burst 把这个往返挪到一组 token 的末尾：GPU 上产生的 token 直接作为
+下一步输入，连续执行 K 次，再统一回传结果、提交 KV 和序列状态。
 
-以下数字来自各自的历史对照实验，不是当前 HEAD 的统一跑分，也不能相乘作为总加速比。
+没有 draft model，也没有猜测或接受率：**每个 token 仍然执行一次目标模型 forward**。
+实现中包含固定 K8 和按上下文选择 K8 / K16 的策略。它省下的是同步、调度和
+元数据处理，代价是 CPU 要等一组 token 算完才能看到结果。
+[实现](tinyvllm/engine/exact_greedy_decode_burst.py) ·
+[实验记录](docs/superpowers/audits/2026-08-24-context-gated-elastic-exact-burst-audit.md)
 
-### 1. CUDA Graph：减少小模型 decode 的启动开销
+### KV8 + Quest
 
-把重复的 GPU 执行序列捕获并重放，减少逐算子 launch 开销。
-在 **Qwen3-0.6B / A100** 的历史对照中，单卡 decode 吞吐从
-**259.55 → 2342.10 tok/s**；更大 workload 下从 **517.19 → 4421.90 tok/s**，
-约为 eager 的 **8.5–9×**。
+Quest 只读取选中的 KV blocks，但选块本身也要花时间。固定 top-k 在小 batch 下
+反而会拖慢 KV8 decode，所以这里加了一个 batch 级判断：预计省下的反量化工作量
+够大才选块，否则走 KV8 full attention。评分和 block summary 更新也做了 Triton fusion。
+[实验记录](docs/kv-sparse-attention.md)
 
-亮点不仅是数字，也在于明确了这个小模型场景的主要瓶颈是启动开销，
-而不是简单地增加 GPU 数量。
-详见 [CUDA Graph 对照与纠错，§18](docs/qwen3-8b-fixes.md)。
+### W4A8 的长上下文修复
 
-### 2. Decode Burst：跨多个 token 摊薄同步与调度开销
+W4A8 + SmoothQuant 最初能生成文字，但长文检索会复读、丢信息。逐层消融后，
+在这组 Qwen3-8B 实验里，保留尾部 4 层的浮点激活比保留首部 4 层更有效，
+needle 召回达到 96.7%。相关配置和中间失败结果都留在
+[量化日志](docs/qwen3-8b-fixes.md)里。
 
-普通 decode 每生成一个 token，就回传 CPU、更新调度和元数据，再启动下一步。
-Exact Greedy Decode Burst 让 GPU 上的输出直接成为下一步输入，连续执行 K 步，
-最后一次性回传 token 并提交 KV / 序列状态，减少逐 token 的主机往返。
-**它不是推测解码**：不需要 draft model，每个 token 仍执行一次目标模型 forward。
+## Benchmarks
 
-在 **Qwen3-0.6B / A100 / TP1 / 单请求 greedy** 的历史实验中，
-自适应 K8/K16 相对固定 K8，在符合条件的 256 / 2048-token 上下文中，
-**平均每 token 耗时（TPOT）的中位数降低 2.85%，P95 降低 2.13%**，
-并通过输出一致性验证。代价是 token 批量可见，K16 最长主机可见间隔约 **37 ms**；
-该结果仅覆盖非流式、`ignore_eos=True` 的固定范围，当前仍默认关闭。
+以下是几组已记录的对照，不是同一次测试，也不是把所有开关打开后的总收益。
 
-后续多请求 SLO-aware Cohort Burst 暴露输出不一致与尾延迟回归，不能作为成功加速。
-详见 [单请求 Decode Burst 审计](docs/superpowers/audits/2026-08-24-context-gated-elastic-exact-burst-audit.md)
-与 [Cohort Burst 实验结论](artifacts/slo_cohort_burst/20260914-canonical-960fde15-r1/final_bundle/report.md)。
+| 实验 | 工作负载 | 对照与结果 |
+| :--- | :--- | :--- |
+| **CUDA Graph** | Qwen3-0.6B · A100 · TP1 · B=8 | eager **259.55** → graph **2342.10 tok/s** |
+| **Decode Burst** | Qwen3-0.6B · A100 · TP1 · B=1 · context 256 / 2048 | 固定 K8 → 自适应 K8/K16：TPOT 中位数 **−2.85%**，P95 **−2.13%** |
+| **Quest + fused score** | Qwen3-8B · 16K needle | 相对 full attention，吞吐 **+4.5%–6.8%**，召回 **100%** |
+| **KV8 + 自适应 Quest** | Qwen3-8B · A100 · TP1 · eager · context 8192 · B=8–19 | 相对 KV8 full，decode step 延迟 **−26.7%–43.5%** |
+| **W4A8 + SmoothQuant** | Qwen3-8B · 长上下文 needle | 尾部 4 层保留浮点激活，召回 **96.7%** |
 
-### 3. Quest + Triton：从算子融合到端到端收益
+<details>
+<summary>测试条件、代价和没通过的实验</summary>
 
-将 Quest 选块评分中的 gather、乘法和归约融合为一个 Triton kernel，
-减少中间张量与 kernel launch。**评分算子微基准加速约 9–22×**；
-在 Qwen3-8B 的 16K needle 评测中，相对 full attention，
-Quest + fused score 在 **100% 召回**下取得 **4.5%–6.8% 吞吐提升**。
+- **CUDA Graph**：上表输入长度 256、输出长度 64。另一组 B=16、输入 1024、
+  输出 256 的对照是 517.19 → 4421.90 tok/s。都是 decode 吞吐，不包含模型初始化。
+  [记录：§18](docs/qwen3-8b-fixes.md)
+- **Decode Burst**：表中是 K8/K16 对固定 K8 的增量收益，不是相对普通 decode 的收益。
+  验证范围为单请求 greedy、非流式、`ignore_eos=True`；K16 最大主机可见间隔约 37 ms，
+  当前默认关闭。[记录](docs/superpowers/audits/2026-08-24-context-gated-elastic-exact-burst-audit.md)
+- **Quest fusion**：score-only 微基准的 9–22× 加速只属于评分 kernel，
+  不能当作端到端加速。[记录：§22](docs/qwen3-8b-fixes.md)
+- **KV8 自适应策略**：B=4/6 回退到 KV8 full，仍有约 1%–1.5% 的额外延迟；
+  配套固定 needle 测试中，两条路径均为 25/25。[记录](docs/kv-sparse-attention.md)
+- **Cohort Burst**：多请求版本在正式负载下出现输出不一致和尾延迟回归，未通过。
+  [复盘](artifacts/slo_cohort_burst/20260914-canonical-960fde15-r1/final_bundle/report.md)
+- **推测解码**：提案、验证、接受前缀提交和拒绝后缀回滚已有实现；adaptive n-gram、
+  SAM 和 router 的历史实验没有通过各自门槛，learned drafter 也不能据此宣称整体完成。
+  [历史结果](docs/experiment-history.md) ·
+  [阶段审计](docs/superpowers/audits/2026-08-16-phase1-completion-audit.md)
 
-这是两种不同口径：前者衡量 kernel 优化，后者衡量整条稀疏 Attention 路径。
-详见 [Quest kernel fusion，§22](docs/qwen3-8b-fixes.md)。
+历史结果绑定当时的源码和配置，不代表当前 HEAD 已重新跑过整套 GPU 验证。
 
-### 4. KV8 + 自适应 Quest：不是一直稀疏，而是在划算时稀疏
+</details>
 
-针对固定开启 Quest 在小 batch 下反而变慢的问题，引入 batch 级启用策略：
-只有预计能省下足够多的 KV8 反量化 block，才执行稀疏选块，否则回退到 KV8 full。
+## Notes
 
-在 **Qwen3-8B / A100 80GB / TP1 / eager / 8192 context** 的固定实验中，
-**B=8–19 的 decode step 延迟相对 KV8 full 降低约 26.7%–43.5%**；
-B=4/6 回退，额外延迟约 1%–1.5%。配套固定 needle 测试中，
-KV8 full 与自适应策略均为 **25/25**。
+| 代码 | 记录 |
+| :--- | :--- |
+| [Engine / Scheduler / KV](tinyvllm/engine/) | [APC 与前缀复用](experiments/prefix_cache/README.md) |
+| [Attention / Triton kernels](tinyvllm/layers/) | [KV 稀疏 Attention](docs/kv-sparse-attention.md) |
+| [Models](tinyvllm/models/) | [Qwen3-8B 工程日志](docs/qwen3-8b-fixes.md) |
+| [Speculative decoding](tinyvllm/speculative/) | [历史实验汇总](docs/experiment-history.md) |
+| [Profiler / tests / verifiers](tools/) | [Light Doc Cache](experiments/light_doc_cache/README.md) |
 
-这个结果的价值在于把 selector 的固定成本纳入决策，而不是假定稀疏一定更快。
-详见 [KV8 + Quest 自适应摊销实验](docs/kv-sparse-attention.md)。
-
-### 5. 量化质量修复：找出真正敏感的层
-
-不只实现 W4A8、KV4/KV8 和 SmoothQuant，也追踪量化后长上下文复读、
-检索召回下降的原因。通过层级消融，发现该 Qwen3-8B 配置中
-**尾部层比首部层更值得保留浮点激活**。
-
-W4A8 + SmoothQuant 配合跳过尾部 4 层 A8，在记录的长上下文 needle
-实验中达到 **96.7% 召回**。这里的亮点是定位误差来源、做精度分配，
-而不是把“能生成 token”当作量化成功。
-详见 [量化修复与层级消融](docs/qwen3-8b-fixes.md)。
-
-### 6. 推测解码与 KV 生命周期：不止是生成几个 draft token
-
-围绕 n-gram、SAM、独立 learned drafter 和 Qwen3.5 MTP，
-构建提案、验证、接受前缀提交、拒绝后缀回滚，以及 Proposal-KV 的释放与驻留管理；
-把 draft source 和目标模型的 KV 状态管理分开。
-
-这部分值得保留的是运行时结构与正确性验证能力，而不是一个通用加速承诺。
-历史 adaptive n-gram、SAM 和 router 实验也保留了未通过门槛的结果，
-用于区分“提案接受率高”“KV 状态正确”和“端到端确实更快”。
-实现见 [`tinyvllm/speculative/`](tinyvllm/speculative/)；
-结果与边界见 [历史实验记录](docs/experiment-history.md)和
-[阶段审计](docs/superpowers/audits/2026-08-16-phase1-completion-audit.md)。
-
-## 实验记录
-
-- [KV 稀疏 Attention](docs/kv-sparse-attention.md)：Quest 与 KV8 自适应策略。
-- [Qwen3-8B 工程日志](docs/qwen3-8b-fixes.md)：量化、kernel、offload 与性能诊断。
-- [APC / Prefix Cache](experiments/prefix_cache/README.md)：跨请求前缀复用与 TTFT 验证。
-- [Light Doc Cache](experiments/light_doc_cache/README.md)：KV 恢复与压缩研究。
-- [历史实验汇总](docs/experiment-history.md)：原首页的性能数字、失败结论与证据路径。
-
-项目起步参考 `GeeeekExplorer/nano-vllm`，之后围绕上述推理优化方向持续扩展。
+设计和审计在 [`docs/superpowers/`](docs/superpowers/)，部分实验的原始数据不随仓库分发。
