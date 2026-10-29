@@ -1,225 +1,109 @@
 # TinyLLMForge
-build a tiny LLM engine from scratch
 
-- [] apply APC(automatic prefix caching)
+**一个从零搭建、持续优化的个人 LLM 推理引擎项目。**
 
-## 实验收益概览
+以 Python、PyTorch 和 Triton 为基础，围绕 Qwen3-0.6B / Qwen3-8B，
+从请求调度、分页 KV cache 和模型执行做起，逐步扩展到 CUDA Graph、
+量化、稀疏 Attention、KV offload 和推测解码，并探索 Qwen3.5 混合状态模型。
 
-从 2026-05 以来，本项目围绕 Qwen3-0.6B / Qwen3-8B 做了多轮推理引擎实验，当前比较明确的收益如下：
+核心关注点是：**推理时间花在哪里、显存被什么占用，以及一个优化究竟在什么条件下有效。**
 
-- **CUDA Graph decode**：0.6B decode 场景下主要收益来自减少 launch overhead，实测约 **8–9×** 吞吐提升。
-- **Quest fused score kernel**：Quest score-only 微基准约 **9–22×** 加速；端到端 needle 16K 里，在 100% 召回下约 **+4.5%~6.8% TPS**。
-- **W4A8 + SmoothQuant + skip-last**：把 8B 长上下文量化路径从不可用/低召回救到约 **96%+ needle 召回**，关键结论是尾部层比首部层更值得保留 fp activation。
-- **KV8 + Quest full-stack**：KV cache 8bit 量化节省约 **50% KV 显存**；叠加 Quest sparse-dequant 后，在高召回配置下约 **+33% TPS**，高吞吐折中档约 **+46% TPS**。
-- **n-gram speculative decoding**：在重复 prompt / 高 acceptance / 模拟 128MiB H2D upload 的长上下文场景中，wall-clock 约 **2.04×**，模拟 upload 成本约 **-54%**；该收益依赖场景，暂不作为通用默认路径。
-- **KV offload / blockwise attention**：已打通 GPU staging、dirty writeback、H2D reload、prefetch/eviction 与 blockwise attention 正确性；局部 `gpu_blocks=4` matrix 中 H2D / eviction 计数约 **-33%**，但端到端 tok/s 收益仍需更严格 benchmark 证明。
-- **DFlash profiler-only**：已完成 hidden-to-draft / draft-model-stub ABI、batch schema 与 contract 验证；当前不接 runtime，因此对现有推理速度 **0% 直接收益**，主要价值是降低未来接真实 draft model 的风险。
+## 做了什么
 
-## Speculation profitability router controlled canonical
+- **搭建推理引擎**：实现请求调度、prefill / decode、分页 KV cache、
+  自动前缀复用（APC）、采样和张量并行。
+- **优化执行与访存**：引入 CUDA Graph、Exact Greedy Decode Burst、
+  Triton kernel fusion、Quest 动态选块，以及权重、激活和 KV cache 量化。
+- **探索更复杂的运行时**：实现 chunked prefill、混合调度、CPU/GPU KV
+  staging 与 blockwise attention，研究多种 draft source 的推测解码。
+- **建立实验验证链路**：配套 profiler、质量评测、固定对照实验和独立 verifier，
+  同时记录性能收益、正确性问题和没有通过门槛的方向。
 
-2026-07-17 完成了 fixed profitability router 与 source-auditable
-controlled canonical。Router 语义固定为：
+## Highlights
 
-- draft `K<=1`、sequence finished、output budget exhausted 都走 baseline；
-- `K>=2` 且 native-compatible 才走 native multi-token verifier；
-- incompatible source 默认 fail closed，只有显式允许时才 baseline fallback。
+以下数字来自各自的历史对照实验，不是当前 HEAD 的统一跑分，也不能相乘作为总加速比。
 
-远端复现入口：
+### 1. CUDA Graph：减少小模型 decode 的启动开销
 
-```bash
-RUN_TAG=qwen3-06b-router-controlled-canonical-20260717-154410 \
-CUDA_DEVICE=5 \
-tools/run_speculation_router_gate_remote.sh controlled
-```
+把重复的 GPU 执行序列捕获并重放，减少逐算子 launch 开销。
+在 **Qwen3-0.6B / A100** 的历史对照中，单卡 decode 吞吐从
+**259.55 → 2342.10 tok/s**；更大 workload 下从 **517.19 → 4421.90 tok/s**，
+约为 eager 的 **8.5–9×**。
 
-如果远端已经原子发布 artifacts，只恢复证据而不重新执行模型：
+亮点不仅是数字，也在于明确了这个小模型场景的主要瓶颈是启动开销，
+而不是简单地增加 GPU 数量。
+详见 [CUDA Graph 对照与纠错，§18](docs/qwen3-8b-fixes.md)。
 
-```bash
-RUN_TAG=qwen3-06b-router-controlled-canonical-20260717-154410 \
-tools/run_speculation_router_gate_remote.sh download-only
-```
+### 2. Decode Burst：跨多个 token 摊薄同步与调度开销
 
-Canonical source identity：
+普通 decode 每生成一个 token，就回传 CPU、更新调度和元数据，再启动下一步。
+Exact Greedy Decode Burst 让 GPU 上的输出直接成为下一步输入，连续执行 K 步，
+最后一次性回传 token 并提交 KV / 序列状态，减少逐 token 的主机往返。
+**它不是推测解码**：不需要 draft model，每个 token 仍执行一次目标模型 forward。
 
-```text
-base commit       63953089f30d0e9506461a3eb1e44bc9df8d778e
-source tree       a67f8a574e43c88758b517e75f588d94ff647390e33219544f5b45426b5ffcc1
-source patch      e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-patch bytes       0
-```
+在 **Qwen3-0.6B / A100 / TP1 / 单请求 greedy** 的历史实验中，
+自适应 K8/K16 相对固定 K8，在符合条件的 256 / 2048-token 上下文中，
+**平均每 token 耗时（TPOT）的中位数降低 2.85%，P95 降低 2.13%**，
+并通过输出一致性验证。代价是 token 批量可见，K16 最长主机可见间隔约 **37 ms**；
+该结果仅覆盖非流式、`ignore_eos=True` 的固定范围，当前仍默认关闭。
 
-环境与覆盖：
+后续多请求 SLO-aware Cohort Burst 暴露输出不一致与尾延迟回归，不能作为成功加速。
+详见 [单请求 Decode Burst 审计](docs/superpowers/audits/2026-08-24-context-gated-elastic-exact-burst-audit.md)
+与 [Cohort Burst 实验结论](artifacts/slo_cohort_burst/20260914-canonical-960fde15-r1/final_bundle/report.md)。
 
-- 远端：`sitian@10.232.195.203`，Python：
-  `/data00/home/sitian/sitian-workspace01/tllm/env/bin/python`；
-- 模型：
-  `/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B`，
-  GPU 5 / NVIDIA A100 80GB PCIe，BF16；
-- 18 cases × 5 policies = 90/90 case rows，35 native events，
-  18 router rows；
-- 90/90 `TINYVLLM_DIST_PORT` / `MASTER_PORT` pairs 唯一，无重复；
-- K=1 fallback，以及 K=2/4/8/16 的 zero/one/partial/full acceptance、
-  EOS、output-budget、block-boundary、multiblock continuation 均进入矩阵。
+### 3. Quest + Triton：从算子融合到端到端收益
 
-`routed_native / baseline` 的 `elapsed_s` 比率如下；小于 1 才是 routed
-更快：
+将 Quest 选块评分中的 gather、乘法和归约融合为一个 Triton kernel，
+减少中间张量与 kernel launch。**评分算子微基准加速约 9–22×**；
+在 Qwen3-8B 的 16K needle 评测中，相对 full attention，
+Quest + fused score 在 **100% 召回**下取得 **4.5%–6.8% 吞吐提升**。
 
-| Region | median | min | max |
-|---|---:|---:|---:|
-| K1 fallback | 0.979660 | 0.979660 | 0.979660 |
-| K2 | 1.071625 | 1.055554 | 1.286760 |
-| K4 | 1.058623 | 0.940476 | 1.165044 |
-| K8 | 0.902935 | 0.791938 | 1.272164 |
-| K16 | 1.025948 | 0.751078 | 1.355439 |
+这是两种不同口径：前者衡量 kernel 优化，后者衡量整条稀疏 Attention 路径。
+详见 [Quest kernel fusion，§22](docs/qwen3-8b-fixes.md)。
 
-局部正向区间确实存在：K16 full-accept ratio 为 `0.751078`，约减少
-`24.9%` elapsed time；K8 budget-boundary 为 `0.791938`。但 zero/one
-acceptance 和短 draft 多数回归，且 canonical 在 K8 EOS lifecycle
-发现 always-native、oracle、routed-native 三条 policy 的 continuation /
-output-token mismatch。因此独立重算结果严格为 **NO_GO**：
+### 4. KV8 + 自适应 Quest：不是一直稀疏，而是在划算时稀疏
 
-```text
-classification              NO_GO
-exactness_pass              false
-replay_elimination_pass     false
-router_isolation_pass       false
-performance_direction_pass false
-```
+针对固定开启 Quest 在小 batch 下反而变慢的问题，引入 batch 级启用策略：
+只有预计能省下足够多的 KV8 反量化 block，才执行稀疏选块，否则回退到 KV8 full。
 
-完整 raw/log evidence 约 18.3 GB，保留在远端 run-local 路径：
+在 **Qwen3-8B / A100 80GB / TP1 / eager / 8192 context** 的固定实验中，
+**B=8–19 的 decode step 延迟相对 KV8 full 降低约 26.7%–43.5%**；
+B=4/6 回退，额外延迟约 1%–1.5%。配套固定 needle 测试中，
+KV8 full 与自适应策略均为 **25/25**。
 
-```text
-/data00/home/sitian/sitian-workspace01/tllm/speculation-router-runs/
-qwen3-06b-router-controlled-canonical-20260717-154410/artifacts
-```
+这个结果的价值在于把 selector 的固定成本纳入决策，而不是假定稀疏一定更快。
+详见 [KV8 + Quest 自适应摊销实验](docs/kv-sparse-attention.md)。
 
-本地 compact evidence 位于：
-`experiments/speculation_router/qwen3-06b-router-controlled-canonical-20260717-154410/`。
-其中 13 个 required aggregate artifacts 已与 `artifact_hashes.json`
-逐一校验。完整 verifier 使用 canonical 自带的
-`source_snapshot.tar.gz` 在远端重新读取并 canonical-hash 全部 raw
-payload，输出保存在本地
-`independent-verify/verify.stdout`，exitcode 为 `0`。
+### 5. 量化质量修复：找出真正敏感的层
 
-Claim boundary：
+不只实现 W4A8、KV4/KV8 和 SmoothQuant，也追踪量化后长上下文复读、
+检索召回下降的原因。通过层级消融，发现该 Qwen3-8B 配置中
+**尾部层比首部层更值得保留浮点激活**。
 
-- controlled target-derived drafts 只能判断 router/verifier envelope，
-  不能产生产品 `GO`；
-- 本结果不能证明生产 batching、queueing tail latency、non-greedy、
-  其他模型或 memory-capacity 收益；
-- 当前不得继续围绕 native verifier/router 做微优化或调阈值；
-- 因 controlled gate 为 `NO_GO`，且没有 source-attributed、
-  non-target-derived、non-debug 的 compatible drafter checkpoint，
-  real-source Task 11 按规范跳过。
+W4A8 + SmoothQuant 配合跳过尾部 4 层 A8，在记录的长上下文 needle
+实验中达到 **96.7% 召回**。这里的亮点是定位误差来源、做精度分配，
+而不是把“能生成 token”当作量化成功。
+详见 [量化修复与层级消融](docs/qwen3-8b-fixes.md)。
 
-下一方向应切换到不同瓶颈并另写设计/gate：production batching、
-kernel/CUDA Graph overhead 或 quantization。若未来获得合格 real drafter，
-先运行：
+### 6. 推测解码与 KV 生命周期：不止是生成几个 draft token
 
-```bash
-python3 tools/speculation_router_gate.py validate-real-input \
-  --draft-source draft_source.json \
-  --prompt-bank prompt_bank.json
-RUN_TAG=qwen3-06b-router-real-smoke-$(date +%Y%m%d-%H%M%S) \
-tools/run_speculation_router_gate_remote.sh \
-  real-smoke draft_source.json prompt_bank.json
-```
+围绕 n-gram、SAM、独立 learned drafter 和 Qwen3.5 MTP，
+构建提案、验证、接受前缀提交、拒绝后缀回滚，以及 Proposal-KV 的释放与驻留管理；
+把 draft source 和目标模型的 KV 状态管理分开。
 
-## Adaptive n-gram speculative decoding canonical gate
+这部分值得保留的是运行时结构与正确性验证能力，而不是一个通用加速承诺。
+历史 adaptive n-gram、SAM 和 router 实验也保留了未通过门槛的结果，
+用于区分“提案接受率高”“KV 状态正确”和“端到端确实更快”。
+实现见 [`tinyvllm/speculative/`](tinyvllm/speculative/)；
+结果与边界见 [历史实验记录](docs/experiment-history.md)和
+[阶段审计](docs/superpowers/audits/2026-08-16-phase1-completion-audit.md)。
 
-2026-07-15 在 Qwen3-0.6B 上完成了严格的 greedy、单序列 canonical gate：4 类固定 prompt × 5 个隔离 policy（normal greedy、fixed K1/K2/K4、adaptive K∈{1,2,4}）× 7 次重复，共 140 个独立进程。复现入口：
+## 实验记录
 
-```bash
-RUN_TAG=qwen3-06b-canonical-20260715-025426 \
-LOCAL_OUT=$PWD/experiments/adaptive_ngram/qwen3-06b-canonical-20260715-025426 \
-CUDA_VISIBLE_DEVICES=3 \
-MODEL_PATH=/data00/home/sitian/sitian-workspace01/.ms_cache/Qwen/Qwen3-0___6B \
-tools/run_adaptive_ngram_gate_remote.sh canonical
-```
+- [KV 稀疏 Attention](docs/kv-sparse-attention.md)：Quest 与 KV8 自适应策略。
+- [Qwen3-8B 工程日志](docs/qwen3-8b-fixes.md)：量化、kernel、offload 与性能诊断。
+- [APC / Prefix Cache](experiments/prefix_cache/README.md)：跨请求前缀复用与 TTFT 验证。
+- [Light Doc Cache](experiments/light_doc_cache/README.md)：KV 恢复与压缩研究。
+- [历史实验汇总](docs/experiment-history.md)：原首页的性能数字、失败结论与证据路径。
 
-Canonical 五件套位于：
-`experiments/adaptive_ngram/qwen3-06b-canonical-20260715-025426/`。
-
-| Policy | aggregate median tok/s |
-|---|---:|
-| normal greedy | 33.815941 |
-| fixed K1 | 32.979915 |
-| fixed K2 | 32.925531 |
-| fixed K4 | 37.962906 |
-| adaptive K∈{1,2,4} | 37.574839 |
-
-结果与边界：
-
-- 140/140 行完整，所有进程返回 0；同 prompt 的候选输出与 normal greedy token 序列完全一致，trajectory replay 和 adaptive exercise 均通过。
-- Adaptive 相对 normal greedy 为 **+11.12%**，但相对最佳 fixed K4 为 **-1.022%**。
-- Adaptive 的聚合 token acceptance 为 **91.23%**；相对 fixed K4，median wasted draft tokens 从 `24` 降到 `15`（**-37.5%**），median zero-accept verify cost 从 `224.830 ms` 降到 `180.475 ms`（**-19.73%**）。
-- 固定 gate 要求 adaptive 至少比最佳 fixed 快 2%；或者落后不超过 1%，同时 waste 至少降低 20%、zero-accept cost 至少降低 15%。后两项通过，但 `-1.022% < -1%`，因此最终结论严格为 **NO_GO**，没有在观察结果后放宽阈值。
-- 该结论只覆盖记录的 Qwen3-0.6B、greedy、单序列、固定 prompt bank 和 profiler-owned 路径；不证明 ragged/batched target verification、生产 batch throughput、queueing tail latency、memory-capacity reduction，亦不能外推到其他模型。
-- 保留 adaptive policy、correctness verifier 和 gate 基础设施用于后续研究；当前只可在已验证的高重复单序列 regime 中考虑 fixed K4。下一优先方向是更高质量的 draft source，而不是继续在同一 gate 上调 adaptive 阈值。
-
-## Prompt + Dynamic SAM drafter gate
-
-2026-07-15 完成了 profiler-owned token suffix automaton drafter、match-aware
-`K∈{0,4,8,16}`、严格五文件 gate、resume、动态端口和隔离远端 runner。
-最初 smoke 因 multi-token verifier 的 KV materialization 与逐 token decode
-不等价而判为 `INCOMPLETE`。修复方式是在 acceptance 判定不变的前提下，使用
-正常 decode kernel 重物化 `accepted_tokens[:-1]` 的 KV。修复后 25-row smoke
-exactness、trace 和 policy exercise 均通过，最终严格结论为 **NO_GO**。
-
-常用命令：
-
-```bash
-tools/run_sam_drafter_gate_remote.sh preflight
-CUDA_VISIBLE_DEVICES=5 tools/run_sam_drafter_gate_remote.sh smoke
-CUDA_VISIBLE_DEVICES=5 tools/run_sam_drafter_gate_remote.sh canonical
-RESUME=1 RUN_TAG="${RUN_TAG}" \
-  CUDA_VISIBLE_DEVICES=5 tools/run_sam_drafter_gate_remote.sh canonical
-python3 tools/sam_drafter_gate.py verify \
-  --out-dir experiments/sam_drafter/qwen3-06b-sam-remat-smoke-20260715-162323
-```
-
-修复后严格 smoke 证据位于：
-`experiments/sam_drafter/qwen3-06b-sam-remat-smoke-20260715-162323/`。
-它包含 5 prompts × 5 policies × 1 repetition = 25 个独立进程，五件套为
-`manifest.json`、`raw_rows.json`、`event_rows.json`、`summary.json` 和
-`report.md`。
-
-验证结果：
-
-- 25/25 rows、进程、动态端口和 artifact 可独立重建；SAM trace
-  reconciliation 通过。
-- Match-aware SAM 覆盖了 `K=0/4/8/16`、prompt/generated continuation、
-  zero accept 和 fully accepted multi-token proposal。
-- `runtime_mutation=false`、`profiler_owned=true`；没有修改
-  `LLMEngine.step()`、scheduler、`Sequence` 或公开生成 API。
-- exact-output correctness 已通过。远端两-prompt A/B 和完整 smoke 均证明
-  accepted KV 重物化修复了稳定分叉。
-- aggregate median tok/s：baseline `32.5173`、n-gram K4 `25.9687`、
-  adaptive n-gram `25.7055`、fixed SAM K16 `28.3399`、match-aware SAM
-  `28.6274`。
-- match-aware SAM 相对 baseline 为 **-10.72%**；相对 n-gram K4 为
-  **+8.44%**。它减少 verify attempts `25%`，但 drafted waste 相对 K4
-  增加约 `218%`。
-- 除 transition-heavy `+5.95%` 外，natural `-10.72%`、structured
-  `-14.02%`、repeated `-7.40%`、prompt-copy `-26.75%` 均触发固定的
-  per-class regression gate。
-- SAM 两个 policy 合计需要 588 次 accepted-KV decode 重物化；仅
-  `sam_match_aware` 的重物化累计约 `8.76s`。正确性 fallback 抵消了 draft
-  source 的潜在吞吐收益。
-
-因此无需消耗 175 个模型进程去确认一个已经大幅越过阈值的负结果；保留
-25-row 五类 prompt smoke 作为严格 `NO_GO` 证据。下一方向不是继续调 SAM
-match-aware 阈值，而是让 batch verifier 原生生成与正常 decode 等价的 KV，
-或等待兼容 learned drafter/checkpoint 后重新设计 gate。
-
-当前结论只覆盖 Qwen3-0.6B、greedy、单序列、profiler-owned 路径；不证明
-ragged/batched correctness、production batch throughput、queue tail latency、
-non-greedy correctness或 memory reduction。
-
-## 参考资料
-```
-https://github.com/GeeeekExplorer/nano-vllm
-https://space.bilibili.com/362867186?spm_id_from=333.788.upinfo.detail.click
-https://zhuanlan.zhihu.com/p/1932035278089987994
-https://zhuanlan.zhihu.com/p/1932473745584394614
-https://zhuanlan.zhihu.com/p/1925484783229698084
+项目起步参考 `GeeeekExplorer/nano-vllm`，之后围绕上述推理优化方向持续扩展。
