@@ -13,8 +13,9 @@
 
 三层刻意分开：合成计分器拒绝真实材料，固定程序执行器不接受模型生成代码。
 历史纯 CPU 结果见 `RESULTS.md`；在线流程见 `online-development-guide.md`。
-本次真实模型启动在 SSH 认证阶段中止，详情见 `ONLINE_RESULTS.md`；没有
-模型输出或策略收益结论。
+两次分别授权的新批次都在 SSH 认证阶段中止，详情见 `ONLINE_RESULTS.md`
+和 `ONLINE_FOLLOWUP_RESULTS.md`；无模型传输对照通过，但没有模型输出或
+策略收益结论，认证根因仍未定位。
 这不是 LoRA/SHINE 更新实现，也不把候选选择诊断称为模型自我训练。
 
 ## 五种策略

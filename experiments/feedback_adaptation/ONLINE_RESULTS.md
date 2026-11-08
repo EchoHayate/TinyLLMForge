@@ -1,5 +1,7 @@
 # Online development attempt — 2026-11-08
 
+本页保留首次尝试。后续新批次及传输差分检查见 `ONLINE_FOLLOWUP_RESULTS.md`。
+
 **本轮在模型就绪前中止，没有获得真实模型比较结果。**
 
 五策略协议、在线核验控制器和独立模型 worker 已实现。唯一一次启动尝试
