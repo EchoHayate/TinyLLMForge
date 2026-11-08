@@ -1,5 +1,7 @@
 # Online development follow-up — 2026-11-08
 
+本页保留第二次尝试。后续单次带双跳详细日志的批次见 `ONLINE_TRACED_RESULTS.md`。
+
 **新批次仍在 SSH 认证阶段中止；没有真实模型输出。**
 
 这是用户要求继续后新建的有界批次，不是覆盖或续跑 `ONLINE_RESULTS.md`
