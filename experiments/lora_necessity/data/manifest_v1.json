@@ -1,0 +1,377 @@
+{
+  "benchmark_eligible": false,
+  "cpu_manifest": {
+    "config": {
+      "arms": [
+        "base",
+        "text",
+        "lora",
+        "lora_text"
+      ],
+      "limits": {
+        "episode_calls": 2,
+        "gpu_count": 1,
+        "input_tokens": 4096,
+        "output_tokens": 256,
+        "total_calls": 272,
+        "workflow_seconds": 3600
+      },
+      "screen": {
+        "retention_regression_max": 0,
+        "transfer_net_min": 2
+      },
+      "splits": {
+        "development": 4,
+        "retention": 16,
+        "supervision": 8,
+        "transfer": 16
+      },
+      "training": {
+        "accumulation": 1,
+        "adapter_dtype": "float32",
+        "alpha": 16,
+        "answer_only_loss": true,
+        "base_dtype": "bfloat16",
+        "batch_size": 1,
+        "dropout": 0,
+        "epochs": 2,
+        "gradient_clip": 1,
+        "learning_rate": 5e-05,
+        "optimizer": "AdamW",
+        "rank": 8,
+        "seed": 42,
+        "steps": 16,
+        "targets": [
+          "q_proj",
+          "v_proj"
+        ],
+        "weight_decay": 0
+      }
+    },
+    "kind": "LORA_NECESSITY_CPU_MANIFEST",
+    "tasks": [
+      {
+        "content_sha256": "12a40a4da36f3fe10647041f58b83dab0316bb092c74525a2a0c541751a26ac5",
+        "family": "bounds",
+        "id": "S01",
+        "split": "supervision",
+        "template_id": "S01_structure_v1"
+      },
+      {
+        "content_sha256": "a763cec589983c77e1e0ca43f1957b143c844f5730769d10e61770fb4edda1f7",
+        "family": "bounds",
+        "id": "S02",
+        "split": "supervision",
+        "template_id": "S02_structure_v1"
+      },
+      {
+        "content_sha256": "89538ca068a8e681a0ece5b056171f33e5d05f8716bbfde73d443a1c25cb7f7c",
+        "family": "reset",
+        "id": "S03",
+        "split": "supervision",
+        "template_id": "S03_structure_v1"
+      },
+      {
+        "content_sha256": "a6482ba66f95146572300c0cd4f2e550f5b52302a307e64c1706a96ef32b31f6",
+        "family": "reset",
+        "id": "S04",
+        "split": "supervision",
+        "template_id": "S04_structure_v1"
+      },
+      {
+        "content_sha256": "446cce12b641226c43e9e39cdde4ca99e7a642296af60c72020189864139a58b",
+        "family": "multiplicity",
+        "id": "S05",
+        "split": "supervision",
+        "template_id": "S05_structure_v1"
+      },
+      {
+        "content_sha256": "a678327eb453812baf2db159f5819f2ed90064f567d046461710e8af184dd7c4",
+        "family": "multiplicity",
+        "id": "S06",
+        "split": "supervision",
+        "template_id": "S06_structure_v1"
+      },
+      {
+        "content_sha256": "8eef75907f87a106796bfef4f7c7256d79f4fbdf8444a5a7fa94e20befd6e600",
+        "family": "order",
+        "id": "S07",
+        "split": "supervision",
+        "template_id": "S07_structure_v1"
+      },
+      {
+        "content_sha256": "57f4754e5473965ada30796c3bc39955d15e9246a9c6ece36feb01b1aeb23b51",
+        "family": "order",
+        "id": "S08",
+        "split": "supervision",
+        "template_id": "S08_structure_v1"
+      },
+      {
+        "content_sha256": "da1027fb4548c73ab82152b916b0e30f6c77eefe2f647fcd5872b24bd0f0116b",
+        "family": "dev_sign",
+        "id": "D01",
+        "split": "development",
+        "template_id": "D01_structure_v1"
+      },
+      {
+        "content_sha256": "266941dbc2c785caf9592f191166411910a343046f655bcf59fceb598f4495ef",
+        "family": "dev_stride",
+        "id": "D02",
+        "split": "development",
+        "template_id": "D02_structure_v1"
+      },
+      {
+        "content_sha256": "331f5847ea617e257a5f0c18260e09858d4d694274d8231fd10a6478b45f4cba",
+        "family": "dev_nested_lookup",
+        "id": "D03",
+        "split": "development",
+        "template_id": "D03_structure_v1"
+      },
+      {
+        "content_sha256": "f0e65bfc627d2fb1d79bdb170442eea06423c84eccefcddc87d49277bfb4eb44",
+        "family": "dev_count_predicate",
+        "id": "D04",
+        "split": "development",
+        "template_id": "D04_structure_v1"
+      },
+      {
+        "content_sha256": "b3462f05781913d886a61958fd8e70413799327842d6f509379256b58e82449b",
+        "family": "bounds",
+        "id": "T01",
+        "split": "transfer",
+        "template_id": "T01_structure_v1"
+      },
+      {
+        "content_sha256": "5ff0ba180106ddb5417ed19b623ef8c890b83411d92f77dc0339057dd4512f2f",
+        "family": "bounds",
+        "id": "T02",
+        "split": "transfer",
+        "template_id": "T02_structure_v1"
+      },
+      {
+        "content_sha256": "714e31ca255fa0c83e291c26e2a2044b49ec78425b2b510b1ad812e07ffe7490",
+        "family": "bounds",
+        "id": "T03",
+        "split": "transfer",
+        "template_id": "T03_structure_v1"
+      },
+      {
+        "content_sha256": "2d9f14da100be243bf1de877ee780c8a65f081e611544b7f88b29c282585bbc5",
+        "family": "bounds",
+        "id": "T04",
+        "split": "transfer",
+        "template_id": "T04_structure_v1"
+      },
+      {
+        "content_sha256": "1738a5fe834f5782277ac3c5f9b371ae31677626fc246c6cf96dec57de25d06d",
+        "family": "reset",
+        "id": "T05",
+        "split": "transfer",
+        "template_id": "T05_structure_v1"
+      },
+      {
+        "content_sha256": "eef8e82374664ecad46b48e075966aafdce9ee02d9264c0bbde5880634300572",
+        "family": "reset",
+        "id": "T06",
+        "split": "transfer",
+        "template_id": "T06_structure_v1"
+      },
+      {
+        "content_sha256": "bfa2fce3bf5202067b70c2f56a1463efb15801afa9f5f948570e91fee7307b95",
+        "family": "reset",
+        "id": "T07",
+        "split": "transfer",
+        "template_id": "T07_structure_v1"
+      },
+      {
+        "content_sha256": "206f8793f4b98508a7d4dbf7552cfa1ca69430764b2a03c62bb1eb55a5fdefa4",
+        "family": "reset",
+        "id": "T08",
+        "split": "transfer",
+        "template_id": "T08_structure_v1"
+      },
+      {
+        "content_sha256": "0dee1fc94a9fb3171076b7a83da38dfc4759be2e1b9b66f4d59576878a6dbf1a",
+        "family": "multiplicity",
+        "id": "T09",
+        "split": "transfer",
+        "template_id": "T09_structure_v1"
+      },
+      {
+        "content_sha256": "845bf702c6131e39ded18e6b1421665cf8ffa20ea7ec20fc83aecbde50e7b74e",
+        "family": "multiplicity",
+        "id": "T10",
+        "split": "transfer",
+        "template_id": "T10_structure_v1"
+      },
+      {
+        "content_sha256": "d9f818fad8e2085c51594480fe08eb437c8ceb6ee9454c7720ea1cc6d1a70f78",
+        "family": "multiplicity",
+        "id": "T11",
+        "split": "transfer",
+        "template_id": "T11_structure_v1"
+      },
+      {
+        "content_sha256": "08aed4548070191ac7a309eefeb7749d17470c252cfa56bd15e7879a57ff1094",
+        "family": "multiplicity",
+        "id": "T12",
+        "split": "transfer",
+        "template_id": "T12_structure_v1"
+      },
+      {
+        "content_sha256": "a11f24aeef8d79114abf6729d9096314aff636d10ee7a7773af364c3975ab424",
+        "family": "order",
+        "id": "T13",
+        "split": "transfer",
+        "template_id": "T13_structure_v1"
+      },
+      {
+        "content_sha256": "22de6ce0be896e56eca5d8a34e0a71a25fc5b1316136c979ce1670e9355e64cc",
+        "family": "order",
+        "id": "T14",
+        "split": "transfer",
+        "template_id": "T14_structure_v1"
+      },
+      {
+        "content_sha256": "e010a9b891f80561da993635bed8d6a27695852fd204d9662071abadc6e5abb7",
+        "family": "order",
+        "id": "T15",
+        "split": "transfer",
+        "template_id": "T15_structure_v1"
+      },
+      {
+        "content_sha256": "f6fb5c6a1127ade8fc2825ee96ce308277d6baed55f4db959295377ff7d5a10f",
+        "family": "order",
+        "id": "T16",
+        "split": "transfer",
+        "template_id": "T16_structure_v1"
+      },
+      {
+        "content_sha256": "ef767d2423fb792a4e680e4848037da0fd59d1a4ef2a2a064a5b53448b17076b",
+        "family": "signed_rounding",
+        "id": "R01",
+        "split": "retention",
+        "template_id": "R01_structure_v1"
+      },
+      {
+        "content_sha256": "165782f1fbb467d9c82160c50318808a3e5e37560a38e1b08ee2c48076055545",
+        "family": "signed_rounding",
+        "id": "R02",
+        "split": "retention",
+        "template_id": "R02_structure_v1"
+      },
+      {
+        "content_sha256": "73b88bf35f9578834c132882520f0a0113d3fbf5bb7b7d01e3eb2e8f4329ff94",
+        "family": "signed_rounding",
+        "id": "R03",
+        "split": "retention",
+        "template_id": "R03_structure_v1"
+      },
+      {
+        "content_sha256": "187b83f891235c57483b64b410450a7368cac23315768344ae7d3980e78f655f",
+        "family": "signed_rounding",
+        "id": "R04",
+        "split": "retention",
+        "template_id": "R04_structure_v1"
+      },
+      {
+        "content_sha256": "b0884e06430a4635ebf349f75a751ae88d91869e03466d58be4d118ee58914f0",
+        "family": "matrix_axis",
+        "id": "R05",
+        "split": "retention",
+        "template_id": "R05_structure_v1"
+      },
+      {
+        "content_sha256": "1ed5517afd9e3c39c94f3d12364d82fc07a7127061b0389d7bdde1ace71015d8",
+        "family": "matrix_axis",
+        "id": "R06",
+        "split": "retention",
+        "template_id": "R06_structure_v1"
+      },
+      {
+        "content_sha256": "300901139d4d113099639fe9b9a908be2c7e303c3daab3d980d03ed244f6fc43",
+        "family": "matrix_axis",
+        "id": "R07",
+        "split": "retention",
+        "template_id": "R07_structure_v1"
+      },
+      {
+        "content_sha256": "73b2780bbf4dc98d0072318a837932fee50849cbc6061289fde2ba0810c6655e",
+        "family": "matrix_axis",
+        "id": "R08",
+        "split": "retention",
+        "template_id": "R08_structure_v1"
+      },
+      {
+        "content_sha256": "336ca7d05d90cbafd49c443bd626a72185c4e23535d9fecdff137afff8e51058",
+        "family": "escape_scan",
+        "id": "R09",
+        "split": "retention",
+        "template_id": "R09_structure_v1"
+      },
+      {
+        "content_sha256": "a1a10c76fa33a7fbbe69d4e9abb5b9182696a69e1afa797f4e4846cb73dcd063",
+        "family": "escape_scan",
+        "id": "R10",
+        "split": "retention",
+        "template_id": "R10_structure_v1"
+      },
+      {
+        "content_sha256": "7da8dd4ffb19c63f6004fb404cb1f705e23bba0f155159974ac1798150953f93",
+        "family": "escape_scan",
+        "id": "R11",
+        "split": "retention",
+        "template_id": "R11_structure_v1"
+      },
+      {
+        "content_sha256": "8f807b4fd3fab59b24c79709f42d4beb6da3b0269b1d7108a2f7fffd60a1a334",
+        "family": "escape_scan",
+        "id": "R12",
+        "split": "retention",
+        "template_id": "R12_structure_v1"
+      },
+      {
+        "content_sha256": "3a86bb34f44f13fb9a23126876748b76d91800eb6446a302b677deb10dfc23e9",
+        "family": "validation",
+        "id": "R13",
+        "split": "retention",
+        "template_id": "R13_structure_v1"
+      },
+      {
+        "content_sha256": "c2ebb1f3efd52525a642df61a4f097b9834243683762b9fa409ba802c859fbf4",
+        "family": "validation",
+        "id": "R14",
+        "split": "retention",
+        "template_id": "R14_structure_v1"
+      },
+      {
+        "content_sha256": "727907d7591897a9432592efd196e3d1fc8e3374a2ccd34cac8bbe07f70bb903",
+        "family": "validation",
+        "id": "R15",
+        "split": "retention",
+        "template_id": "R15_structure_v1"
+      },
+      {
+        "content_sha256": "85736b821c800415457a9ff87e8075ac1bf4deaeeef4696a57363980b389de22",
+        "family": "validation",
+        "id": "R16",
+        "split": "retention",
+        "template_id": "R16_structure_v1"
+      }
+    ],
+    "version": 1
+  },
+  "file_sha256": {
+    "oracles_v1.json": "e7ca085c61805bbb5d427562aa3dcf389d7cb4f8858cb0911ceb715ceff9d3d9",
+    "prompts_v1.json": "3668d996bb0e05d600859fd12780b9f582a65aa2ad6b1881fd0bcce9832b5a05",
+    "structure_v1.json": "3905663be1d4cd4eb022f5d0995dcd651fafdc6514ecff0288957cec9cb0762e",
+    "supervision_v1.json": "4dafb0ac759697e9b80c5bf097b363082a17a34e6b78fb3d3b91d37a76beb78a",
+    "task_sources_v1.json": "4711c72508b78f5deeafa5ed8de13ec4045d38c8ffbe5f463cb16651c29c693c"
+  },
+  "formal_evaluation_ready": false,
+  "isolated": false,
+  "kind": "LORA_NECESSITY_STATIC_DATA",
+  "net_benefit_established": false,
+  "status": "STATIC_ONLY",
+  "version": 1
+}

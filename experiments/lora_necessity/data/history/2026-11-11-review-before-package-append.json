@@ -1,0 +1,1708 @@
+{
+  "archive_role": "main_extracted_metadata_not_a_new_independent_review",
+  "benchmark_eligible": false,
+  "coverage": {
+    "fresh_pairs": 24,
+    "inherited_pairs": 104,
+    "method": "bounded_manual_static_reasoning_not_task_execution",
+    "mutants": 88,
+    "public_cases": 88,
+    "revised_tasks_freshly_reviewed": [
+      "T04",
+      "T09",
+      "T16"
+    ],
+    "scoring_cases": 266,
+    "tasks": 44,
+    "unchanged_tasks_inherited": 41
+  },
+  "current_findings": [],
+  "date": "2026-11-11",
+  "file_sha256": {
+    "manifest_v1.json": "cdac4ae1218701c585f8a38a27cd86583b9d4f71dcc60a3826f9dcfd2a2e7320",
+    "oracles_v1.json": "e7ca085c61805bbb5d427562aa3dcf389d7cb4f8858cb0911ceb715ceff9d3d9",
+    "prompts_v1.json": "3668d996bb0e05d600859fd12780b9f582a65aa2ad6b1881fd0bcce9832b5a05",
+    "structure_v1.json": "3905663be1d4cd4eb022f5d0995dcd651fafdc6514ecff0288957cec9cb0762e",
+    "supervision_v1.json": "4dafb0ac759697e9b80c5bf097b363082a17a34e6b78fb3d3b91d37a76beb78a",
+    "task_sources_v1.json": "4711c72508b78f5deeafa5ed8de13ec4045d38c8ffbe5f463cb16651c29c693c"
+  },
+  "formal_evaluation_ready": false,
+  "group_2_current_snapshot_verdict": "PENDING_FINAL_STATIC_REVIEW",
+  "historical_followups": {
+    "G2-1": "Canonical-byte checker closure inherited; identical checker SHA256.",
+    "R10": "Coverage closure inherited unchanged from archived review."
+  },
+  "independent_report": {
+    "byte_length": 33124,
+    "original_path": "/tmp/tlf-lora-revision-20261111-bI6CIM/independent-review.md",
+    "sha256": "9aede93eb675de442ac5dc604a4ee8e8122289602b7c6f372affa858df73f7de",
+    "text": "# Independent Static Group 1 Review\n\nDate: 2026-11-11. Scope: approved T04/T09/T16 replacements, their repair contexts, and changed cross-task relationships.\n\n## Disposition\n\n- **spec_verdict: PASS**\n- **quality_verdict: PASS**\n- Prior structural findings **1, 2, 3: CLOSED** on the new bytes, for the specific reasons below.\n- **No new P0/P1/P2 defect found.** The 24 changed supervision/transfer pairs comprise 13 D, 11 R, and 0 B judgments.\n- This is bounded static acceptance of these replacements, not whole-bank semantic reacceptance, dynamic acceptance, scientific independence, human signoff, tokenizer fit, or permission to run an experiment.\n\nReviewed source SHA256:\n\n`4711c72508b78f5deeafa5ed8de13ec4045d38c8ffbe5f463cb16651c29c693c`\n\n## Method And Boundaries\n\nRead `review-brief.md` first, followed by the author brief, the complete author report including its correction appendix, the complete archived-before/current-after diff, integration metadata, both applicable design documents, and the task data. Used the `bits-code-guard` context/dimension/severity workflow and its `general-workflow.md`, `review-dimensions.md`, and `review-rule.md`. Python/JSON require no extra language rules. The explicit task constraints override the skill's normal Git discovery, auxiliary files, scripts, HTML output, delegation, and publication workflow.\n\nRoots:\n\n- Repository: `/Users/bytedance/dev/TinyLLMForge`\n- Skill: `/Users/bytedance/.trae/skills/bits-code-guard`\n- Work/output: `/tmp/tlf-lora-revision-20261111-bI6CIM`\n\nRead all fields of the three new records and all eight supervised records, including all four source strings per record. For all four D, sixteen R, and thirteen remaining T records, read the complete specifications, initial/reference/mutant sources, and structure notes to inspect newly introduced overlaps. Read the archived report's original findings and context, and checked its embedded full-text payload against its stored byte length and hash. Reading context is not a claim to have re-derived all unchanged tasks' case outcomes.\n\nIndependent calculations below are manual, based on specifications and source text. The only executable reviewer operations were local text/JSON/hash/diff and AST inspections of data. No task function was run, imported, evaluated, compiled for execution, or simulated by an ad hoc interpreter. No suite, model, tokenizer, remote/network operation, installation, telemetry operation, Git command, or repository edit was performed. Only this report and `review-results.json` were authored. No previous session was resumed; no historical memory assertion is used to decide these verdicts.\n\nThis is a separate assistant review, not an author self-review or independent human review. The reviewer is GPT-5-based according to session configuration; a different underlying model from the author is not established. Main's claimed 44-task/176-string checker pass and CPU test pass remain attributed evidence, not reviewer reruns. The independent lightweight inspections below establish their own, narrower facts.\n\n## Inspected Identity\n\nPaths in this table are relative to the repository unless prefixed by `work/`, which denotes the work root above. Hashes were calculated from actual bytes, not copied from the reports.\n\n| Artifact | SHA256 |\n| --- | --- |\n| `experiments/lora_necessity/data/task_sources_v1.json` | `4711c72508b78f5deeafa5ed8de13ec4045d38c8ffbe5f463cb16651c29c693c` |\n| `experiments/lora_necessity/data/history/2026-11-11-before-structure-revision/task_sources_v1.json` | `f198764ec17690a7c9e3b289f904a166f77727478212381bb3aaef584efbf8d2` |\n| `experiments/lora_necessity/data/history/2026-11-11-before-structure-revision/review_v1.json` | `31402c530a1f36be7d09118bc6465c0a02b84ad8018743f7bc57a4de19440184` |\n| Embedded original independent report, 62,898 UTF-8 bytes | `0a5b0d6e3b57eed891ff1cfd893918c43eac2b8af5b4c0faba89f39dc17f5b4e` |\n| `work/replacements.json` | `4cdd3e031dcc66871dda941066d4a286d4b3989a7b8e429745666d479af05d59` |\n| `work/review-brief.md` | `74b2b45862cb6b6b3949e59aa06acbbf422046cb3e258eedd305939a344770f0` |\n| `work/task-1-brief.md` | `c6bb5967c0e2fdc9ef6522029b52fb175ca15dcacd8b5df4ceea7412cfdedf94` |\n| `work/task-1-report.md` | `f09701917a11cb169d61c673f03062840fee42456345f2a75c537a8bd361af32` |\n| `work/source-revision.diff` | `00d61b820de9cd9a42fea2164169b0e5e5416920a2db47731d4705eb170df10a` |\n| `work/integration.json` | `41c2389ff7e0ea225ab93e6b35f66f1902fce1f7c2f080258f43f3a287fa2a76` |\n| `docs/superpowers/specs/2026-11-11-lora-data-structure-revision.md` | `e04790487ed06994bf0409319d846fd097add115f283aa9968c840c0f1ad9297` |\n| `docs/superpowers/specs/2026-11-11-lora-necessity-data-design.md` | `82da9c6f680e9740df40c54716721ea2513d1d22fb03e0869e637926727e860b` |\n| `experiments/lora_necessity/data/supervision_v1.json` | `4dafb0ac759697e9b80c5bf097b363082a17a34e6b78fb3d3b91d37a76beb78a` |\n| `experiments/lora_necessity/data/manifest_v1.json` | `cdac4ae1218701c585f8a38a27cd86583b9d4f71dcc60a3826f9dcfd2a2e7320` |\n| `experiments/lora_necessity/data/structure_v1.json` | `3905663be1d4cd4eb022f5d0995dcd651fafdc6514ecff0288957cec9cb0762e` |\n| `experiments/lora_necessity/data/prompts_v1.json` | `3668d996bb0e05d600859fd12780b9f582a65aa2ad6b1881fd0bcce9832b5a05` |\n| `experiments/lora_necessity/data/oracles_v1.json` | `e7ca085c61805bbb5d427562aa3dcf389d7cb4f8858cb0911ceb715ceff9d3d9` |\n| Read-time `experiments/lora_necessity/DATA_AUDIT.md` | `043759f44a67ce81b0bf3590826cd9f838333af0de4418cc2e19603fc20d136c` |\n\nMain is concurrently preparing final audit/review metadata. The last row binds the reconciliation text actually inspected, not a future completed Group 2 artifact.\n\nCanonical task hashes use UTF-8 `json.dumps(row, sort_keys=True, separators=(',', ':'), ensure_ascii=True)` without a trailing newline:\n\n| Task | Canonical SHA256 |\n| --- | --- |\n| T04 | `2d9f14da100be243bf1de877ee780c8a65f081e611544b7f88b29c282585bbc5` |\n| T09 | `0dee1fc94a9fb3171076b7a83da38dfc4759be2e1b9b66f4d59576878a6dbf1a` |\n| T16 | `f6fb5c6a1127ade8fc2825ee96ce308277d6baed55f4db959295377ff7d5a10f` |\n\n## Spec Compliance\n\nIndependent JSON decoding rejected duplicate keys. Canonical comparison found exactly T04/T09/T16 changed; all other 41 task object substrings, extracted from the original JSON text with a JSON decoder, are also byte-identical. Top-level non-task fields and task ordering are unchanged. The integrated three objects equal `replacements.json`. Regenerating a unified text diff with ten context lines produced an exact byte match to `source-revision.diff`; this is a real before/after comparison, not an empty tracked-file diff.\n\nIDs, splits, families, and template IDs are unchanged. Counted 44 tasks: 8 S, 4 D, 16 T, 16 R, with four T tasks in each approved family. Counted 88 public cases, 266 scoring cases, and 88 mutants. Each replacement has exactly P01/P02, H01\u2013H06, an initial witness, and M01/M02; all eight argument lists are distinct within each replacement.\n\nThe three records retain the existing 13-field schema. Twelve replacement source strings were AST-parsed without executing them. Each contains one ordinary function; entry points and argument signatures agree within each task, with no defaults, annotations, decorators, imports, globals, nonlocals, or one-letter identifiers. Direct source inspection found only local computation and builtins/container operations; each task has four distinct full source strings. Witnesses and mutant links name actual cases, and the manual evidence below verifies\u2014not merely compares\u2014their predicted wrong results.\n\nThe supervision file is byte-identical to its archive. Canonical `cpu_manifest.config` is identical to the archive, hash `4a43a41ed38e9641a2fb76508789d0cb3397a2d4d838e35b65bb1c440520c080`: arms base/text/lora/lora_text, 16 update steps, 272 calls, two calls per episode, 4096 input/256 output token limits, transfer-net minimum 2, retention-regression maximum 0. All four manifest admission flags are exact JSON false, not numeric zero. These checks do not revalidate the protocol implementation or full final packaging.\n\nAll three specifications implement the approved structures and bounded valid-input domains. T09 now explicitly limits each ASCII label to length 0..32; its count and total expanded length imply at most 32 runs. T16 retains duplicates, classifies zero as nonnegative, and requires stability in both partitions. The corrected T09/T16 specs impose no input-nonmutation or fresh-allocation scoring condition. Invalid-input behavior is explicitly unspecified; missing runtime validators are therefore not defects.\n\nThe author's original unbounded-label assertion and advice to reconcile S01/S06 by integration are superseded by the correction appendix. The current source, rather than that assurance, verifies the label bound and lack of added mutation restrictions. Earlier author-report hashes identify earlier text, not the bytes accepted here.\n\n## Manual Semantics: T04\n\nSource locations: `experiments/lora_necessity/data/task_sources_v1.json:2669` initial, `:2744` reference, `:2877` specification.\n\nSpecification reasoning: the logical positions are start through start+length\u22121; map each to its residue modulo positive capacity. The reference enumerates exactly those offsets. Length zero gives no positions; capacity one is well-defined; length at most capacity prevents repeated physical slots. Crossing the end must preserve the wrapped suffix, not clip it.\n\nEvery expected object below is `{\"kind\":\"return\",\"value\":...}`.\n\n| Case | Arguments | Independent derivation and expected value | Judgment |\n| --- | --- | --- | --- |\n| P01 | `[5,4,3]` | Logical 4,5,6 map to `[4,0,1]`. | MATCH |\n| P02 | `[4,2,0]` | There are zero logical positions: `[]`. | MATCH |\n| H01 | `[4,3,4]` | Logical 3,4,5,6 give one full cycle `[3,0,1,2]`. | MATCH |\n| H02 | `[1,0,1]` | The only slot is 0: `[0]`. | MATCH |\n| H03 | `[8,2,3]` | All positions are below 8: `[2,3,4]`. | MATCH |\n| H04 | `[5,2,3]` | Last included index is 4; end 5 is exclusive: `[2,3,4]`. | MATCH |\n| H05 | `[32,31,3]` | Last slot followed by first two: `[31,0,1]`. | MATCH |\n| H06 | `[32,0,32]` | Exactly `[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]`; no repeated 0. | MATCH |\n\nInitial public witness P01: `min(4+3,5)=5`; the exclusive range 4..5 emits `[4]`. This agrees with the recorded initial prediction and disagrees with the specification.\n\nInitial scoring witness H01: `min(3+4,4)=4`; only `[3]` remains. The missing `[0,1,2]` is a genuine scoring failure.\n\nM01 designated H01: adding one before emission changes the numerators to 4,5,6,7, yielding `[0,1,2,3]`. M02 designated H01: subtracting offsets instead gives numerators 3,2,1,0, yielding `[3,2,1,0]`. Both recorded predictions are correct as descriptions of the intentional errors.\n\nSame-input discriminator H01 thus has four different outputs: initial `[3]`, reference `[3,0,1,2]`, M01 `[0,1,2,3]`, M02 `[3,2,1,0]`. This establishes behavioral distinction on this witness only, not separation on every input. For example, capacity one can conceal direction/shift mistakes.\n\n## Manual Semantics: T09\n\nSource locations: `experiments/lora_necessity/data/task_sources_v1.json:3721` initial, `:3820` reference, `:3983` specification.\n\nIndependent specification model: each run occupies a half-open interval in expanded-element coordinates. Intersect those consecutive intervals with `[skip,skip+take)`, truncated at the expanded end. Keep positive intersection lengths, with their original labels and order. This arithmetic is manual, not an implemented oracle.\n\nReference reasoning: whole runs before the start subtract their count from `remaining_skip`; the first partial run leaves `count - remaining_skip` available. Resetting skip to zero after that point is correct. Selection is capped by the remaining total take, then decremented. Thus counts are positive, the single global request is respected, and the result ends at the requested endpoint or input exhaustion. A contiguous slice cannot delete a positive intervening run while retaining runs on both its sides, so two separated equal labels must not be globally merged. Empty and multicharacter labels are whole elements, never character sequences.\n\n| Case | Arguments | Independent derivation and expected value | Judgment |\n| --- | --- | --- | --- |\n| P01 | `[[[\"a\",3],[\"b\",2]],2,2]` | Slice [2,4) intersects a:[0,3) and b:[3,5) once each: `[[\"a\",1],[\"b\",1]]`. | MATCH |\n| P02 | `[[],0,32]` | No run intervals exist: `[]`. | MATCH |\n| H01 | `[[[\"a\",4],[\"b\",3],[\"a\",2]],2,6]` | Slice [2,8) intersects [0,4), [4,7), [7,9) in lengths 2,3,1: `[[\"a\",2],[\"b\",3],[\"a\",1]]`. | MATCH |\n| H02 | `[[[\"solo\",32]],0,0]` | Empty interval [0,0) retains nothing: `[]`. | MATCH |\n| H03 | `[[[\"x\",2],[\"y\",1]],32,5]` | Slice begins at 32, beyond total length 3: `[]`. | MATCH |\n| H04 | `[[[\"A\",2],[\"a\",3]],2,3]` | [2,5) starts exactly after uppercase A and retains all lowercase a: `[[\"a\",3]]`. | MATCH |\n| H05 | `[[[\"\",32]],0,32]` | All 32 occurrences of the empty-string label remain: `[[\"\",32]]`. | MATCH |\n| H06 | `[[[\"red\",2],[\"blue\",3]],1,32]` | [1,33) clipped to end 5 leaves one red and three blue: `[[\"red\",1],[\"blue\",3]]`. | MATCH |\n\nInitial public P01: indexing records with `[2:4]` selects no record from the two-record list; result `[]`, matching the declared bad result.\n\nInitial scoring H01: `[2:8]` selects the final a run only, and the comprehension replaces its count 2 with 1. Result `[[\"a\",1]]`, not the required three-run slice.\n\nM01 designated H01: positive skip 2 causes the whole first count-4 run to be discarded; skip becomes `max(0,2\u22124)=0`. Taking from the remaining runs yields b:3 (budget 6\u21923), then a:2 (budget 3\u21921), hence `[[\"b\",3],[\"a\",2]]`. The first retained a suffix is missing.\n\nM02 designated H01: first availability is 4\u22122=2; skip becomes zero, but take remains 6 after emission. Later selections are 3 and 2, so `[[\"a\",2],[\"b\",3],[\"a\",2]]` contains seven elements rather than six.\n\nSame-input H01 distinguishes the two mutants, and both from initial and reference. The defect types are partial-start loss and failure to consume the global take budget, not syntactic failures. They are intentionally incorrect task data.\n\nLogical expanded-count accounting is necessary, but the reference's two explicit variables are not mandatory: expand/slice/re-encode or interval arithmetic would also be permissible repairs. Structural acceptance must not enforce one patch strategy.\n\n## Manual Semantics: T16\n\nSource locations: `experiments/lora_necessity/data/task_sources_v1.json:5324` initial, `:5403` reference, `:5532` specification.\n\nSpecification reasoning: take the subsequence at negative-valued input positions, followed by the subsequence at all remaining positions. Each subsequence follows increasing original position. The reference's two append-only lists realize that construction and retain each occurrence exactly once, including zero and duplicates.\n\n| Case | Arguments | Independent derivation and expected value | Judgment |\n| --- | --- | --- | --- |\n| P01 | `[[3,-1,2,-2]]` | Negative positions 1,3; nonnegative positions 0,2: `[-1,-2,3,2]`. | MATCH |\n| P02 | `[[]]` | Both subsequences empty: `[]`. | MATCH |\n| H01 | `[[4,1,-2,0,-3]]` | Negative positions 2,4; nonnegative positions 0,1,3: `[-2,-3,4,1,0]`. | MATCH |\n| H02 | `[[0,-1,2]]` | Negative -1 first; zero stays before 2 in the other group: `[-1,0,2]`. | MATCH |\n| H03 | `[[-2,-5,-2,-1000]]` | All negative; no reordering or deduplication: `[-2,-5,-2,-1000]`. | MATCH |\n| H04 | `[[1000,2,2,0]]` | All nonnegative; unchanged `[1000,2,2,0]`. | MATCH |\n| H05 | `[[2,-1,2,-1,0,-2,0]]` | Negative positions 1,3,5 give `[-1,-1,-2]`; others give `[2,2,0,0]`: `[-1,-1,-2,2,2,0,0]`. | MATCH |\n| H06 | `[[0]]` | Zero alone is retained: `[0]`. | MATCH |\n\nInitial public P01: boundary starts at 0. Index 1 swaps -1 with 3, giving `[-1,3,2,-2]`, boundary 1. Index 3 swaps -2 with 3, giving `[-1,-2,2,3]`. The declared initial prediction is right; the required suffix is `[3,2]`.\n\nInitial scoring H01: index 2 swaps -2 into boundary 0, yielding `[-2,1,4,0,-3]`; boundary becomes 1. Index 4 swaps -3 into boundary 1, yielding `[-2,-3,4,0,1]`. Required suffix `[4,1,0]` has been disrupted.\n\nM01 designated H02: `<=0` sends 0 and -1, in that order, to the first list; 2 goes to the second. Result `[0,-1,2]` matches the recorded wrong outcome.\n\nM02 designated H03: prepending negatives gives `[-2]`, then `[-5,-2]`, then `[-2,-5,-2]`, then `[-1000,-2,-5,-2]`. This matches the declared reversed output and differs from the spec.\n\nSame-input H01: M01 first group is `[-2,0,-3]`, second `[4,1]`, result `[-2,0,-3,4,1]`. M02 reverses the negative subsequence to `[-3,-2]` while keeping `[4,1,0]`, result `[-3,-2,4,1,0]`. These differ from one another, initial `[-2,-3,4,0,1]`, and reference `[-2,-3,4,1,0]`.\n\nThe initial predicate is already correct and its index accesses remain within the copied list. It does preserve negative order, but not nonnegative order. Removing a nonexistent final sort cannot repair it; removing swaps instead leaves the signs intermixed. Stable insertion, reconstruction, or a stable sort on the sign predicate are all permissible, not just the reference implementation.\n\n## All 24 Changed S/T Pairs\n\nCodes: **D** = distinct repair structure; **R** = related with the concrete distinction stated; **B** = blocking overlap. D/R are not semantic, statistical, or model-error independence. The comparison includes the work still missing in each initial function, not only its reference shape.\n\nSupervised repair anchors read in full: S01 changes the sorted-prefix equality stopping condition; S02 removes the spurious inclusive endpoint increment; S03 resets a segment sum; S04 clears row-local membership; S05 replaces presence by frequency minima; S06 consumes one matched inventory character; S07 stops replacing an earlier equal maximum; S08 removes sorting after already-correct first-occurrence accumulation.\n\n| Supervision | Transfer | Code | Repair-context reasoning |\n| --- | --- | --- | --- |\n| S01 | T04 | R | Both concern boundaries, but a strictness change in a sorted-value rank scan cannot produce T04's missing wrapped suffix. T04 must enumerate physical residues instead of clipping logical positions. |\n| S02 | T04 | R | Both use bounded arithmetic; removing S02's endpoint +1 does not map positions beyond capacity back to 0. T04 returns a circular sequence, not an intersection cardinality. |\n| S03 | T04 | D | S03's missing separator reset is absent from T04's single range expression; there is no accumulated segment sum to clear. |\n| S04 | T04 | D | T04 has no row-local membership set or cross-row state. Its missing positions are an arithmetic mapping issue. |\n| S05 | T04 | D | Frequency-minimum matching does not repair a clipped cyclic traversal; each slot is visited at most once under length<=capacity. |\n| S06 | T04 | D | There is neither inventory membership nor repeated demand to consume; adding removal cannot restore wrapped indices. |\n| S07 | T04 | D | T04 must return every traversed slot, not update a single best index under ties. |\n| S08 | T04 | D | T04 has neither deduplication nor a trailing sort. Generated cyclic order cannot be restored by S08's sort deletion. |\n| S01 | T09 | R | Both can scan a prefix, but T09's skipped quantity is an expanded-element offset, not a sorted-value cutoff. It needs partial-run counts and a finite take, not an equality change. |\n| S02 | T09 | R | Each run's contribution can be expressed as a half-open intersection, so the arithmetic link is substantive. T09 initially has only record slicing and unit counts; constructing run coordinates/output counts goes beyond deleting +1. |\n| S03 | T09 | R | Both have sequential accumulation/state; setting skip to zero after the first retained run is not a delimiter-triggered sum reset. T09's initial lacks expanded-count processing entirely. |\n| S04 | T09 | D | Nested pairs are input records, not rows whose uniqueness must be checked. No membership state is cleared, and repeated nonadjacent labels are retained. |\n| S05 | T09 | R | Count minima are shared, but S05 reduces unordered global frequencies. T09 clips ordered contiguous runs at two positions and must not aggregate nonadjacent equal labels. |\n| S06 | T09 | R | Sequential resource consumption is shared, especially M02's omitted take decrement. However, the actual initial has no matching/remove loop: adding one removal does not correct record-based skip/take or the forced count 1. |\n| S07 | T09 | D | T09 emits a whole segment with multiplicities; no best-index or equal-maximum update exists to repair. |\n| S08 | T09 | R | Both preserve label order, but T09 must retain occurrences and separated equal-label runs. No prebuilt correct deduplicated result or final sort exists in its initial. |\n| S01 | T16 | R | Sign predicates share strict-boundary concepts, and T16 M01 is a boundary error. The actual initial already uses the correct <0 predicate; movement, not comparison strictness, is broken. |\n| S02 | T16 | D | Scalar intersection endpoint arithmetic does not repair stable placement in two subsequences. |\n| S03 | T16 | D | Two output lists are not segment totals; T16 has no delimiter or forgotten reset. |\n| S04 | T16 | D | No membership set or uniqueness criterion exists; all duplicate values must survive the reordering. |\n| S05 | T16 | D | T16 retains every occurrence without matching two bags or reducing frequency counts. |\n| S06 | T16 | D | There is no stock/request relation, membership test, or depletion; unstable movement is the initial defect. |\n| S07 | T16 | R | Both express stable order, but choosing the earliest maximum by one comparison cannot repair a swap partition that must retain every value. |\n| S08 | T16 | R | Stable append-based construction is transferable knowledge. Nevertheless S08 only removes a final sort from an already-correct list; T16's initial never builds the stable result and contains no sort or deduplication. |\n\n## Development, Retention, And Other Transfer Overlaps\n\nAll specifications and initial/reference/mutant strings in the groups below were read. These are changed-relationship judgments, not a rerun of the original 104 unchanged S/T judgments.\n\n| Context | New relationship and concrete limit |\n| --- | --- |\n| D01 with T16 | Three-way scalar sign classification is relevant, and zero treatment overlaps M01. D01 repairs an erroneous scalar branch; T16's initial predicate is correct and the displaced nonnegative order still requires repair. |\n| D02 with T04/T09 | D02 repairs `values[::step]` to start at the supplied offset. It teaches slicing/indexing, but neither circular suffix restoration nor expanded-run boundaries. T09 uses slice syntax already, in the wrong coordinate system. |\n| D03/D04 | Nested-key lookup and ASCII digit counting do not supply any replacement's missing repair. D04's predicate replacement is not T16's already-correct sign predicate. |\n| R01\u2013R04 with T04/T16 | Signed quotient/remainder/rounding share arithmetic and signs. R03 specifically corrects negative-number truncation remainder, while T04 uses nonnegative forward logical positions and positive capacity to wrap a sequence. T16 does no rounding. A learned modulo/sign primitive may transfer; the retained tasks are not capability-disjoint. |\n| R05\u2013R08 with T04/T09/T16 | Matrix indexing, column reductions, rotation, and reshape share sequence manipulation. R08 replaces the wrong row-width multiplier in existing slices; T09 must count repeated expanded elements. R07 adds reversed row traversal to an already-correct transpose; T16 cannot reverse a fixed axis to stabilize arbitrary sign groups. R05 reference/R07 initial similarity is unchanged, not introduced by this revision. |\n| R09\u2013R12 with T09 | Escape parsers use state, cursors, and accumulated output, but their initial repairs recognize backslashes, decode mapped characters, or escape the correct character set. They have no run-count slice budget. R09 M01 and R12 M01 still illustrate reset-state overlap within retained mutants; that is not new duplication caused by T09. |\n| R13\u2013R16 | Exact-type, shape, ASCII-digit, and endpoint validation are primary defects. Replacement tasks assume valid inputs and do not acquire these refusal paths. R16's interval arithmetic is related to boundaries generally but cannot repair circular traversal or ordered run slicing. |\n| T01\u2013T03 with T04 | T01 clips grid neighbors; T03 changes a containment comparison. T02 is the closest syntactic neighbor: `list(range(max(...)))` repairs a missing final window start by +1. Merely extending T04's range yields out-of-capacity integers; it still requires residue mapping or a second wrapped piece. No exact repair transplant found. |\n| T05\u2013T08 with T09 | Reset counters, batch indices, digit-run extraction, and session predecessors all use streaming state. T07's \u201crun\u201d means parsing consecutive digits into a number, with a missing reset; T09 starts from encoded counts and clips an element segment. T08's equal users in separated sessions resemble nonadjacent repeated labels only conceptually. |\n| T10\u2013T12 with T09 | Histogram deletion distance, equal-pair combinations, and triple counts share multiplicity. T12's `[value,1]` is superficially close to T09's `[label,1]`; replacing only that 1 by a count formula does not fix T09's record-coordinate slice. H01 still starts at the third record instead of the middle of the first. T10's set-removal and T11's combinatorial scalar replacement likewise do not supply the repair. |\n| T13\u2013T15 with T16 | Whole-record stable sorting, stable two-stream merging, and last-occurrence ordering share order semantics. T13 removes the label tie-breaker; T14 changes one merge comparison; T15 switches an already-built last-position map into output ordering. None repairs T16's swap movement. A stable sign-key sort could solve T16, so stable-sorting knowledge is a real overlap, not evidence of independence. |\n| The three replacements with one another | T04 maps cyclic positions, T09 slices run multiplicities, T16 stably classifies elements. They share ordered list construction but no common broken step that becomes correct through only the same patch. |\n\nNo new blocking close overlap was found in this inspection. This statement does not certify that no alternative implementations can share code, that the 44 tasks are statistically independent, or that retained families cannot benefit from learned primitives. Family labels remain descriptions of the primary initial defect, not clean capability partitions.\n\n## Prior Findings And Historical Notes\n\n### Finding 1 \u2014 CLOSED\n\nOld concern: S01 and old T04 exchange initial/reference rank behaviors under reversed equality conventions. The original report's example with cuts `[0,5]`, query 0 demonstrates that specific failure of structural separation.\n\nNew evidence: T04 at source line 2669 takes capacity/start/length, contains no sorted values or threshold scan, and loses a wrapped suffix. On `[5,4,3]`, changing a comparison cannot turn `[4]` into `[4,0,1]`. The old rank equivalence no longer describes the initial/reference pair. Closure does not claim that all bounds reasoning is novel.\n\n### Finding 2 \u2014 CLOSED\n\nOld concern: both S06 and old T09 already have the output/control-flow scaffolding and only need one matching item removed from inventory.\n\nNew evidence: T09 at line 3721 slices run records rather than expanded elements and overwrites every retained count with 1. On `[[[\"a\",3],[\"b\",2]],2,2]`, no record remains to which a missing removal could be added. It must recover the two-element slice spanning both runs. The repair is not hidden in an already-correct wrapper. M02's missing take decrement remains related to S06 at the resource-consumption level; it does not make the actual initial a one-line inventory repair.\n\n### Finding 3 \u2014 CLOSED\n\nOld concern: S08 and old T16 remove an unwanted final sort after correct first-order accumulation/grouping.\n\nNew evidence: T16 at line 5324 has no sorting call and never constructs the stable nonnegative subsequence. Its public and H01 traces demonstrate actual swap-induced displacement. Deleting a final sort cannot fix it, and deleting swaps leaves an unpartitioned list. Stable accumulation remains related, but the old already-correct-grouping wrapper concern is resolved.\n\n### S01/S06 stale author references\n\nThe new source still contains S01's \u201cT04 bucket assignment\u201d at line 167 and S06's \u201cT09 changes to per-request outputs\u201d at line 1055. Read literally as descriptions of the new tasks, those phrases are false. They are not evidence that new T04 is a bucket task or new T09 is an inventory allocator.\n\nThe 41-task immutability constraint includes these original notes; rewriting them would violate this review's approved boundary. Their reconciliation is therefore assessed externally, not assumed from an author promise:\n\n1. Independent raw-object and supervision-byte comparisons verify that the notes and supervised examples were preserved.\n2. The inspected `DATA_AUDIT.md:82` explicitly identifies both references as historical author notes, not current task descriptions or review conclusions.\n3. The field union across all eight supervision rows and all 36 public prompt rows excludes `structure_notes`; neither stale phrase occurs in those files. They remain in the offline source/structure view, not the current model-visible JSON.\n4. The replacement notes and this report give current repair-context comparisons. Main's future final `review_v1.json` composition remains Group 2 work; it must preserve this distinction rather than relabel the old notes as current signoff.\n\nThis is an adequately reconciled historical limitation for Group 1, not a new task-source defect or permission to modify original records. Future renderers still need field allowlists; inspecting JSON projections is not a runtime isolation proof.\n\nThe archive also contains finding 4 about R10's adjacent-escape coverage and its later closure. R10 is byte-identical to the immediate pre-revision snapshot and not reopened or independently reaccepted by this three-task review.\n\n## Quality Dimensions And Remaining Limits\n\n- **Logic and domain semantics:** all 24 recorded replacement expected values, three public and three scoring initial witnesses, six designated mutant outcomes, and three same-input discriminators were manually checked. No mismatch found. Initial/mutant bugs are intended task data, not defects to repair.\n- **Robustness:** valid domains guarantee positive capacity/counts, bounded sizes, and valid sign-comparison operands. T16's boundary never exceeds the current index when swapping. T09's reference handles zero take without zero-count emission and exhausted skip without invalid indexing. Invalid-input refusal is not a requirement.\n- **Security/concurrency:** inspected functions are local deterministic computation without external I/O, imports, shared state, or concurrency. This is not a sandbox certification.\n- **Performance:** bounded loops/list operations have no concrete new resource defect at the stated input limits. T16 M02 front insertion is bounded intentional task data. No runtime latency or model-token budget claim follows.\n- **Quality:** no style-only finding is promoted to P2. Structural judgments use missing repair behavior, not unique names, author compliance with the plan, or AST dissimilarity alone.\n- **Coverage limits:** T16 has no 32-element case; T09 has no 32-character label case, no separate exact-total-skip case, and no explicit slice starting and ending strictly inside one run. T04 tests zero length publicly rather than in scoring. The requested boundary categories are represented, and the inspected reference logic addresses these additional cases by the stated invariants; the finite case sets are not exhaustive or proof against every overfit candidate.\n- **Evidence limits:** the other 41 tasks' cases and the remaining 104 S/T judgments are not newly manually revalidated here. Their bytes are unchanged; any inherited conclusions must be labeled inherited. Full final projection/manifest/review composition belongs to Group 2.\n- **Acceptance limits:** no task execution, isolated dynamic reference/initial/mutant validation, tokenizer/chat-template validation, training, model generation, causal LoRA result, net-benefit conclusion, or human/scientific signoff occurred. All four admission flags remain false.\n\n## Output Contract\n\n`review-results.json` is the structured index of these judgments: exact PASS/CHANGES_REQUIRED verdict enum, three ordered task rows, 24 unique pair rows with D/R/B codes, exactly old IDs 1/2/3 with CLOSED/OPEN states, empty skill-schema findings array, and `source_executed: false`.\n\nThe review accepts the specific replacements and closes the specified old concerns on the identified bytes. It does not turn a clean static report into broad runtime or scientific acceptance.\n"
+  },
+  "isolated": false,
+  "kind": "LORA_NECESSITY_STATIC_REVIEW",
+  "mutant_manual_traces": [
+    {
+      "M01_trace": "H02: `4`",
+      "M02_trace": "H01: `1`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H01: `0` vs `1`",
+      "task_id": "S01"
+    },
+    {
+      "M01_trace": "H01: `2`",
+      "M02_trace": "H01: `2`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H05: `2` vs `1`",
+      "task_id": "S02"
+    },
+    {
+      "M01_trace": "H03: `[]`",
+      "M02_trace": "H01: `[0,4]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `[]` vs `[5]`",
+      "task_id": "S03"
+    },
+    {
+      "M01_trace": "H04: `[false]`",
+      "M02_trace": "H03: `[false,true]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H04: `[false]` vs `[true]`",
+      "task_id": "S04"
+    },
+    {
+      "M01_trace": "H01: `3`",
+      "M02_trace": "H01: `6`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H01: `3` vs `6`",
+      "task_id": "S05"
+    },
+    {
+      "M01_trace": "H04: `false`",
+      "M02_trace": "H02: `false`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `true` vs `false`",
+      "task_id": "S06"
+    },
+    {
+      "M01_trace": "H02: `0`",
+      "M02_trace": "H03: `1`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `0` vs `1`",
+      "task_id": "S07"
+    },
+    {
+      "M01_trace": "H02: `[\"x\",\"x\"]`",
+      "M02_trace": "H01: `[\"a\",\"z\"]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[\"x\",\"x\"]` vs `[\"x\"]`",
+      "task_id": "S08"
+    },
+    {
+      "M01_trace": "H01: `-1`",
+      "M02_trace": "H03: `8`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `-1` vs `8`",
+      "task_id": "D01"
+    },
+    {
+      "M01_trace": "H01: `[2,3,4]`",
+      "M02_trace": "H02: `[8]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[9,8]` vs `[8]`",
+      "task_id": "D02"
+    },
+    {
+      "M01_trace": "H02: `4`",
+      "M02_trace": "H04: `null`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `4` vs `6`",
+      "task_id": "D03"
+    },
+    {
+      "M01_trace": "H01: `0`",
+      "M02_trace": "H03: `3`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `0` vs `3`",
+      "task_id": "D04"
+    },
+    {
+      "M01_trace": "H02: `[[1,1]]`",
+      "M02_trace": "H02: `[[0,0],[1,1],[0,2]]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: one neighbor vs three reversed neighbors",
+      "task_id": "T01"
+    },
+    {
+      "M01_trace": "H01: `[0,1,2]`",
+      "M02_trace": "H01: `[]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H01: `[0,1,2]` vs `[]`",
+      "task_id": "T02"
+    },
+    {
+      "M01_trace": "H03: `true`",
+      "M02_trace": "H02: `false`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `true` vs `false`",
+      "task_id": "T03"
+    },
+    {
+      "M01_trace": "Designated H01: numerators 4,5,6,7 modulo 4 give [0,1,2,3], matching the recorded wrong prediction.",
+      "M02_trace": "Designated H01: subtracting offsets gives [3,2,1,0], matching the recorded wrong prediction.",
+      "evidence_origin": "independent_report",
+      "same_input_discriminator": "H01: M01 [0,1,2,3] versus M02 [3,2,1,0]; reference [3,0,1,2] and initial [3] are also distinct.",
+      "task_id": "T04"
+    },
+    {
+      "M01_trace": "H03: `[false]`",
+      "M02_trace": "H02: `[true]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[false]` vs `[true]`",
+      "task_id": "T05"
+    },
+    {
+      "M01_trace": "H01: `[[0,0],[2,0]]`",
+      "M02_trace": "H02: `[[0,0],[1,0]]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[[0,0],[0,1]]` vs `[[0,0],[1,0]]`",
+      "task_id": "T06"
+    },
+    {
+      "M01_trace": "H05: `[]`",
+      "M02_trace": "H02: `[\"1\"]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H05: `[]` vs `[\"2\"]`",
+      "task_id": "T07"
+    },
+    {
+      "M01_trace": "H01: `[-3]`",
+      "M02_trace": "H06: `[]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H01: `[-3]` vs `[3]`",
+      "task_id": "T08"
+    },
+    {
+      "M01_trace": "Designated H01: positive skip 2 discards the whole first count-4 run and clamps skip to zero; take 6 then admits b:3 and final a:2, yielding [[\"b\",3],[\"a\",2]].",
+      "M02_trace": "Designated H01: the first run contributes 2, but take remains 6; later runs contribute 3 and 2, yielding [[\"a\",2],[\"b\",3],[\"a\",2]], seven elements instead of six.",
+      "evidence_origin": "independent_report",
+      "same_input_discriminator": "H01: M01 [[\"b\",3],[\"a\",2]] versus M02 [[\"a\",2],[\"b\",3],[\"a\",2]]; both differ from reference [[\"a\",2],[\"b\",3],[\"a\",1]] and initial [[\"a\",1]].",
+      "task_id": "T09"
+    },
+    {
+      "M01_trace": "H02: `0`",
+      "M02_trace": "H04: `4`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `0` vs `2`",
+      "task_id": "T10"
+    },
+    {
+      "M01_trace": "H02: `2`",
+      "M02_trace": "H01: `8`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H01: `12` vs `8`",
+      "task_id": "T11"
+    },
+    {
+      "M01_trace": "H01: `[[4,3]]`",
+      "M02_trace": "H03: `[[2,1],[1,1]]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `[[1,1],[2,1]]` vs `[[2,1],[1,1]]`",
+      "task_id": "T12"
+    },
+    {
+      "M01_trace": "H02: `[[\"a\",1],[\"b\",3]]`",
+      "M02_trace": "H01: `[[\"a\",2],[\"b\",2]]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H01: `[[\"b\",2],[\"a\",2]]` vs reversed order",
+      "task_id": "T13"
+    },
+    {
+      "M01_trace": "H02: `[]`",
+      "M02_trace": "H03: `[]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[]` vs `[[1,\"x\"]]`",
+      "task_id": "T14"
+    },
+    {
+      "M01_trace": "H02: `[\"a\",\"b\"]`",
+      "M02_trace": "H02: `[\"a\",\"b\"]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H05: `[\"a\",\"b\",\"c\"]` vs `[\"b\",\"c\",\"a\"]`",
+      "task_id": "T15"
+    },
+    {
+      "M01_trace": "Designated H02 [0,-1,2]: <=0 puts 0 and -1 in the first group, yielding [0,-1,2], not [-1,0,2].",
+      "M02_trace": "Designated H03 [-2,-5,-2,-1000]: front insertions produce [-2], [-5,-2], [-2,-5,-2], then [-1000,-2,-5,-2], matching the recorded wrong outcome.",
+      "evidence_origin": "independent_report",
+      "same_input_discriminator": "H01: M01 [-2,0,-3,4,1] versus M02 [-3,-2,4,1,0]; both differ from reference [-2,-3,4,1,0] and initial [-2,-3,4,0,1].",
+      "task_id": "T16"
+    },
+    {
+      "M01_trace": "H01: `2`",
+      "M02_trace": "H02: `1`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H01: `2` vs `-1`",
+      "task_id": "R01"
+    },
+    {
+      "M01_trace": "H03: `3`",
+      "M02_trace": "H04: `3`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `3` vs `-1`",
+      "task_id": "R02"
+    },
+    {
+      "M01_trace": "H01: `1`",
+      "M02_trace": "H02: `2`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `1` vs `2`",
+      "task_id": "R03"
+    },
+    {
+      "M01_trace": "H02: `2`",
+      "M02_trace": "H03: `6`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `-6` vs `6`",
+      "task_id": "R04"
+    },
+    {
+      "M01_trace": "H01: `[[5,3,1],[6,4,2]]`",
+      "M02_trace": "H02: `[[2],[4]]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[[2],[4],[6]]` vs `[[2],[4]]`",
+      "task_id": "R05"
+    },
+    {
+      "M01_trace": "H02: `[0,0,0]`",
+      "M02_trace": "H01: `[13,8]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[0,0,0]` vs `[6,4,2]`",
+      "task_id": "R06"
+    },
+    {
+      "M01_trace": "H02: `[[3],[2],[1]]`",
+      "M02_trace": "H01: `[[1],[2]]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[[3],[2],[1]]` vs `[[1],[2],[3]]`",
+      "task_id": "R07"
+    },
+    {
+      "M01_trace": "H02: `[]`",
+      "M02_trace": "H02: `[[6,4,2]]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[]` vs `[[6,4,2]]`",
+      "task_id": "R08"
+    },
+    {
+      "M01_trace": "H02: `[\"a\",\"ab\"]`",
+      "M02_trace": "H03: `[\"a\\\\\"]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: `[\"a\",\"ab\"]` vs `[\"a\",\"b\"]`",
+      "task_id": "R09"
+    },
+    {
+      "M01_trace": "H04: `\"x\"`",
+      "M02_trace": "H03: `\"\"`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H04: `\"x\"` vs VE",
+      "task_id": "R10"
+    },
+    {
+      "M01_trace": "H01: bare double quote",
+      "M02_trace": "H01: two backslashes followed by quote",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H01: bare quote vs two backslashes followed by quote",
+      "task_id": "R11"
+    },
+    {
+      "M01_trace": "H02: `-1`",
+      "M02_trace": "H03: `1`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `0` vs `1`",
+      "task_id": "R12"
+    },
+    {
+      "M01_trace": "H02: VE",
+      "M02_trace": "H03: `-1`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: VE vs `100`",
+      "task_id": "R13"
+    },
+    {
+      "M01_trace": "H06: `[1,1]`",
+      "M02_trace": "H04: `[3,2]`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H04: `[2,3]` vs `[3,2]`",
+      "task_id": "R14"
+    },
+    {
+      "M01_trace": "H03: `12345`",
+      "M02_trace": "H02: `123`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H03: `12345` vs VE",
+      "task_id": "R15"
+    },
+    {
+      "M01_trace": "H02: VE",
+      "M02_trace": "H03: `3`",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "same_input_discriminator": "H02: VE vs `0`",
+      "task_id": "R16"
+    }
+  ],
+  "net_benefit_established": false,
+  "pair_code_legend": {
+    "D": "Distinct repair-bearing structure; not statistical or semantic independence.",
+    "R": "Related mechanism with concrete distinction; not independence."
+  },
+  "per_task": [
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "S01",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `2`, expected `0`.",
+      "original_reference_reasoning": "Sorted scan stops at first time at/above cutoff; all earlier duplicates count. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "S02",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `0`.",
+      "original_reference_reasoning": "Clamp `min(ends)-max(starts)` to zero; touching, empty and separated intervals yield zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "S03",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[1,5]`, expected `[1,4]`.",
+      "original_reference_reasoning": "Emit sum at every delimiter, reset, then emit final segment; preserves leading/trailing/adjacent empty segments. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "S04",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[true,false]`, expected `[true,true]`.",
+      "original_reference_reasoning": "Clear membership before each row; repeated entries only affect that row; empty rows are unique. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "S05",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `2`.",
+      "original_reference_reasoning": "Sum the smaller count for each distinct left value; right-only values contribute zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "S06",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `true`, expected `false`.",
+      "original_reference_reasoning": "Each requested character consumes one matching stock character; empty request succeeds. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "S07",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `0`.",
+      "original_reference_reasoning": "Initialize no winner, update only for a strictly larger score; preserves earliest ties and empty `-1`. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "S08",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[\"a\",\"z\"]`, expected `[\"z\",\"a\"]`.",
+      "original_reference_reasoning": "Append only first occurrences and return accumulated order; empty/case-sensitive labels preserved. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "D01",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H02 returns `1`, expected `-1`.",
+      "original_reference_reasoning": "Separate zero, then return positive or negative unit sign. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "D02",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[1,3]`, expected `[2,4]`.",
+      "original_reference_reasoning": "Positive-step slicing starts at the given offset; start equal to length yields empty. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "D03",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `8`, expected `2`.",
+      "original_reference_reasoning": "Fetch selected outer mapping then selected inner key; absent keys give null, stored zero remains zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "D04",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H03 returns `3`, expected `0`.",
+      "original_reference_reasoning": "Count inclusive ASCII digit membership; ignore other ASCII characters. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T01",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[1,0]]`, expected `[]`.",
+      "original_reference_reasoning": "Form four directional candidates then clip both coordinates, preserving candidate order. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T02",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[]`, expected `[0]`.",
+      "original_reference_reasoning": "Complete starts are integers from zero through length minus width, inclusive; none when negative. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T03",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `false`, expected `true`.",
+      "original_reference_reasoning": "Both inner endpoints must be inside the closed outer interval; equality allowed. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "independent_report",
+      "id": "T04",
+      "initial_scoring_trace": "H01 args [4,3,4]: min(3+4,4)=4, so range(3,4) returns [3], not [3,0,1,2]. Public P01 [5,4,3] similarly returns [4], not [4,0,1].",
+      "open_structural_finding": null,
+      "outcome": "PASS_STATIC_REPLACEMENT_REVIEW",
+      "reference_reasoning": "For exactly length offsets, map start+offset modulo positive capacity. This preserves the wrapped suffix and traversal order; zero length is empty, and length<=capacity prevents repeated slots. All P01/P02/H01-H06 outcomes match the independent manual derivations in the report."
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T05",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[false,false,true,true]`, expected `[false,false,false,true]`.",
+      "original_reference_reasoning": "Success zeroes the consecutive count; every event emits comparison after its update. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T06",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[0,0],[1,1]]`, expected `[[0,0],[1,0]]`.",
+      "original_reference_reasoning": "Emit current dual index before processing end flag; advance position and reset/increment batch after end. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T07",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[7,78]`, expected `[7,8]`.",
+      "original_reference_reasoning": "Decimal positional accumulation plus active-run state; appended separator flushes trailing run without creating empty numbers. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T08",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[8,3]`, expected `[3]`.",
+      "original_reference_reasoning": "User change clears predecessor; within-session subtraction uses immediately previous time, including zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "independent_report",
+      "id": "T09",
+      "initial_scoring_trace": "H01 args [[[\"a\",4],[\"b\",3],[\"a\",2]],2,6]: record slice [2:8] retains only the final a record and forces count 1, giving [[\"a\",1]], not [[\"a\",2],[\"b\",3],[\"a\",1]]. Public P01's record slice [2:4] is empty rather than [[\"a\",1],[\"b\",1]].",
+      "open_structural_finding": null,
+      "outcome": "PASS_STATIC_REPLACEMENT_REVIEW",
+      "reference_reasoning": "Manually intersect each ordered run's expanded half-open interval with [skip,skip+take), retaining positive intersection lengths. The reference's skip subtraction, partial-run availability, and decremented total take implement that construction. Nonadjacent equal labels remain separated. All eight case outcomes match."
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T10",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `0`, expected `1`.",
+      "original_reference_reasoning": "Accumulate left-minus-right counts; sum absolute differences, disallowing cancellation across values. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T11",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `6`.",
+      "original_reference_reasoning": "Each value with count c contributes c(c\u22121)/2 unordered, distinct-index pairs. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T12",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[4,1]]`, expected `[[4,2]]`.",
+      "original_reference_reasoning": "Sort distinct values; output only counts at least three, using integer quotient by three. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T13",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[\"a\",2],[\"b\",2]]`, expected `[[\"b\",2],[\"a\",2]]`.",
+      "original_reference_reasoning": "Stable sorting on negative score preserves tie order and duplicates. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T14",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[2,\"b\"],[2,\"a\"]]`, expected `[[2,\"a\"],[2,\"b\"]]`.",
+      "original_reference_reasoning": "Advance one of two sorted cursors; choose left on equality, then append both remainders. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "T15",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[\"x\",\"y\"]`, expected `[\"y\",\"x\"]`.",
+      "original_reference_reasoning": "Overwrite last position for each label, then order distinct labels by those positions. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "independent_report",
+      "id": "T16",
+      "initial_scoring_trace": "H01 [4,1,-2,0,-3]: swap index 2 with boundary 0 to get [-2,1,4,0,-3], then index 4 with boundary 1 to get [-2,-3,4,0,1], not [-2,-3,4,1,0]. Public P01 swaps [3,-1,2,-2] to [-1,3,2,-2], then [-1,-2,2,3], not [-1,-2,3,2].",
+      "open_structural_finding": null,
+      "outcome": "PASS_STATIC_REPLACEMENT_REVIEW",
+      "reference_reasoning": "Append each value to its sign subsequence in input order, then concatenate negatives and nonnegatives. Every occurrence survives; zero is nonnegative. All eight case outcomes match manual input-position subsequence derivations."
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R01",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `-3`, expected `-2`.",
+      "original_reference_reasoning": "Divide magnitude using integers, then restore sign; truncates negative fractions toward zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R02",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `2`, expected `3`.",
+      "original_reference_reasoning": "Negated floor of the negated numerator is ceiling for positive divisor, including negative inputs. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R03",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `-1`.",
+      "original_reference_reasoning": "Magnitude remainder with numerator sign reconstructs the dividend with truncating quotient. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R04",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `-2`, expected `-4`.",
+      "original_reference_reasoning": "Doubled-integer half-step formula rounds magnitude to nearest with ties upward, then restores sign. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R05",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns original three-by-two matrix, expected its two-by-three transpose.",
+      "original_reference_reasoning": "Output one list per input column, preserving original row order inside it. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R06",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[4,6,11]`, expected `[8,13]`.",
+      "original_reference_reasoning": "Reduce each column vertically; emit columns left to right. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R07",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[1,3,5],[2,4,6]]`, expected `[[5,3,1],[6,4,2]]`.",
+      "original_reference_reasoning": "Transpose while reversing source row traversal, giving clockwise rotation. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R08",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[1,2,3],[4,5,6],[]]`, expected `[[1,2],[3,4],[5,6]]`.",
+      "original_reference_reasoning": "Row r takes the length-columns slice beginning at r\u00d7columns. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R09",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[\"x\\\\\",\"y\",\"z\"]`, expected `[\"x,y\",\"z\"]`.",
+      "original_reference_reasoning": "Escape consumes the next character literally; only unescaped commas flush fields; unmatched trailing escape raises. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": "R10 H07/H08 coverage reviewed; finding 4 closed.",
+      "id": "R10",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `\"n\"`, expected newline.",
+      "original_reference_reasoning": "Cursor consumes a checked escape pair and emits its mapped character, otherwise copies ordinary text. Supplied outcomes consistent; required adjacent-pair coverage missing.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R11",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H02 returns one backslash, expected two.",
+      "original_reference_reasoning": "Transform each original character exactly once, prefixing slash or quote only. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R12",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `-1`.",
+      "original_reference_reasoning": "Escaped state suppresses interpretation of exactly one next character; first ordinary quote returns its zero-based index. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R13",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `false`, expected VE.",
+      "original_reference_reasoning": "Exact-int check precedes range comparison; bool/string/null rejected safely. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R14",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[2,1]`, expected VE.",
+      "original_reference_reasoning": "Validate outer container, first row and every row/type/width before returning shape; cells must be exact ints. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R15",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1234`, expected VE.",
+      "original_reference_reasoning": "Exact string, four characters, inclusive ASCII digit range; leading zero allowed and non-ASCII decimals rejected. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "followup": null,
+      "id": "R16",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `-1`, expected VE.",
+      "original_reference_reasoning": "Reject non-int endpoints or reversal; otherwise closed integer count is end\u2212start+1. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    }
+  ],
+  "prior_review": {
+    "path": "history/2026-11-11-before-structure-revision/review_v1.json",
+    "sha256": "31402c530a1f36be7d09118bc6465c0a02b84ad8018743f7bc57a4de19440184"
+  },
+  "prior_structural_findings": [
+    {
+      "id": "1",
+      "reason": "The new T04 initial/reference pair clips versus wraps capacity/start/length positions, not equality-swapped ordered ranks. Public [5,4,3] requires [4,0,1] instead of [4]; changing S01 comparison strictness cannot supply it. The unchanged old S01 note is explicitly historical, not current signoff.",
+      "status": "CLOSED"
+    },
+    {
+      "id": "2",
+      "reason": "New T09 slices run records and forces count 1; the actual initial lacks a membership/remove loop. Repair must recover expanded-element boundaries and multiplicities, not insert S06's single inventory removal. M02 remains conceptually related through budget consumption. The unchanged S06 note is reconciled as offline historical text.",
+      "status": "CLOSED"
+    },
+    {
+      "id": "3",
+      "reason": "New T16 has no sort and demonstrably scrambles nonnegative order through swaps. It does not supply an already-correct stable grouped result from which S08's unwanted final sort can simply be removed.",
+      "status": "CLOSED"
+    }
+  ],
+  "quality_verdict": "PASS_STATIC_ONLY",
+  "remaining_gates": [
+    "Isolated dynamic reference/initial/mutant validation, separately authorized.",
+    "Actual tokenizer and chat-template budget validation, separately authorized.",
+    "Human signoff and scientific acceptance are not supplied by assistant review.",
+    "Training, model generation, runtime isolation and cost binding remain unimplemented here."
+  ],
+  "review_results_sha256": "812cc196bc3c3a419262fe80ec699561fd37649ede749845c7000edb33f868d5",
+  "reviewer": {
+    "agent_id": "01a1c93a-2337-7bd2-bb23-14056d6c7664",
+    "different_model_independence": "UNVERIFIED",
+    "human_signoff": false,
+    "name": "Erdos",
+    "role": "fresh_assistant_reviewer_not_author"
+  },
+  "revision": "2026-11-11-approved-three-structure-replacement",
+  "source_sha256": "4711c72508b78f5deeafa5ed8de13ec4045d38c8ffbe5f463cb16651c29c693c",
+  "status": "STRUCTURE_REVIEWED_FINAL_PACKAGE_REVIEW_PENDING",
+  "structure_note_errata": [
+    {
+      "current_reference": "T04 circular physical-index enumeration",
+      "disposition": "Preserve original task bytes; use current independent pair review, not this historical author cross-reference.",
+      "field": "structure_notes",
+      "historical_reference": "T04 bucket assignment",
+      "task_id": "S01"
+    },
+    {
+      "current_reference": "T09 expanded-element run-length slice",
+      "disposition": "Preserve original task bytes; note is offline metadata, excluded from model-visible supervision.",
+      "field": "structure_notes",
+      "historical_reference": "T09 per-request inventory output",
+      "task_id": "S06"
+    }
+  ],
+  "supervision_transfer_pairs": [
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "coordinate clipping vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "clipping vs overlap length",
+      "supervision_id": "S02",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "coordinates vs segment state",
+      "supervision_id": "S03",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no row membership",
+      "supervision_id": "S04",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no stock consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "fixed directions vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no deduplication",
+      "supervision_id": "S08",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "length-index range vs value rank",
+      "supervision_id": "S01",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "window-fit length vs intersection",
+      "supervision_id": "S02",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no segment state",
+      "supervision_id": "S03",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no membership state",
+      "supervision_id": "S04",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no requests",
+      "supervision_id": "S06",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "all starts vs best index",
+      "supervision_id": "S07",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no label order",
+      "supervision_id": "S08",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "endpoint comparisons vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "closed containment vs half-open size",
+      "supervision_id": "S02",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no accumulator",
+      "supervision_id": "S03",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no membership",
+      "supervision_id": "S04",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no stock",
+      "supervision_id": "S06",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "predicate vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no output dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Shared boundary reasoning, but changing sorted-prefix comparison strictness cannot produce a missing wrapped suffix; T04 needs physical residue enumeration.",
+      "supervision_id": "S01",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Shared bounded arithmetic; removing an inclusive endpoint +1 does not map positions beyond capacity to zero. Circular sequence versus intersection cardinality.",
+      "supervision_id": "S02",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "T04 has no separator or segment accumulator reset; its initial is a clipped range expression.",
+      "supervision_id": "S03",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "No row-local membership or cross-row state exists; missing indices require arithmetic mapping.",
+      "supervision_id": "S04",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "Frequency minima cannot repair clipped cyclic traversal; each physical slot is visited at most once.",
+      "supervision_id": "S05",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "No inventory membership or repeated demand exists; adding removal cannot restore wrapped indices.",
+      "supervision_id": "S06",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "Returns all traversed slots rather than updating one best index under ties.",
+      "supervision_id": "S07",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "No deduplication or trailing sort is present; sort deletion cannot create cyclic traversal order.",
+      "supervision_id": "S08",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "threshold predicate, not rank",
+      "supervision_id": "S01",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no interval operation",
+      "supervision_id": "S02",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "per-event streak vs segment sum",
+      "supervision_id": "S03",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "event reset vs row set reset",
+      "supervision_id": "S04",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "consecutive state, not bags",
+      "supervision_id": "S05",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "failure streak, not inventory",
+      "supervision_id": "S06",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "alerts vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "dual indices vs value rank",
+      "supervision_id": "S01",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "dual per-event indices vs segment sum",
+      "supervision_id": "S03",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "scalar batch state vs row set",
+      "supervision_id": "S04",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no frequency reduction",
+      "supervision_id": "S05",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no stock",
+      "supervision_id": "S06",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "numbering vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "numbering vs dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "decimal parsing vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no interval operation",
+      "supervision_id": "S02",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "lexical accumulator and active state",
+      "supervision_id": "S03",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "number state vs membership set",
+      "supervision_id": "S04",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "positional number, not counts",
+      "supervision_id": "S05",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "character grammar, not consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no winner selection",
+      "supervision_id": "S07",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "repeated runs retained",
+      "supervision_id": "S08",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "predecessor gaps vs cutoff",
+      "supervision_id": "S01",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "session subtraction vs interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "predecessor sentinel vs accumulated sum",
+      "supervision_id": "S03",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "session predecessor vs row membership",
+      "supervision_id": "S04",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no inventory",
+      "supervision_id": "S06",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "adjacent differences vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "contiguous sessions, no dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Prefix traversal is shared, but expanded-element offsets, partial-run counts, and finite take replace record slicing; no sorted cutoff equality repair suffices.",
+      "supervision_id": "S01",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Run contributions can be expressed as half-open intersections, but constructing ordered run coordinates and counts from record slicing goes beyond removing +1.",
+      "supervision_id": "S02",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Sequential state overlaps; zeroing skip after the start is not a delimiter sum reset, and the initial lacks expanded-count processing.",
+      "supervision_id": "S03",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "Nested pairs are runs, not rows tested for uniqueness; no membership state is cleared and nonadjacent repeated labels survive.",
+      "supervision_id": "S04",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Count minima overlap, but S05 reduces unordered global frequencies while T09 clips ordered runs at two positions without merging nonadjacent labels.",
+      "supervision_id": "S05",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Consumption overlaps, especially M02's missing decrement; the actual initial has no membership/remove loop and requires repair of record coordinates and unit counts.",
+      "supervision_id": "S06",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "An entire multiplicity-preserving segment is emitted; no best-index or equal-maximum update exists.",
+      "supervision_id": "S07",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Label order overlaps, but T09 retains occurrences and separated equal-label runs, with no already-correct deduplicated result or final sort.",
+      "supervision_id": "S08",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "histogram vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "bag distance vs interval length",
+      "supervision_id": "S02",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "two signed passes, no segment reset",
+      "supervision_id": "S03",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "persistent count map vs row sets",
+      "supervision_id": "S04",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "algebraic relation, different accumulation",
+      "supervision_id": "S05",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "count imbalance vs consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no winner",
+      "supervision_id": "S07",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "order irrelevant",
+      "supervision_id": "S08",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "combinations vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "frequency reduction, no reset",
+      "supervision_id": "S03",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "counts vs row uniqueness",
+      "supervision_id": "S04",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "unary combinatorics vs bag intersection",
+      "supervision_id": "S05",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "frequency primitive, no request loop",
+      "supervision_id": "S06",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no winner",
+      "supervision_id": "S07",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "occurrences counted, not ordered labels",
+      "supervision_id": "S08",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "triples vs cutoff rank",
+      "supervision_id": "S01",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "quotient vs overlap length",
+      "supervision_id": "S02",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no segment state",
+      "supervision_id": "S03",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "unary counts vs per-row sets",
+      "supervision_id": "S04",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "quotient/filter vs two-bag minimum",
+      "supervision_id": "S05",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "frequency primitive, no consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "all values vs best score",
+      "supervision_id": "S07",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "ascending frequencies vs stable dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "full sort vs prefix rank",
+      "supervision_id": "S01",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no reset state",
+      "supervision_id": "S03",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no row membership",
+      "supervision_id": "S04",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "duplicates retained, no count reduction",
+      "supervision_id": "S05",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "stable full sort vs single argmax",
+      "supervision_id": "S07",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "score-key tie policy vs label dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "sorted cursors vs single prefix scan",
+      "supervision_id": "S01",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no interval intersection",
+      "supervision_id": "S02",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "cursor movement, not reset",
+      "supervision_id": "S03",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no membership set",
+      "supervision_id": "S04",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "all events retained",
+      "supervision_id": "S05",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "merge cursors, not stock removal",
+      "supervision_id": "S06",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "cross-stream tie vs argmax tie",
+      "supervision_id": "S07",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "stable merge, no dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "last-position map vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "overwriting positions, no segment reset",
+      "supervision_id": "S03",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "last positions vs row uniqueness",
+      "supervision_id": "S04",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "positions rather than frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "no stock",
+      "supervision_id": "S06",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "last-occurrence ordering vs earliest winner",
+      "supervision_id": "S07",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "history/2026-11-11-before-structure-revision/review_v1.json",
+      "reason": "last-index map/sort vs first accumulation",
+      "supervision_id": "S08",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Strict sign boundaries overlap and M01 has such an error; the actual initial already uses correct <0 and requires movement repair.",
+      "supervision_id": "S01",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "Scalar endpoint intersection arithmetic does not repair stable placement in two subsequences.",
+      "supervision_id": "S02",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "Sign subsequences are not segment totals; there is no delimiter or forgotten reset.",
+      "supervision_id": "S03",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "No membership set or uniqueness criterion exists; all duplicates must survive.",
+      "supervision_id": "S04",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "Every occurrence is retained without two-bag matching or frequency reduction.",
+      "supervision_id": "S05",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "evidence_origin": "independent_report",
+      "reason": "No stock/request matching or depletion exists; unstable movement is the defect.",
+      "supervision_id": "S06",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Stable order is shared, but choosing the earliest maximum via a comparison cannot fix a swap partition retaining all values.",
+      "supervision_id": "S07",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "R",
+      "evidence_origin": "independent_report",
+      "reason": "Stable accumulation is transferable knowledge, but S08 removes a final sort from a correct list; T16 never builds the stable result and contains no sort or deduplication.",
+      "supervision_id": "S08",
+      "transfer_id": "T16"
+    }
+  ],
+  "task_spec_verdict": "PASS_STATIC_ONLY",
+  "version": 1
+}

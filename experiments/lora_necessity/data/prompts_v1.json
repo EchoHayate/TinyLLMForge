@@ -1,0 +1,1400 @@
+[
+  {
+    "entry_point": "integer_sign",
+    "id": "D01",
+    "initial_source": "def integer_sign(number):\n    if number <= 0:\n        return 1\n    return 1 if number > 0 else -1\n",
+    "public_cases": [
+      {
+        "args": [
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          -4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return -1 for a negative integer, 0 for zero, and 1 for a positive integer. number is a non-bool integer in [-1000,1000]."
+  },
+  {
+    "entry_point": "stride_values",
+    "id": "D02",
+    "initial_source": "def stride_values(values, start, step):\n    return values[::step]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          1,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            5,
+            7
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [],
+          0,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return values[start], values[start+step], and so on while the index is within the list. values is an integer list of length<=32, entries in [-1000,1000]; start is an integer 0..len(values), step is integer 1..32. No bool parameters."
+  },
+  {
+    "entry_point": "nested_value",
+    "id": "D03",
+    "initial_source": "def nested_value(table, outer, inner):\n    return table.get(inner, {}).get(inner)\n",
+    "public_cases": [
+      {
+        "args": [
+          {
+            "score": {
+              "score": 99
+            },
+            "team": {
+              "score": 7
+            }
+          },
+          "team",
+          "score"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 7
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          {},
+          "a",
+          "b"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": null
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return table[outer][inner] if both keys exist, else null. table maps ASCII string keys to dictionaries with ASCII string keys and integer values in [-1000,1000]. Each map has at most 32 entries; keys length<=32. outer and inner are ASCII strings length<=32."
+  },
+  {
+    "entry_point": "ascii_digit_count",
+    "id": "D04",
+    "initial_source": "def ascii_digit_count(text):\n    return sum(character.isalnum() for character in text)\n",
+    "public_cases": [
+      {
+        "args": [
+          "a1!2"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          ""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Count characters between ASCII '0' and '9' inclusive in an ASCII string of length<=32. Letters, signs, punctuation and whitespace are not digits; empty input returns zero."
+  },
+  {
+    "entry_point": "grid_neighbors",
+    "id": "T01",
+    "initial_source": "def grid_neighbors(rows, columns, row, column):\n    choices = [[row - 1, column], [row, column + 1], [row + 1, column], [row, column - 1]]\n    return [[next_row, next_column] for next_row, next_column in choices if 0 <= next_row <= rows and 0 <= next_column < columns]\n",
+    "public_cases": [
+      {
+        "args": [
+          2,
+          2,
+          1,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          3,
+          3,
+          1,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              1
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return valid orthogonal neighbor coordinates of (row,column), in up,right,down,left order, as [row,column] lists. rows,columns are integers 1..32 and the input cell is inside the grid; no bool values. Coordinates are zero-based."
+  },
+  {
+    "entry_point": "window_starts",
+    "id": "T02",
+    "initial_source": "def window_starts(values, width):\n    return list(range(max(0, len(values) - width)))\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            1,
+            2,
+            3
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            1
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [],
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return start indices of every contiguous complete window of width in values. values is an integer list of length 0..32; width is an integer 1..32. Integers are not bool and list entries lie in [-1000,1000]. Return [] if width exceeds length."
+  },
+  {
+    "entry_point": "interval_contained",
+    "id": "T03",
+    "initial_source": "def interval_contained(start, end, outer_start, outer_end):\n    return outer_start < start and end <= outer_end\n",
+    "public_cases": [
+      {
+        "args": [
+          1,
+          4,
+          1,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": true
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          0,
+          5,
+          1,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": false
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return whether the nonempty closed integer interval [start,end] is contained in closed [outer_start,outer_end]. Each start<=end, all endpoints are non-bool integers in [-1000,1000]. Equal boundaries count as contained."
+  },
+  {
+    "entry_point": "ring_indices",
+    "id": "T04",
+    "initial_source": "def ring_indices(capacity, start, length):\n    return list(range(start, min(start + length, capacity)))\n",
+    "public_cases": [
+      {
+        "args": [
+          5,
+          4,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            4,
+            0,
+            1
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          4,
+          2,
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return the physical indices occupied by length consecutive logical positions in a circular buffer of capacity slots, beginning at physical index start. Emit exactly length indices in traversal order, advancing by one and wrapping from capacity-1 to 0. A zero length returns []. capacity is an integer in 1..32, start is an integer in 0..capacity-1, and length is an integer in 0..capacity; bool is excluded for all parameters. Inputs satisfy these constraints; invalid-input behavior is unspecified."
+  },
+  {
+    "entry_point": "failure_alerts",
+    "id": "T05",
+    "initial_source": "def failure_alerts(events, threshold):\n    failures = 0\n    result = []\n    for success in events:\n        failures = failures if success else failures + 1\n        result.append(failures >= threshold)\n    return result\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            false,
+            true,
+            false
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false,
+            false,
+            false
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            false,
+            false
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false,
+            true
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "For each boolean event, emit whether the consecutive failure count is at least threshold after that event. True means success and resets the count to zero; False means failure and increments it. Events length<=32, threshold is a non-bool integer 1..32. Empty events gives []."
+  },
+  {
+    "entry_point": "batch_positions",
+    "id": "T06",
+    "initial_source": "def batch_positions(flags):\n    batch = 0\n    position = 0\n    result = []\n    for ends_batch in flags:\n        result.append([batch, position])\n        position += 1\n        if ends_batch:\n            batch += 1\n            position = position\n    return result\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            false,
+            true,
+            false
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "For each boolean ends_batch flag, emit [batch_index,index_within_batch] for that event, then start a new batch if the flag is True. Both indices start at zero; every flag is itself an event. At most 32 flags. Empty flags gives []."
+  },
+  {
+    "entry_point": "extract_numbers",
+    "id": "T07",
+    "initial_source": "def extract_numbers(text):\n    result = []\n    number = 0\n    active = False\n    for character in text + ' ':\n        if '0' <= character <= '9':\n            number = number * 10 + int(character)\n            active = True\n        elif active:\n            result.append(number)\n            number = number\n            active = False\n    return result\n",
+    "public_cases": [
+      {
+        "args": [
+          "12x3"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            12,
+            3
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          "abc"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Extract every maximal run of ASCII digits from an ASCII string as a nonnegative integer, in order. All other characters separate runs, including signs. Text length<=32 and each run length<=3. Leading zeros are allowed; no digits gives []."
+  },
+  {
+    "entry_point": "session_gaps",
+    "id": "T08",
+    "initial_source": "def session_gaps(records):\n    result = []\n    previous_user = None\n    previous_time = None\n    for user, time in records:\n        if user != previous_user:\n            previous_time = previous_time\n        if previous_time is not None:\n            result.append(time - previous_time)\n        previous_user = user\n        previous_time = time\n    return result\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "a",
+              2
+            ],
+            [
+              "a",
+              5
+            ],
+            [
+              "b",
+              10
+            ],
+            [
+              "b",
+              11
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            3,
+            1
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given [user,time] records, output time differences only between adjacent records within the same contiguous user session. A user change starts a new session even if that user appeared earlier. At most 32 records; users are ASCII strings length<=32; times are non-bool integers 0..1000 and nondecreasing within each session."
+  },
+  {
+    "entry_point": "slice_runs",
+    "id": "T09",
+    "initial_source": "def slice_runs(runs, skip, take):\n    return [[label, 1] for label, count in runs[skip:skip + take]]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "a",
+              3
+            ],
+            [
+              "b",
+              2
+            ]
+          ],
+          2,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              1
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [],
+          0,
+          32
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given a list runs of [label,count] pairs, skip the first skip expanded elements and return at most the next take expanded elements, encoded again as [label,count] runs in their original order with exact positive multiplicities. Each pair represents count consecutive occurrences of its whole label, not the characters of the label. Adjacent input labels differ; repeated nonadjacent labels remain separate when separated by retained elements. Labels are case-sensitive ASCII strings of length 0..32, including the empty string. Each count is a non-bool integer in 1..32 and the total expanded length is at most 32. runs may be empty. skip and take are non-bool integers in 0..32. Zero take or skip at or beyond the expanded end returns []; a request extending beyond the end returns only the available suffix. Inputs satisfy these constraints; invalid-input behavior is unspecified."
+  },
+  {
+    "entry_point": "bag_deletions",
+    "id": "T10",
+    "initial_source": "def bag_deletions(left, right):\n    balance = {}\n    for value in set(left):\n        balance[value] = balance.get(value, 0) + 1\n    for value in right:\n        balance[value] = balance.get(value, 0) - 1\n    return sum(abs(count) for count in balance.values())\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            1,
+            1,
+            2
+          ],
+          [
+            1,
+            2,
+            2
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [],
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return the minimum total number of deletions from two integer lists needed to make their multisets equal. Order does not matter; no insertions. Each list length<=32, non-bool entries in [-1000,1000]. Empty lists are allowed."
+  },
+  {
+    "entry_point": "equal_pairs",
+    "id": "T11",
+    "initial_source": "def equal_pairs(values):\n    return sum(int(count > 1) for count in [values.count(value) for value in set(values)])\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            4,
+            4,
+            4
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 3
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Count unordered pairs of different indices whose values are equal. Each pair is counted once. values is an integer list length<=32 with non-bool entries in [-1000,1000]; empty and singleton lists yield zero."
+  },
+  {
+    "entry_point": "triple_counts",
+    "id": "T12",
+    "initial_source": "def triple_counts(values):\n    return [[value, 1] for value in sorted(set(values)) if values.count(value) >= 3]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            2,
+            2,
+            2,
+            2,
+            2,
+            2
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              2,
+              2
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "For each distinct integer in ascending order, output [value,number_of_complete_triples] if at least three copies exist. A triple uses three equal values; leftover copies cannot mix. Input length<=32, non-bool integers in [-1000,1000]; omit values with zero triples."
+  },
+  {
+    "entry_point": "stable_scores",
+    "id": "T13",
+    "initial_source": "def stable_scores(records):\n    return sorted(records, key=lambda record: (-record[1], record[0]))\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "z",
+              5
+            ],
+            [
+              "a",
+              5
+            ],
+            [
+              "m",
+              1
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "z",
+              5
+            ],
+            [
+              "a",
+              5
+            ],
+            [
+              "m",
+              1
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return [label,score] records sorted by decreasing score, keeping original order for equal scores. At most 32 records; labels are ASCII strings length<=32 and scores non-bool integers in [-1000,1000]. Duplicate records are preserved."
+  },
+  {
+    "entry_point": "merge_events",
+    "id": "T14",
+    "initial_source": "def merge_events(left, right):\n    result = []\n    left_index = right_index = 0\n    while left_index < len(left) and right_index < len(right):\n        if left[left_index][0] < right[right_index][0]:\n            result.append(left[left_index])\n            left_index += 1\n        else:\n            result.append(right[right_index])\n            right_index += 1\n    return result + left[left_index:] + right[right_index:]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              "left"
+            ]
+          ],
+          [
+            [
+              1,
+              "right"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              "left"
+            ],
+            [
+              1,
+              "right"
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [],
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Merge two lists of [time,label] events, each already nondecreasing by time. Return all events ordered by time; for equal times prefer left-list events and keep each list's internal order. Each list length<=16, integer non-bool times in [-1000,1000], ASCII labels length<=32."
+  },
+  {
+    "entry_point": "last_labels",
+    "id": "T15",
+    "initial_source": "def last_labels(labels):\n    last = {label: index for index, label in enumerate(labels)}\n    return list(dict.fromkeys(labels))\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            "a",
+            "b",
+            "a"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "b",
+            "a"
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return each distinct ASCII label once, ordered by the position of its last appearance, earliest last position first. Labels and list length<=32; empty labels are valid. Do not alphabetically sort."
+  },
+  {
+    "entry_point": "stable_partition",
+    "id": "T16",
+    "initial_source": "def stable_partition(values):\n    result = list(values)\n    boundary = 0\n    for index in range(len(result)):\n        if result[index] < 0:\n            result[boundary], result[index] = result[index], result[boundary]\n            boundary += 1\n    return result\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            3,
+            -1,
+            2,
+            -2
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            -1,
+            -2,
+            3,
+            2
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return a list containing all negative values from values first, followed by all nonnegative values. Preserve the original relative order within each partition and retain every occurrence, including duplicates. Zero belongs to the nonnegative partition. The input is a list of at most 32 non-bool integers, each in [-1000,1000]. Empty input returns []. Inputs satisfy these constraints; invalid-input behavior is unspecified."
+  },
+  {
+    "entry_point": "divide_toward_zero",
+    "id": "R01",
+    "initial_source": "def divide_toward_zero(number, divisor):\n    quotient = abs(number) // divisor\n    return number // divisor\n",
+    "public_cases": [
+      {
+        "args": [
+          -7,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -2
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          0,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return number/divisor rounded toward zero using integer arithmetic, not floating point. number is a non-bool integer in [-1000,1000]; divisor is a non-bool integer 1..1000."
+  },
+  {
+    "entry_point": "divide_ceiling",
+    "id": "R02",
+    "initial_source": "def divide_ceiling(number, divisor):\n    return number // divisor\n",
+    "public_cases": [
+      {
+        "args": [
+          7,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 3
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          -6,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -2
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return the mathematical ceiling of number/divisor, using integer arithmetic only. number is a non-bool integer in [-1000,1000], divisor a non-bool integer 1..1000. Ceiling means toward positive infinity, including for negatives."
+  },
+  {
+    "entry_point": "trunc_remainder",
+    "id": "R03",
+    "initial_source": "def trunc_remainder(number, divisor):\n    magnitude = abs(number) % divisor\n    return number % divisor\n",
+    "public_cases": [
+      {
+        "args": [
+          -7,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          6,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return the remainder associated with the quotient of number/divisor truncated toward zero: number = quotient*divisor + remainder. number is a non-bool integer in [-1000,1000], divisor integer 1..1000, not bool. Use integer arithmetic only."
+  },
+  {
+    "entry_point": "nearest_multiple",
+    "id": "R04",
+    "initial_source": "def nearest_multiple(number, step):\n    units = (2 * abs(number) + step) // (2 * step)\n    rounded = units * step\n    return ((number + step // 2) // step) * step\n",
+    "public_cases": [
+      {
+        "args": [
+          -5,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -6
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          7,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 6
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Round number to the nearest integer multiple of positive step, choosing the multiple farther from zero when equally distant. Use integer arithmetic. number is a non-bool integer in [-1000,1000], step a non-bool integer 1..1000."
+  },
+  {
+    "entry_point": "transpose_matrix",
+    "id": "R05",
+    "initial_source": "def transpose_matrix(matrix):\n    return [row[:] for row in matrix]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              2,
+              3
+            ],
+            [
+              4,
+              5,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              4
+            ],
+            [
+              2,
+              5
+            ],
+            [
+              3,
+              6
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              7
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              7
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Transpose a nonempty rectangular matrix: output[column][row] = input[row][column]. Rows and columns are 1..32; entries non-bool integers in [-1000,1000]. Return lists, not tuples."
+  },
+  {
+    "entry_point": "column_sums",
+    "id": "R06",
+    "initial_source": "def column_sums(matrix):\n    return [sum(row) for row in matrix]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              2,
+              3
+            ],
+            [
+              4,
+              5,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            5,
+            7,
+            9
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              7
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            7
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return one sum per column of a nonempty rectangular matrix, in left-to-right column order. Rows and columns are 1..32, entries non-bool integers in [-1000,1000]."
+  },
+  {
+    "entry_point": "rotate_clockwise",
+    "id": "R07",
+    "initial_source": "def rotate_clockwise(matrix):\n    return [[row[column] for row in matrix] for column in range(len(matrix[0]))]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              2,
+              3
+            ],
+            [
+              4,
+              5,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              4,
+              1
+            ],
+            [
+              5,
+              2
+            ],
+            [
+              6,
+              3
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              8
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              8
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Rotate a nonempty rectangular matrix clockwise by ninety degrees. Input row/column sizes are 1..32; entries are non-bool integers in [-1000,1000]. Output has input-column-count rows and input-row-count columns."
+  },
+  {
+    "entry_point": "reshape_rows",
+    "id": "R08",
+    "initial_source": "def reshape_rows(values, rows, columns):\n    return [values[row * rows:(row + 1) * rows] for row in range(rows)]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          2,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              2,
+              3
+            ],
+            [
+              4,
+              5,
+              6
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            7
+          ],
+          1,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              7
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Reshape a flat integer list into rows by columns using row-major order. rows and columns are non-bool integers 1..32; len(values)=rows*columns<=32, entries non-bool integers in [-1000,1000]."
+  },
+  {
+    "entry_point": "split_escaped",
+    "id": "R09",
+    "initial_source": "def split_escaped(text):\n    parts = []\n    current = ''\n    escaped = False\n    for character in text:\n        if escaped:\n            current += character\n            escaped = False\n        elif False:\n            escaped = True\n        elif character == ',':\n            parts.append(current)\n            current = ''\n        else:\n            current += character\n    if escaped:\n        raise ValueError()\n    parts.append(current)\n    return parts\n",
+    "public_cases": [
+      {
+        "args": [
+          "a\\,b,c"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "a,b",
+            "c"
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          ""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            ""
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Split ASCII text at unescaped commas. Backslash escapes exactly the next character, which is added literally without the backslash. Preserve empty fields; empty text gives ['']. A trailing unmatched backslash raises ValueError. Text length<=32."
+  },
+  {
+    "entry_point": "decode_escapes",
+    "id": "R10",
+    "initial_source": "def decode_escapes(text):\n    mapping = {'n': '\\n', 't': '\\t', '\\\\': '\\\\'}\n    result = ''\n    index = 0\n    while index < len(text):\n        if text[index] == '\\\\':\n            index += 1\n            if index == len(text) or text[index] not in mapping:\n                raise ValueError()\n            result += text[index]\n        else:\n            result += text[index]\n        index += 1\n    return result\n",
+    "public_cases": [
+      {
+        "args": [
+          "a\\nb"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "a\nb"
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          ""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": ""
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Decode ASCII text: backslash-n becomes newline, backslash-t becomes tab, and backslash-backslash becomes one backslash. Other unescaped characters pass through. Any other escape or a trailing backslash raises ValueError. Input length<=32; empty input returns empty text."
+  },
+  {
+    "entry_point": "escape_quotes",
+    "id": "R11",
+    "initial_source": "def escape_quotes(text):\n    return ''.join('\\\\' + character if character == '\"' else character for character in text)\n",
+    "public_cases": [
+      {
+        "args": [
+          "a\"b\\c"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "a\\\"b\\\\c"
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          ""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": ""
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Escape every original backslash and double quote by prefixing it with one backslash; leave all other ASCII characters unchanged. Work on original characters only: newly inserted slashes must not be escaped again. Input length<=32; empty text returns empty text."
+  },
+  {
+    "entry_point": "first_unescaped_quote",
+    "id": "R12",
+    "initial_source": "def first_unescaped_quote(text):\n    escaped = False\n    for index, character in enumerate(text):\n        if escaped:\n            escaped = False\n        elif False:\n            escaped = True\n        elif character == '\"':\n            return index\n    return -1\n",
+    "public_cases": [
+      {
+        "args": [
+          "\\\"x\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 3
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          "abc"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return the index of the first double quote not escaped by a preceding backslash, or -1. A backslash escapes the next character; pairs of backslashes cancel for quote detection. A trailing backslash is allowed and finds no additional quote. ASCII text length<=32."
+  },
+  {
+    "entry_point": "validate_percentage",
+    "id": "R13",
+    "initial_source": "def validate_percentage(value):\n    if not isinstance(value, int) or not 0 <= value <= 100:\n        raise ValueError()\n    return value\n",
+    "public_cases": [
+      {
+        "args": [
+          true
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return value unchanged only when type(value) is exactly int and 0<=value<=100. Otherwise raise ValueError. Test-domain values may be non-bool integers in [-1000,1000], bool, null, or ASCII strings length<=32; bool must be rejected."
+  },
+  {
+    "entry_point": "validated_shape",
+    "id": "R14",
+    "initial_source": "def validated_shape(matrix):\n    if type(matrix) is not list or not matrix:\n        raise ValueError()\n    if type(matrix[0]) is not list or not matrix[0]:\n        raise ValueError()\n    width = len(matrix[0])\n    for row in matrix:\n        if type(row) is not list:\n            raise ValueError()\n        if any(type(value) is not int for value in row):\n            raise ValueError()\n    return [len(matrix), width]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              2
+            ],
+            [
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              7
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return [row_count,column_count] only for a nonempty list of nonempty equally sized lists of exact-int entries. Otherwise raise ValueError. Outer/inner lengths<=32, integer magnitudes<=1000; invalid input can include bool, null, ASCII strings length<=32 or nested lists. All elements must be checked."
+  },
+  {
+    "entry_point": "parse_four_digits",
+    "id": "R15",
+    "initial_source": "def parse_four_digits(code):\n    if type(code) is not str or len(code) != 4 or not code.isdigit():\n        raise ValueError()\n    return int(code)\n",
+    "public_cases": [
+      {
+        "args": [
+          "\uff11\uff12\uff13\uff14"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          "0007"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 7
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return the integer value of code only if code is exactly a string of four ASCII digits. Leading zeros are allowed. Otherwise raise ValueError. Input may be a Unicode string length<=32, bool, null, or a non-bool integer in [-1000,1000]; non-ASCII digits are invalid."
+  },
+  {
+    "entry_point": "closed_point_count",
+    "id": "R16",
+    "initial_source": "def closed_point_count(start, end):\n    if type(start) is not int or type(end) is not int:\n        raise ValueError()\n    return end - start + 1\n",
+    "public_cases": [
+      {
+        "args": [
+          3,
+          1
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          2,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Return the number of integer points in closed interval [start,end] only if both endpoints have exact type int and start<=end; otherwise raise ValueError. Test domain includes integers in [-1000,1000], bool, null and ASCII strings length<=32. Equal endpoints are valid."
+  }
+]

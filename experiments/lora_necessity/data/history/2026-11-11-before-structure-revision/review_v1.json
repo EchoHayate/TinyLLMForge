@@ -1,0 +1,1512 @@
+{
+  "archive_role": "main_extracted_metadata_not_a_new_independent_review",
+  "benchmark_eligible": false,
+  "checker_followup": {
+    "checker_sha256": "390d5b4dcc6fe96adc156bed3cf1882c7d5b6eb906f32c25c52ee785eb1763b2",
+    "diagnostic_sha256": "0121e9f7a054874a75051b4430315a00a7133dfb30b6b34bfef9108ae1d2439f",
+    "finding_id": "G2-1",
+    "independent_disposition": "CLOSED_STATIC_INSPECTION",
+    "main_fix": "Canonical manifest bytes replace type-losing dictionary equality.",
+    "main_green": "Canonical baseline accepted; numeric flag, boolean version, duplicate flag rejected.",
+    "main_red": "AssertionError: checker accepted numeric flag"
+  },
+  "coverage": {
+    "followup_manually_checked_cases": [
+      "R10/H07",
+      "R10/H08"
+    ],
+    "method": "bounded_manual_static_reasoning_not_task_execution",
+    "mutants": 88,
+    "original_manually_checked_cases": 352,
+    "public_cases": 88,
+    "scoring_cases": 266,
+    "supervision_transfer_pairs": 128,
+    "tasks": 44
+  },
+  "date": "2026-11-11",
+  "file_sha256": {
+    "manifest_v1.json": "a9cb2e5bb542857ccafd068d46d2b50ae003611600e1d1f8919a4a48586961a9",
+    "oracles_v1.json": "7b26e71b63ed5b0513e82b9959784cf9b55e703ceb14b3ed68170a31bfcfc67f",
+    "prompts_v1.json": "9e20ff6247d28cdc87079e7ba388872b3f6b8f78630080a9f33038b93cb5d2c9",
+    "structure_v1.json": "930af52e7f12b9afe3743186c95ca0d66f78f143f9c0d9f8b24654e37257cc62",
+    "supervision_v1.json": "4dafb0ac759697e9b80c5bf097b363082a17a34e6b78fb3d3b91d37a76beb78a",
+    "task_sources_v1.json": "f198764ec17690a7c9e3b289f904a166f77727478212381bb3aaef584efbf8d2"
+  },
+  "findings": [
+    {
+      "id": "1",
+      "reason": "Ordered rank initial/reference behaviors exchanged by equality convention.",
+      "severity": "P1",
+      "status": "OPEN",
+      "tasks": [
+        "S01",
+        "T04"
+      ]
+    },
+    {
+      "id": "2",
+      "reason": "Same missing single inventory consumption; changed output wrapper already correct.",
+      "severity": "P1",
+      "status": "OPEN",
+      "tasks": [
+        "S06",
+        "T09"
+      ]
+    },
+    {
+      "id": "3",
+      "reason": "Same extraneous final sort removal; grouping and quota already correct.",
+      "severity": "P1",
+      "status": "OPEN",
+      "tasks": [
+        "S08",
+        "T16"
+      ]
+    },
+    {
+      "id": "4",
+      "reason": "Added H07/H08 adjacent escape cases with independently checked manual expectations.",
+      "severity": "P2",
+      "status": "CLOSED_STATIC_COVERAGE_ONLY",
+      "tasks": [
+        "R10"
+      ]
+    }
+  ],
+  "formal_evaluation_ready": false,
+  "group_2_current_snapshot_verdict": "PASS_STATIC_PROJECTIONS_BINDINGS_FALSE_FLAGS_ONLY",
+  "independent_report": {
+    "byte_length": 62898,
+    "original_path": "/tmp/tlf-lora-data-20261111-lW6uR7/independent-review.md",
+    "sha256": "0a5b0d6e3b57eed891ff1cfd893918c43eac2b8af5b4c0faba89f39dc17f5b4e",
+    "text": "# Independent static review \u2014 Group 1\n\nDate: 2026-11-11. Scope: task semantics and cross-split structure only.\n\n## Verdicts\n\n- **Task-spec verdict: CHANGES REQUIRED.** The 44-record schema, split/family assignment, signatures, case counts, witness links and mutant distinctness satisfy the inspected static requirements. No incorrect recorded expected outcome or declared initial/mutant prediction was found by independent manual tracing. However, R10 does not cover the explicitly required consecutive-escape boundary. Structural acceptance under design section 7 is also withheld.\n- **Quality verdict: CHANGES REQUIRED.** S01/T04 is an exact rank-function near-duplicate, with initial/reference roles exchanged. S06/T09 and S08/T16 retain the supervised repair in a changed output wrapper. The latter two have genuinely different full-task outputs, but insufficiently different repair contexts to certify the intended structural separation.\n- **Not a runtime verdict.** No dynamic reference acceptance, mutant rejection, tokenizer fit, isolation, model result, or launch readiness was checked or granted. Group 2 projections and admission flags are outside this review.\n- **Findings: three P1 structural findings and one P2 required-coverage finding.** No P0 finding. The review is complete; the data are not accepted by this review. No data were changed.\n\n## Evidence identity and scope\n\nRead:\n\n- `/tmp/tlf-lora-data-20261111-lW6uR7/task-1-brief.md`\n- `/tmp/tlf-lora-data-20261111-lW6uR7/task-1-report.md`\n- `/tmp/tlf-lora-data-20261111-lW6uR7/task-1.diff`\n- `/tmp/tlf-lora-data-20261111-lW6uR7/review_groups.md`\n- `docs/superpowers/specs/2026-11-11-lora-necessity-data-design.md`\n- `experiments/lora_necessity/data/task_sources_v1.json`\n\nThe source SHA256 was independently checked:\n\n`6a3e2ede42bc9182eef38130ef7d8d193f7bc6e4005b3c8a3f03490d751eede9`\n\nThe supplied diff has one full-addition hunk containing 8,320 source-file lines. Reconstructing its added bytes in memory produced a byte-for-byte match with the inspected source. Diff SHA256:\n\n`028651bdf1a583d3c4faf0e11597fa2ac717da8d06f81b2343027473e10f1d9b`\n\nBase/Head `93b4e8e0` is supplied provenance, not a meaningful task-data comparison: the complete new-file diff, not an empty tracked diff, defines this review. No Git command was needed.\n\nThis is a fresh assistant review, not an author self-review or human signature. This reviewer is GPT-5-based according to the session configuration. The supplied author report does not establish the author's exact model identity; different-model independence is **unverified**, not claimed. Author predictions and structure notes were checked as claims, not adopted as evidence of correctness. Earlier provider failures do not limit this completed review.\n\nThe review used the `bits-code-guard` inspection/severity framework, with the user's narrower instructions overriding its extra-output and delegation workflows. Only this report was written. No subprocess executing task source, task-function import, executable compilation, `exec`, `eval`, model/tokenizer use, network access, installation, test rerun, or agent spawning occurred. JSON decoding, AST parsing/inspection and local text/hash reads were used. No task-function interpreter was implemented.\n\n## Findings\n\n### 1. P1 \u2014 T04 is S01's ordered rank computation with the equality convention reversed\n\n- **Category:** \u4e1a\u52a1\u8bed\u4e49\u95ee\u9898 / structural validity.\n- **Confidence:** 10/10 for the equivalence; the acceptance judgment applies design section 7.\n- **Locations:** `experiments/lora_necessity/data/task_sources_v1.json:2669`, `:2729`, `:2824`; compare S01 at `:8` and `:70`.\n- **Requirement:** design `:198` requires all S/T relationships to be reviewed; `:201` rejects superficial structural distinctions. The design's own final self-check also rejects prefix counting versus boundary search as too close.\n\nS01 reference counts list entries strictly below its scalar cutoff. T04 initial returns the index of the first cut greater than or equal to its scalar query: exactly the number of cuts strictly below that query. S01 initial counts entries less than or equal to the cutoff; T04 reference returns the first strictly greater cut's index: exactly the number of cuts less than or equal to the query.\n\nThus, for every strictly increasing list admitted by both domains:\n\n- `T04.initial(cuts, value) = S01.reference(cuts, value)`\n- `T04.reference(cuts, value) = S01.initial(cuts, value)`\n\nThese are mathematical identities established from the loops, not executed comparisons. For cuts `[0,5]` and query `0`, the two values are respectively `0` and `1`. Both functions use an ordered one-dimensional threshold scan with early termination and a scalar rank result. Replacing a running count with the enumerated index and calling the result a bucket does not introduce a different algorithm. The stricter no-duplicate cut domain only narrows S01's domain.\n\n**Impact:** T04 cannot support an unqualified structural-transfer claim; it reuses both behaviors already exposed by S01's supervised initial/reference pair. A unique template ID and the author's risk note do not resolve that.\n\n**Recommendation:** Return this pair for a recorded, pre-model structural revision and split reconfirmation, or explicitly seek approval to classify it as near-template transfer. Do not silently replace the task or declare independence from AST/name differences.\n\n### 2. P1 \u2014 T09 preserves S06's complete inventory-consumption repair\n\n- **Category:** \u4e1a\u52a1\u8bed\u4e49\u95ee\u9898 / repair-context overlap.\n- **Confidence:** 9/10.\n- **Locations:** `experiments/lora_necessity/data/task_sources_v1.json:3666`, `:3690`, `:3739`, `:3861`; compare S06 at `:921`, `:949`, `:978`.\n- **Requirement:** design `:200` specifically calls out S06/T09; `:202` rejects a mere wrapper/field change.\n\nBoth initial sources copy stock into `remaining`, test each request's membership, and fail to consume successful requests. Both references perform the same repair: remove exactly one matching element after a successful membership check. Their deduplicated-inventory mutants also repeat the same `list(set(stock))` error.\n\nThe actual differences are character versus integer requests, early failure versus continued processing, and a final aggregate bool versus a list of per-request bools. These are real specification differences, so this is **not** an assertion that the complete functions are identical. Nevertheless, the new output construction and failure continuation are already correct in T09's initial source. The model only has to transplant the same missing inventory decrement taught by S06.\n\nFor S06 stock `\"ab\"` / word `\"aa\"` and T09 stock `[1]` / requests `[1,1]`, the initial implementation reuses one item twice; restoring the same removal statement yields `False` and `[True,False]`, respectively. No new allocation policy or inventory representation must be repaired.\n\n**Impact:** The table's requested per-request output is implemented, but it does not by itself establish the substantive repair-structure distinction required at post-authoring review. I withhold that quality sign-off rather than treating the table title as certification.\n\n**Recommendation:** Resolve this explicit near-neighbor risk before freezing: materially distinguish the repair context under an approved revision, or obtain a narrower, explicit near-template-transfer interpretation. Merely renaming variables or retaining the current warning is insufficient.\n\n### 3. P1 \u2014 T16 wraps S08's \u201cremove the unwanted sort\u201d repair in already-correct grouping\n\n- **Category:** \u4e1a\u52a1\u8bed\u4e49\u95ee\u9898 / repair-context overlap.\n- **Confidence:** 9/10.\n- **Locations:** `experiments/lora_necessity/data/task_sources_v1.json:5200`, `:5316`, `:5515`; compare S08 at `:1219` and `:1290`.\n- **Requirement:** design `:199` requires inspecting initial code as well as the reference algorithm, and `:202` rejects superficial loop wrapping.\n\nS08 already constructs unique labels in first-appearance order, then incorrectly returns `sorted(result)`. Its repair removes that final sort. T16 already constructs an insertion-ordered group dictionary, correctly enforces the two-record quota, and correctly preserves each group's internal order. Its only initial error is flattening through `sorted(groups)` instead of `groups`.\n\nFor group names in first-appearance order `[\"z\",\"a\"]`, both errors unnecessarily produce alphabetical order. The T16 repair is the S08 repair applied to the outer iterator of a flattening comprehension. The extra inner loop and quota logic are supplied correctly, not newly repaired.\n\n**Impact:** Grouped output and quotas make the full function richer, but do not establish an independently different repair challenge. This is more specific than a generic complaint that both tasks preserve order: the erroneous sort and its removal occupy the same final-output stage.\n\n**Recommendation:** Reassess the repair-bearing part of T16, not just its full reference shape. Record and reconfirm any structural change before model use. Do not automatically count this as independent transfer because it returns records instead of labels.\n\n### 4. P2 \u2014 R10 lacks the explicitly required adjacent escape-sequence case\n\n- **Category:** \u4e1a\u52a1\u8bed\u4e49\u95ee\u9898 / required case coverage.\n- **Confidence:** 9/10.\n- **Locations:** R10's `public_cases`/`scoring_cases`, `experiments/lora_necessity/data/task_sources_v1.json:7325`; H06 explanation at `:7447`.\n- **Requirement:** approved design `:139` explicitly lists consecutive escapes among R10's required boundaries.\n\nThe eight supplied inputs are JSON strings `\"a\\\\nb\"`, `\"\"`, `\"\\\\n\"`, `\"\\\\t\"`, `\"\\\\\\\\\"`, `\"\\\\x\"`, `\"end\\\\\"`, and `\"a\\\\tb\\\\nc\"`. None contains two adjacent complete escape sequences. H06 has the ordinary character `b` between its tab and newline escapes; H03 contains one escaped backslash, not two consecutive escape sequences.\n\nThe reference cursor logic looks correct on this boundary by inspection. The defect is missing required evidence, **not** an observed wrong reference result and not a claim that the existing two mutants survive their designated cases.\n\n**Recommendation:** Add a distinct spec-derived adjacent-escape case in a future authorized data revision, for example JSON input `\"\\\\n\\\\t\"` with newline followed by tab as the expected output. A backslash escape immediately followed by another escape would additionally exercise cursor pairing. Keep this a static data revision unless execution is separately authorized.\n\n## Static contract checks\n\nIndependent, in-memory JSON/AST inspection found:\n\n| Check | Result |\n| --- | --- |\n| Exact top-level keys, kind, integer version | Conforming |\n| Record count/order | 44; S01\u2013S08, D01\u2013D04, T01\u2013T16, R01\u2013R16 |\n| Exact task fields and template IDs | Conforming for all 44 |\n| Split/family counts | S: 8, two per family; D: four distinct development families; T: 16, four per family; R: 16, four per retention family |\n| Cases | 88 public and 264 scoring; two plus six for every task |\n| Case IDs, outcome shapes, arity, nonempty reasons | Conforming |\n| Duplicate argument lists within/across a task's two case sets | None, using type-preserving canonical JSON comparisons |\n| Initial witnesses | 44 valid public links and 44 valid `initial_scoring_case=Hxx` links |\n| Mutants | 88; exactly M01/M02 per task; all designated scoring links valid |\n| Declared predicted outcomes versus linked expectations | All differ; semantic checks below were separate from this syntactic comparison |\n| Source strings | 176 parsed ASTs, four textually different strings per task |\n| Function signatures | Same within every task; entry-point names match; no defaults, decorators, annotations, variadic arguments or one-letter parameters |\n| Source dependencies | Inspected bodies use builtins and local container operations; no imports, I/O, external helpers or dynamic code |\n\nThe call-target inventory was inspected, including local comprehensions, sorting lambdas and `last.get` as a sort key. The lambdas do not import or invoke an external helper. Exact-type checks in validation tasks are required by their specifications.\n\nAn exact AST-body comparison, ignoring only the top-level function name, also found:\n\n- R05 reference equals R07 initial.\n- R05 M01 equals R07 reference.\n\nThis is genuine within-retention transpose/rotation overlap, not an S/T duplicate and not independently sufficient grounds to reject the approved retention tasks. It is recorded below rather than hidden by unique function names.\n\n## All-44 semantic review ledger\n\nFor **each** row below I read the complete specification, both public cases P01/P02, all six scoring cases H01\u2013H06, all four source strings, the initial witness, both mutant reasons, and the structure notes. All 352 expected case outcomes were independently checked against the stated specifications; all 44 declared public initial predictions and all 88 declared mutant predictions were manually traced. No disagreement was found. I additionally traced every named initial scoring witness and a same-input mutant discriminator.\n\nThese are bounded manual checks, not exhaustive proofs or executed test results. \u201cConsistent\u201d below does not override the structural findings or R10's omitted required case.\n\nThe following table gives the reference reasoning and an additional reproducible initial-source trace. In the last column the value is the **incorrect initial outcome**, not the expected answer. `VE` means `ValueError`. Booleans and strings retain their types.\n\n| Task | Reference/specification reasoning; supplied P01/P02 and H01\u2013H06 | Initial scoring trace |\n| --- | --- | --- |\n| S01 | Sorted scan stops at first time at/above cutoff; all earlier duplicates count. Consistent. | H01 returns `2`, expected `0`. |\n| S02 | Clamp `min(ends)-max(starts)` to zero; touching, empty and separated intervals yield zero. Consistent. | H01 returns `1`, expected `0`. |\n| S03 | Emit sum at every delimiter, reset, then emit final segment; preserves leading/trailing/adjacent empty segments. Consistent. | H01 returns `[1,5]`, expected `[1,4]`. |\n| S04 | Clear membership before each row; repeated entries only affect that row; empty rows are unique. Consistent. | H01 returns `[true,false]`, expected `[true,true]`. |\n| S05 | Sum the smaller count for each distinct left value; right-only values contribute zero. Consistent. | H01 returns `1`, expected `2`. |\n| S06 | Each requested character consumes one matching stock character; empty request succeeds. Consistent. | H01 returns `true`, expected `false`. |\n| S07 | Initialize no winner, update only for a strictly larger score; preserves earliest ties and empty `-1`. Consistent. | H01 returns `1`, expected `0`. |\n| S08 | Append only first occurrences and return accumulated order; empty/case-sensitive labels preserved. Consistent. | H01 returns `[\"a\",\"z\"]`, expected `[\"z\",\"a\"]`. |\n| D01 | Separate zero, then return positive or negative unit sign. Consistent. | H02 returns `1`, expected `-1`. |\n| D02 | Positive-step slicing starts at the given offset; start equal to length yields empty. Consistent. | H01 returns `[1,3]`, expected `[2,4]`. |\n| D03 | Fetch selected outer mapping then selected inner key; absent keys give null, stored zero remains zero. Consistent. | H01 returns `8`, expected `2`. |\n| D04 | Count inclusive ASCII digit membership; ignore other ASCII characters. Consistent. | H03 returns `3`, expected `0`. |\n| T01 | Form four directional candidates then clip both coordinates, preserving candidate order. Consistent. | H01 returns `[[1,0]]`, expected `[]`. |\n| T02 | Complete starts are integers from zero through length minus width, inclusive; none when negative. Consistent. | H01 returns `[]`, expected `[0]`. |\n| T03 | Both inner endpoints must be inside the closed outer interval; equality allowed. Consistent. | H01 returns `false`, expected `true`. |\n| T04 | Number of crossed cuts includes equality; first larger cut supplies the bucket index. Consistent values, structural finding 1. | H01 returns `0`, expected `1`. |\n| T05 | Success zeroes the consecutive count; every event emits comparison after its update. Consistent. | H01 returns `[false,false,true,true]`, expected `[false,false,false,true]`. |\n| T06 | Emit current dual index before processing end flag; advance position and reset/increment batch after end. Consistent. | H01 returns `[[0,0],[1,1]]`, expected `[[0,0],[1,0]]`. |\n| T07 | Decimal positional accumulation plus active-run state; appended separator flushes trailing run without creating empty numbers. Consistent. | H01 returns `[7,78]`, expected `[7,8]`. |\n| T08 | User change clears predecessor; within-session subtraction uses immediately previous time, including zero. Consistent. | H01 returns `[8,3]`, expected `[3]`. |\n| T09 | Successful requests consume one copy; failed requests leave stock intact and processing continues. Consistent values, finding 2. | H01 returns `[true,true,true]`, expected `[true,false,false]`. |\n| T10 | Accumulate left-minus-right counts; sum absolute differences, disallowing cancellation across values. Consistent. | H01 returns `0`, expected `1`. |\n| T11 | Each value with count c contributes c(c\u22121)/2 unordered, distinct-index pairs. Consistent. | H01 returns `1`, expected `6`. |\n| T12 | Sort distinct values; output only counts at least three, using integer quotient by three. Consistent. | H01 returns `[[4,1]]`, expected `[[4,2]]`. |\n| T13 | Stable sorting on negative score preserves tie order and duplicates. Consistent. | H01 returns `[[\"a\",2],[\"b\",2]]`, expected `[[\"b\",2],[\"a\",2]]`. |\n| T14 | Advance one of two sorted cursors; choose left on equality, then append both remainders. Consistent. | H01 returns `[[2,\"b\"],[2,\"a\"]]`, expected `[[2,\"a\"],[2,\"b\"]]`. |\n| T15 | Overwrite last position for each label, then order distinct labels by those positions. Consistent. | H01 returns `[\"x\",\"y\"]`, expected `[\"y\",\"x\"]`. |\n| T16 | Dictionary first-insertion order determines group order; each group retains first two records, flattened afterward. Consistent values, finding 3. | H01 returns `[[\"a\",2],[\"z\",1]]`, expected `[[\"z\",1],[\"a\",2]]`. |\n| R01 | Divide magnitude using integers, then restore sign; truncates negative fractions toward zero. Consistent. | H01 returns `-3`, expected `-2`. |\n| R02 | Negated floor of the negated numerator is ceiling for positive divisor, including negative inputs. Consistent. | H01 returns `2`, expected `3`. |\n| R03 | Magnitude remainder with numerator sign reconstructs the dividend with truncating quotient. Consistent. | H01 returns `1`, expected `-1`. |\n| R04 | Doubled-integer half-step formula rounds magnitude to nearest with ties upward, then restores sign. Consistent. | H01 returns `-2`, expected `-4`. |\n| R05 | Output one list per input column, preserving original row order inside it. Consistent. | H01 returns original three-by-two matrix, expected its two-by-three transpose. |\n| R06 | Reduce each column vertically; emit columns left to right. Consistent. | H01 returns `[4,6,11]`, expected `[8,13]`. |\n| R07 | Transpose while reversing source row traversal, giving clockwise rotation. Consistent. | H01 returns `[[1,3,5],[2,4,6]]`, expected `[[5,3,1],[6,4,2]]`. |\n| R08 | Row r takes the length-columns slice beginning at r\u00d7columns. Consistent. | H01 returns `[[1,2,3],[4,5,6],[]]`, expected `[[1,2],[3,4],[5,6]]`. |\n| R09 | Escape consumes the next character literally; only unescaped commas flush fields; unmatched trailing escape raises. Consistent. | H01 returns `[\"x\\\\\",\"y\",\"z\"]`, expected `[\"x,y\",\"z\"]`. |\n| R10 | Cursor consumes a checked escape pair and emits its mapped character, otherwise copies ordinary text. Supplied outcomes consistent; required adjacent-pair coverage missing. | H01 returns `\"n\"`, expected newline. |\n| R11 | Transform each original character exactly once, prefixing slash or quote only. Consistent. | H02 returns one backslash, expected two. |\n| R12 | Escaped state suppresses interpretation of exactly one next character; first ordinary quote returns its zero-based index. Consistent. | H01 returns `1`, expected `-1`. |\n| R13 | Exact-int check precedes range comparison; bool/string/null rejected safely. Consistent. | H01 returns `false`, expected VE. |\n| R14 | Validate outer container, first row and every row/type/width before returning shape; cells must be exact ints. Consistent. | H01 returns `[2,1]`, expected VE. |\n| R15 | Exact string, four characters, inclusive ASCII digit range; leading zero allowed and non-ASCII decimals rejected. Consistent. | H01 returns `1234`, expected VE. |\n| R16 | Reject non-int endpoints or reversal; otherwise closed integer count is end\u2212start+1. Consistent. | H01 returns `-1`, expected VE. |\n\nInput-domain review found no demonstrably out-of-domain supplied case. In particular, R15's Unicode invalid inputs are explicitly required by its approved row; they are not accidental violations of the general ASCII convention. Integer bounds concern inputs, not outputs such as segment sums or the parsed code `9999`. For validation tasks, the bounded test domain and the conditions that must trigger rejection were distinguished. None of the reference reasoning assumes rejection of inputs outside the specified test domain.\n\n### All 88 mutant witnesses and 44 behavioral discriminators\n\nEach M01/M02 entry below is an independently traced result on that mutant's declared scoring case; it differs from the corresponding specification outcome. The final column supplies one common input case on which the two mutants differ. This avoids using different witness inputs as a false proof of different behavior.\n\nAll 44 public initial predictions also match their supplied P01 traces. The additional initial scoring results above independently establish a hidden witness for every initial source.\n\n| Task | M01 declared witness/result | M02 declared witness/result | Common-case discriminator: M01 versus M02 |\n| --- | --- | --- | --- |\n| S01 | H02: `4` | H01: `1` | H01: `0` vs `1` |\n| S02 | H01: `2` | H01: `2` | H05: `2` vs `1` |\n| S03 | H03: `[]` | H01: `[0,4]` | H03: `[]` vs `[5]` |\n| S04 | H04: `[false]` | H03: `[false,true]` | H04: `[false]` vs `[true]` |\n| S05 | H01: `3` | H01: `6` | H01: `3` vs `6` |\n| S06 | H04: `false` | H02: `false` | H02: `true` vs `false` |\n| S07 | H02: `0` | H03: `1` | H03: `0` vs `1` |\n| S08 | H02: `[\"x\",\"x\"]` | H01: `[\"a\",\"z\"]` | H02: `[\"x\",\"x\"]` vs `[\"x\"]` |\n| D01 | H01: `-1` | H03: `8` | H03: `-1` vs `8` |\n| D02 | H01: `[2,3,4]` | H02: `[8]` | H02: `[9,8]` vs `[8]` |\n| D03 | H02: `4` | H04: `null` | H02: `4` vs `6` |\n| D04 | H01: `0` | H03: `3` | H03: `0` vs `3` |\n| T01 | H02: `[[1,1]]` | H02: `[[0,0],[1,1],[0,2]]` | H02: one neighbor vs three reversed neighbors |\n| T02 | H01: `[0,1,2]` | H01: `[]` | H01: `[0,1,2]` vs `[]` |\n| T03 | H03: `true` | H02: `false` | H02: `true` vs `false` |\n| T04 | H02: `3` | H04: `0` | H02: `3` vs `2` |\n| T05 | H03: `[false]` | H02: `[true]` | H02: `[false]` vs `[true]` |\n| T06 | H01: `[[0,0],[2,0]]` | H02: `[[0,0],[1,0]]` | H02: `[[0,0],[0,1]]` vs `[[0,0],[1,0]]` |\n| T07 | H05: `[]` | H02: `[\"1\"]` | H05: `[]` vs `[\"2\"]` |\n| T08 | H01: `[-3]` | H06: `[]` | H01: `[-3]` vs `[3]` |\n| T09 | H02: `[true,false]` | H03: `[true]` | H03: `[false]` vs `[true]` |\n| T10 | H02: `0` | H04: `4` | H02: `0` vs `2` |\n| T11 | H02: `2` | H01: `8` | H01: `12` vs `8` |\n| T12 | H01: `[[4,3]]` | H03: `[[2,1],[1,1]]` | H03: `[[1,1],[2,1]]` vs `[[2,1],[1,1]]` |\n| T13 | H02: `[[\"a\",1],[\"b\",3]]` | H01: `[[\"a\",2],[\"b\",2]]` | H01: `[[\"b\",2],[\"a\",2]]` vs reversed order |\n| T14 | H02: `[]` | H03: `[]` | H02: `[]` vs `[[1,\"x\"]]` |\n| T15 | H02: `[\"a\",\"b\"]` | H02: `[\"a\",\"b\"]` | H05: `[\"a\",\"b\",\"c\"]` vs `[\"b\",\"c\",\"a\"]` |\n| T16 | H02: `[[\"x\",1]]` | H02: `[[\"x\",1],[\"x\",2],[\"x\",3]]` | H02: one retained record vs three |\n| R01 | H01: `2` | H02: `1` | H01: `2` vs `-1` |\n| R02 | H03: `3` | H04: `3` | H03: `3` vs `-1` |\n| R03 | H01: `1` | H02: `2` | H02: `1` vs `2` |\n| R04 | H02: `2` | H03: `6` | H03: `-6` vs `6` |\n| R05 | H01: `[[5,3,1],[6,4,2]]` | H02: `[[2],[4]]` | H02: `[[2],[4],[6]]` vs `[[2],[4]]` |\n| R06 | H02: `[0,0,0]` | H01: `[13,8]` | H02: `[0,0,0]` vs `[6,4,2]` |\n| R07 | H02: `[[3],[2],[1]]` | H01: `[[1],[2]]` | H02: `[[3],[2],[1]]` vs `[[1],[2],[3]]` |\n| R08 | H02: `[]` | H02: `[[6,4,2]]` | H02: `[]` vs `[[6,4,2]]` |\n| R09 | H02: `[\"a\",\"ab\"]` | H03: `[\"a\\\\\"]` | H02: `[\"a\",\"ab\"]` vs `[\"a\",\"b\"]` |\n| R10 | H04: `\"x\"` | H03: `\"\"` | H04: `\"x\"` vs VE |\n| R11 | H01: bare double quote | H01: two backslashes followed by quote | H01: bare quote vs two backslashes followed by quote |\n| R12 | H02: `-1` | H03: `1` | H03: `0` vs `1` |\n| R13 | H02: VE | H03: `-1` | H02: VE vs `100` |\n| R14 | H06: `[1,1]` | H04: `[3,2]` | H04: `[2,3]` vs `[3,2]` |\n| R15 | H03: `12345` | H02: `123` | H03: `12345` vs VE |\n| R16 | H02: VE | H03: `3` | H02: VE vs `0` |\n\nT15's structure note awkwardly says the mutants \u201cdiffer on H01\u201d before immediately admitting equality there and switching to H05. H01 indeed does **not** distinguish them; H05 does, as traced above. This is a wording blemish, not an additional failed-mutant requirement, because the record supplies a valid discriminator and its outcomes.\n\n## Complete 128-pair S/T structure audit\n\nEach cell is one reviewed S/T pair. Judgments consider initial, reference and mutant mechanisms, not just labels.\n\n- **D:** Distinct repair-bearing structure found in this pair; no specific near-template defect identified. Not a proof of statistical or semantic independence.\n- **R:** Related mechanism or reducibility remains, but a concrete algorithm/control/data-state distinction exists. Read the detailed close-pair discussion below.\n- **B1/B2/B3:** Structural quality acceptance withheld for findings 1/2/3.\n\nColumn mechanisms: S01 ordered prefix rank; S02 interval-overlap formula; S03 delimiter sum state; S04 row-local membership; S05 two-bag minimum frequencies; S06 consuming stock predicate; S07 earliest maximum; S08 first-occurrence deduplication.\n\n| Transfer | S01 | S02 | S03 | S04 | S05 | S06 | S07 | S08 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| T01 | R: coordinate clipping vs rank | R: clipping vs overlap length | D: coordinates vs segment state | D: no row membership | D: no frequencies | D: no stock consumption | D: fixed directions vs winner | D: no deduplication |\n| T02 | R: length-index range vs value rank | R: window-fit length vs intersection | D: no segment state | D: no membership state | D: no frequencies | D: no requests | D: all starts vs best index | D: no label order |\n| T03 | R: endpoint comparisons vs rank | R: closed containment vs half-open size | D: no accumulator | D: no membership | D: no frequencies | D: no stock | D: predicate vs winner | D: no output dedup |\n| T04 | B1: equality-swapped rank | R: bucket rank vs overlap formula | D: no reset state | D: no membership | D: no frequencies | D: no inventory | D: scalar rank vs argmax | D: no label dedup |\n| T05 | R: threshold predicate, not rank | D: no interval operation | R: per-event streak vs segment sum | R: event reset vs row set reset | D: consecutive state, not bags | D: failure streak, not inventory | D: alerts vs winner | D: no dedup |\n| T06 | D: dual indices vs value rank | D: no interval formula | R: dual per-event indices vs segment sum | R: scalar batch state vs row set | D: no frequency reduction | D: no stock | D: numbering vs winner | D: numbering vs dedup |\n| T07 | D: decimal parsing vs rank | D: no interval operation | R: lexical accumulator and active state | R: number state vs membership set | D: positional number, not counts | D: character grammar, not consumption | D: no winner selection | D: repeated runs retained |\n| T08 | D: predecessor gaps vs cutoff | D: session subtraction vs interval formula | R: predecessor sentinel vs accumulated sum | R: session predecessor vs row membership | D: no frequencies | D: no inventory | D: adjacent differences vs winner | D: contiguous sessions, no dedup |\n| T09 | D: request decisions vs rank | D: no interval operation | D: consumption vs delimiter reset | D: multiset consumption vs row set | R: sequential allocation vs bag minimum | B2: same missing consumption | D: request vector vs winner | D: requests preserved, not deduped |\n| T10 | D: histogram vs rank | D: bag distance vs interval length | D: two signed passes, no segment reset | D: persistent count map vs row sets | R: algebraic relation, different accumulation | R: count imbalance vs consumption | D: no winner | D: order irrelevant |\n| T11 | D: combinations vs rank | D: no interval formula | D: frequency reduction, no reset | D: counts vs row uniqueness | R: unary combinatorics vs bag intersection | R: frequency primitive, no request loop | D: no winner | D: occurrences counted, not ordered labels |\n| T12 | D: triples vs cutoff rank | D: quotient vs overlap length | D: no segment state | D: unary counts vs per-row sets | R: quotient/filter vs two-bag minimum | R: frequency primitive, no consumption | D: all values vs best score | R: ascending frequencies vs stable dedup |\n| T13 | D: full sort vs prefix rank | D: no interval formula | D: no reset state | D: no row membership | D: duplicates retained, no count reduction | D: no consumption | R: stable full sort vs single argmax | R: score-key tie policy vs label dedup |\n| T14 | R: sorted cursors vs single prefix scan | D: no interval intersection | D: cursor movement, not reset | D: no membership set | D: all events retained | D: merge cursors, not stock removal | R: cross-stream tie vs argmax tie | R: stable merge, no dedup |\n| T15 | D: last-position map vs rank | D: no interval formula | D: overwriting positions, no segment reset | D: last positions vs row uniqueness | D: positions rather than frequencies | D: no stock | R: last-occurrence ordering vs earliest winner | R: last-index map/sort vs first accumulation |\n| T16 | D: group quota vs rank | D: no interval operation | D: grouped storage, not sum reset | D: persistent groups vs per-row membership | D: retained records vs bag minimum | D: per-group quota, no stock requests | R: grouped selection vs single winner | B3: same extraneous final sort |\n\n### Close-pair decisions and residual risks\n\n- **S03/T06:** Both reset a local scalar, but S03 excludes delimiters from values and emits one aggregate per segment, including empties. T06 emits every flag as an event before updating two coupled counters; a true flag belongs to the ending batch. This is a real state-transition and emission distinction, not an extra loop around the same segment sum. Shared reset learning remains intentional; I do not find an additional blocking clone here.\n- **S03/T05:** Success/failure threshold output is produced for every event after the update; there is no segment-final sum or empty-segment output. T05 includes threshold boundary mutants, explaining auxiliary overlap with S01. The initial reset family remains accurate.\n- **S03/T07:** Decimal positional construction, an explicit active-run state, omission of empty runs, and a final flush distinguish parsing from summing delimiter-separated integers. The missing reset is shared, so this is near-mechanism transfer, not an unrelated capability.\n- **S04/T05\u2013T08:** Reset scope is shared, but row-local set membership is not reused as the event counter, batch index, decimal accumulator or predecessor-time state. Repeated labels/values do not induce the same set algorithm.\n- **S05/T10:** Mathematically, deletion count equals `len(left)+len(right)\u22122\u00d7intersection_size`. This reducibility must be disclosed. The actual sources nevertheless use two signed histogram passes and an absolute-value reduction, versus S05's distinct-left enumeration and minimum counts. T10 initial deduplicates one input; S05 initial converts both sides' relevant counts to presence. I judge the concrete implementations distinct enough under the approved table, not semantically independent.\n- **S05/T11/T12:** They share exact counting primitives. T11 has a one-bag combinatorial reduction; T12 has frequency division, zero-result omission and value ordering. Neither is just S05's two-bag minimum with renamed inputs. AST/comprehension similarity alone is not a rejection criterion.\n- **S06/T09:** Full outputs and failure continuation differ, but the erroneous inventory update and correct removal operation coincide; see finding 2. This is a stricter repair-context judgment, not denial that the approved per-request output was delivered.\n- **S07/T13/T14:** A full stable key sort and a two-cursor left-priority merge differ from maintaining one best index. Tie preservation is the intended shared mechanism, not evidence of general independence.\n- **S08/T15:** First-occurrence accumulation differs from last-index overwrites followed by index-key sorting. T15's initial source already computes the correct last-index map but discards it, making the repair easier than deriving that map from scratch. This is a quality limitation, not a false case or an additional blocking finding: the needed ordering relation and correction differ from simply deleting S08's alphabetic sort.\n- **S08/T16:** Unlike T15, T16 needs no new ordering relation: it needs exactly the already-available first-appearance order restored by removing a sort. The grouping/quota wrapper is not the repair target; see finding 3.\n- **S01/T04:** The equality-swapped identity is stronger than ordinary shared-boundary reasoning and is the clearest structural rejection; see finding 1.\n\nNo \u201cD\u201d or \u201cR\u201d cell is a claim that a future model cannot transfer information across that pair. The design intentionally shares four repair families; this audit distinguishes that from the specific near-template cases.\n\n## Development overlap audit\n\nAll four development tasks were compared with the eight supervision and 32 transfer/retention tasks, and with one another. The meaningful nearest neighbors are listed here; other comparisons did not reveal a closer shared repair structure.\n\n| Development task | Closest relationships | Judgment |\n| --- | --- | --- |\n| D01 | R01\u2013R04 share scalar sign branches; R13/R16 share conditional checks. | Three-way sign classification has no divisor, rounding direction, remainder, interval or rejection semantics. No duplicate task/repair found. Initial also misclassifies negatives, not just zero; the dev_sign label covers both. |\n| D02 | T02 uses valid index ranges; R08 uses slices and reshape dimensions. | Sampling given offset/stride differs from emitting all complete-window starts and from row-width reconstruction. Primitive indexing overlap is real, but no identical repair was found. |\n| D03 | S04/R14 traverse nested containers; T15/T16 use maps. | Two keyed lookups with a wrong outer key are not row membership, shape validation, last-position mapping or grouping. Its zero-versus-missing mutant additionally overlaps T08's falsey-zero concern without duplicating the main task. |\n| D04 | T07 shares inclusive ASCII digit classification; R15 embeds the same predicate in validation. | Strong predicate reuse, but counting, lexical number construction and exact-length/rejection parsing have different outputs and initial errors. D04's ASCII-only domain permits `.isdigit()` as a repair; R15's Unicode invalid inputs specifically make that insufficient. No full near-clone found; do not describe these as unrelated language abilities. |\n\nThe four development families match the approved independent labels. Development is not a second supervised set, but this static review does not establish what any future calibration workflow exposes or retains. No claim of runtime information isolation follows from these comparisons.\n\n## Retention primary-label audit\n\nThe primary label is judged from the **initial-to-correct repair**, not from the families touched by the deliberately different mutants.\n\n| Task | Actual initial defect | Primary-label judgment and overlap |\n| --- | --- | --- |\n| R01 | Floor quotient instead of truncation toward zero. | `signed_rounding` accurate; sign handling overlaps D01, not the supervised initial repairs. |\n| R02 | Floor instead of ceiling. | `signed_rounding` accurate; related to R01 but a distinct direction rule. |\n| R03 | Positive-divisor floor-modulo instead of truncation-associated signed remainder. | `signed_rounding` accurate; algebraically linked to R01 within retention. |\n| R04 | Negative midpoint goes toward zero under the initial offset formula. | `signed_rounding` accurate; a numerical midpoint is not S07's stable record tie. |\n| R05 | Returns row copy instead of swapping axes. | `matrix_axis` accurate. Reference is R07 initial after renaming; retained overlap disclosed. |\n| R06 | Row sums instead of column sums. | `matrix_axis` accurate; summation primitive overlaps S03, but reduction axis is the repair. |\n| R07 | Transposes without reversing source row direction. | `matrix_axis` accurate; also needs spatial order reversal. R05 M01 equals this reference. |\n| R08 | Uses row count as row width. | `matrix_axis` accurate; slice/index primitives overlap D02/T02 without the same dimensional error. |\n| R09 | Never recognizes escape introducer. | `escape_scan` accurate; delimiter fields overlap S03, and M01 intentionally has a reset-family bug. |\n| R10 | Copies escape code rather than mapped character. | `escape_scan` accurate; unknown/trailing escape rejection touches validation. Finding 4 concerns coverage, not label. |\n| R11 | Omits original backslashes from the set of characters requiring escaping. | `escape_scan` accurate under the explicitly approved encoder task; it is stateless character transformation, not proof of a distinct stateful scanning capability. |\n| R12 | Never enters escape state before looking for quote. | `escape_scan` accurate; M01 is a reset error and M02 is an index-boundary error, so abilities are not disjoint. |\n| R13 | Accepts bool through the int-subclass check. | `validation` accurate; range-boundary mutants touch bounds, but exact-type refusal is the initial repair. |\n| R14 | Does not reject unequal row widths. | `validation` accurate; matrix shape and row traversal overlap matrix_axis/S04. M02 deliberately swaps output axes. |\n| R15 | Accepts Unicode decimal digits when ASCII-only code is required. | `validation` accurate; D04/T07 share the character predicate, so disjoint family names do not prove no transfer. |\n| R16 | Does not reject reversed intervals. | `validation` accurate; interval domain overlaps S02/T03 and its M02 is a closed/half-open bounds bug. |\n\nNo retention **primary** family was found mislabeled against the approved table. That is not a clean-room retention claim. In particular R09/R12 depend on state, R13/R16 on bounds/type conditions, and R05/R07 reuse complete implementations within retention. Those are relevant limitations on interpreting a future aggregate retention score.\n\n## Acceptance boundary and next disposition\n\n1. Resolve findings 1\u20133 with the task owner before claiming structurally separated transfer. The approved design requires changes and their reasons to be recorded and the split reconfirmed; this reviewer has not revised the bank or authorized replacements.\n2. Close R10's required boundary coverage in an authorized data revision and recheck its static expectations and source binding.\n3. Retain all 44 tasks or explicitly stop the fixed-size batch; do not silently drop the rejected pairs to obtain a passing subset.\n4. Obtain Group 2 review separately. Public/oracle allowlists, derived hashes, manifest flags and cross-group packaging acceptance are not certified by this source-only report.\n5. Dynamic validation and actual tokenizer/chat-template length checks remain unperformed, separately authorized future gates. They are not reasons to invent a static PASS, and static findings should not be repaired by merely running the current cases.\n\nThis report certifies completion of the described **static inspection**, not all-input correctness, independence of model errors, human authority, training readiness, LoRA benefit or production relevance. The correct name remains an assistant-constructed, bounded experimental task bank.\n\n---\n\n## Follow-up \u2014 R10 closure and separate Group 2 review\n\nDate: 2026-11-11. This is an append-only follow-up. The preceding review remains the historical assessment of source SHA256 `6a3e2ede42bc9182eef38130ef7d8d193f7bc6e4005b3c8a3f03490d751eede9`; its original text, counts and findings have not been rewritten.\n\n### Updated verdicts\n\n- **Finding 4: CLOSED for static required-case coverage.** R10 H07 and H08 correctly cover adjacent complete escape sequences. Their expected values and explanations agree with the specification and manual source traces. This does not claim executed reference acceptance.\n- **Findings 1\u20133: OPEN, unchanged.** S01/T04, S06/T09 and S08/T16 remain unresolved pending user reconfirmation. No task, family, specification or function source changed in this follow-up. Overall structural/task-bank acceptance remains **CHANGES REQUIRED**.\n- **Group 2 current-data verdict: PASS \u2014 bounded static projections, bindings and false flags only.** The exact inspected snapshot has the intended field separation, counts, task-content digests, raw-file hashes and literal-false admission flags. No current projection or binding defect was found.\n- **Group 2 checker-quality finding: one nonblocking P2, G2-1 below.** The helper's final manifest comparison is weaker than a strict schema/duplicate-key check. The independently inspected manifest does not contain the problematic forms. A reported helper success alone is not sufficient evidence for the stronger data verdict above.\n- **No pilot acceptance.** Group 2's PASS neither closes structural findings nor establishes dynamic correctness, tokenizer fit, security isolation, actual training, model performance or run permission.\n\n### Follow-up evidence and unchanged original\n\nCurrent source SHA256:\n\n`f198764ec17690a7c9e3b289f904a166f77727478212381bb3aaef584efbf8d2`\n\nRead the supplied `/tmp/tlf-lora-data-20261111-lW6uR7/R10-followup.diff`, the current R10 record, the complete Group 2 JSON files, and all 221 lines of `/tmp/tlf-lora-data-20261111-lW6uR7/check_data.py`. Also statically inspected the helper's direct CPU-manifest dependency in `experiments/lora_necessity/pilot_protocol.py`, including its configuration and manifest validation/building routines. Neither Python module was imported or run by this reviewer.\n\nIndependent delta checks:\n\n1. Reconstructed the old source bytes from the original full-addition `task-1.diff` and checked the old source hash.\n2. Compared the actual old/current unified hunk with `R10-followup.diff`; the hunks match exactly.\n3. Removed H07/H08 only from an in-memory copy of the current JSON. The remaining complete object equals the originally reviewed source under type-preserving canonical JSON comparison.\n4. Confirmed the sole content addition is those two R10 scoring cases. All 176 embedded function strings, 44 specifications, families, IDs, initial witnesses, mutants and preexisting cases remain unchanged.\n5. Confirmed both new argument lists differ from all eight preexisting R10 public/scoring argument lists.\n\nThere are now **44 tasks, 88 public cases, 266 scoring cases and 88 mutants**. The two additional outcomes extend the original 352-case static review to 354 cases without implying a suite rerun.\n\nEvidence hashes:\n\n| Artifact | SHA256 |\n| --- | --- |\n| `R10-followup.diff` | `e05b5baf86b32088ddfbb92a529ec56a7e68b59e0709a56353d72f396fa59bc4` |\n| `check_data.py` | `0055bea16a7c98ee01066a1b1fad6fac24cd5600f17f45c54e05c87284c91253` |\n| `pilot_protocol.py` | `5074980a2b5b9d8ec0a52288d7cb62cbc847688f094cd8ba189a7135ba315c97` |\n| Original report, before this append, 40,258 bytes | `75ec68c45c57c068c6209f48c9369f05d4bee251e9ab5e9f403283516f54127e` |\n\nThe original report's byte length and hash provide an exact prefix-preservation check, rather than relying on a claim that the original was \u201cnot substantially changed.\u201d\n\n### R10 manual derivation and closure\n\nLocations in the current source: `experiments/lora_necessity/data/task_sources_v1.json:7451` and `:7462`.\n\nTo avoid confusion between JSON escaping and the characters supplied to the task, the following table gives decimal character code points **after JSON decoding**. This inspection decodes data; it does not call a task function.\n\n| Case | Actual input code points | Required output code points | Independent derivation |\n| --- | --- | --- | --- |\n| H07 | `[92,110,92,116]` \u2014 backslash, n, backslash, t | `[10,9]` \u2014 newline, tab | Consume positions 0\u20131 as newline, then positions 2\u20133 as tab. There is no ordinary character between the two escape pairs. |\n| H08 | `[92,92,92,110]` \u2014 three backslashes followed by n | `[92,10]` \u2014 backslash, newline | Positions 0\u20131 encode one literal backslash. Positions 2\u20133 independently encode newline. The emitted backslash is output data and is not rescanned as an escape introducer. |\n\nBoth inputs have length four and are valid ASCII within the R10 domain. Each expected outcome is a return, not an exception. The reference advances its cursor once to the escape payload and once to the next pair, so its manual trace agrees with both stored expectations.\n\nFor completeness, manual predictions for the unchanged four R10 sources on the new cases are:\n\n| Case | Reference | Initial | M01 | M02 |\n| --- | --- | --- | --- | --- |\n| H07 | newline + tab | literal `\"nt\"` | newline + tab | newline + tab |\n| H08 | backslash + newline | backslash + literal `n` | backslash + newline | newline only |\n\nIt is not necessary for every new case to reject every mutant. M01's existing unknown-escape witness H04 and M02's existing literal-backslash witness H03 are unchanged. H08 additionally exposes M02's deleted backslash. The original initial-source H01 witness remains intact.\n\nThese observations directly close the missing-boundary issue in finding 4. The closure is confined to **static case coverage and checked expectations**, not a statement that these functions were executed successfully.\n\n### Group 2 field and projection audit\n\nThe checker was treated as review input, not as the authority defining correctness. I separately checked explicit field sets and every projected value against the reviewed source, parsed all six package JSON files with duplicate-key/nonfinite-number rejection, and compared type-preserving canonical values. All four view files also match the intended deterministic JSON serialization: ASCII escaping, sorted keys, two-space indentation and a final newline.\n\n| File | Records and exact record fields | Nested fields and separation result |\n| --- | --- | --- |\n| `structure_v1.json` | 44; `id`, `split`, `family`, `template_id`, `structure_notes` | All fields match the source in original task order. Notes contain review/mutant information and are **offline metadata**, not public model-input material. They remain author notes, not independent approvals. |\n| `supervision_v1.json` | Eight S records only; `id`, `entry_point`, `spec`, `initial_source`, `public_cases`, `reference_source`, `initial_witness` | Sixteen public cases, each restricted to `id`, `args`, `expected`. No scoring-case arrays, mutants, structure notes or evaluation-task records. Correct solutions and public initial witnesses are intentionally present for the eight supervised examples. |\n| `prompts_v1.json` | 36 D/T/R records; `id`, `entry_point`, `spec`, `initial_source`, `public_cases` | Seventy-two public cases, each restricted to `id`, `args`, `expected`. No reference source, hidden scoring cases, mutant source/predictions, initial-witness explanations or structure notes. |\n| `oracles_v1.json` | 36 D/T/R records; `id`, `reference_source`, `scoring_cases`, `initial_witness`, `mutants` | All oracle values match the source, including R10 H07/H08. There are 218 scoring cases and 72 mutants here. Joining by ID with prompts supplies each entry point and specification; the IDs are unique and aligned. |\n\nAdditional boundary checks:\n\n- The source's 266 scoring cases comprise 48 S cases retained in the offline full source plus 218 D/T/R cases in the oracle view. The 48 S scoring cases do not enter `supervision_v1.json`.\n- Public test expectations are intentionally visible examples. Their presence is not hidden-scoring leakage; hidden `scoring_cases` inputs, outputs and explanations do not enter prompts.\n- Supervision initial-witness reasons preserve strings such as `initial_scoring_case=H01`. These are offline cross-reference IDs inside the explicitly included witness field, not copied scoring arguments or scoring outcomes. The witness's actual prediction concerns its public case. No hidden-case payload was found in those eight reasons.\n- Evaluation initial-witness explanations remain oracle-only. This matters because they name the bug mechanism and hidden-case link.\n- Structure notes carry detailed mutant comparisons; the structure file must remain outside model-visible inputs. No current projection routes those notes into supervision or prompts.\n- All 44 structure IDs and all 36 prompt/oracle IDs retain the source order and correct split coverage. No task was dropped, moved or silently replaced.\n\nThis is content separation in the serialized views, not file-permission/process isolation. The full source and structure metadata are not safe substitutes for the allowlisted model-facing views. No renderer or trainer has been audited here, so same-byte rendering across text/lora_text arms remains a later implementation check.\n\n### Group 2 manifest and binding audit\n\nThe current outer manifest has exactly `kind`, `version`, `status`, `cpu_manifest`, `file_sha256` and the four admission flags. `kind` is `LORA_NECESSITY_STATIC_DATA`, `version` is integer 1, and `status` is `STATIC_ONLY`.\n\nAll four flags are JSON booleans whose values are literally false:\n\n- `benchmark_eligible`\n- `formal_evaluation_ready`\n- `net_benefit_established`\n- `isolated`\n\nThe embedded CPU manifest has exactly `kind`, `version`, `config`, `tasks`. Its 44 metadata rows have only `id`, `split`, `family`, `template_id`, `content_sha256`. Each digest was independently recalculated from the **entire corresponding task object**, using sorted-key compact ASCII JSON with nonfinite values disallowed and UTF-8 bytes. They are not ID-only digests. All 44 match; the updated R10 content digest is:\n\n`a1a10c76fa33a7fbbe69d4e9abb5b9182696a69e1afa797f4e4846cb73dcd063`\n\nThe source IDs, split/family labels and template IDs match all metadata rows. Counts remain 8/4/16/16 with the approved family balance. Configuration matches the statically inspected CPU contract, including four arms, rank-8 q/v LoRA, 16 training steps, input/output limits 4096/256, two calls per episode, total-call limit 272 and unchanged screening thresholds. These numbers remain metadata, not evidence that a runtime enforces them.\n\nThe `file_sha256` map contains exactly the five source/view files below. All five hashes match the actual raw file bytes, independently of task-content hashing:\n\n| Bound file | Current SHA256 |\n| --- | --- |\n| `task_sources_v1.json` | `f198764ec17690a7c9e3b289f904a166f77727478212381bb3aaef584efbf8d2` |\n| `structure_v1.json` | `930af52e7f12b9afe3743186c95ca0d66f78f143f9c0d9f8b24654e37257cc62` |\n| `supervision_v1.json` | `4dafb0ac759697e9b80c5bf097b363082a17a34e6b78fb3d3b91d37a76beb78a` |\n| `prompts_v1.json` | `9e20ff6247d28cdc87079e7ba388872b3f6b8f78630080a9f33038b93cb5d2c9` |\n| `oracles_v1.json` | `7b26e71b63ed5b0513e82b9959784cf9b55e703ceb14b3ed68170a31bfcfc67f` |\n\nThe manifest's own raw-file SHA256 is `a9cb2e5bb542857ccafd068d46d2b50ae003611600e1d1f8919a4a48586961a9`. It is recorded externally here; omitting a recursive self-hash from `file_sha256` is not a defect.\n\nThe helper verifies the CPU module hash before importing it. The inspected module's bytes match that pin. This reviewer instead read its configuration/validation logic and compared the data without importing it.\n\n### G2-1 \u2014 P2: final manifest comparison loses JSON type and duplicate-key distinctions\n\n- **Category:** \u5065\u58ee\u6027 / validation reliability.\n- **Confidence:** 10/10 for the comparison behavior.\n- **Location:** `/tmp/tlf-lora-data-20261111-lW6uR7/check_data.py:213`.\n- **Problem expression:** `assert json.loads(destination.read_text()) == manifest`\n- **Current-snapshot impact:** None found. The actual manifest passed this review's strict duplicate-key parsing and exact type/flag checks. This is a checker weakness, not a claim that the current manifest is corrupt.\n\nThe helper builds and validates the **expected** CPU manifest at lines 199\u2013202, but it only uses ordinary Python equality to compare the loaded on-disk outer manifest. Python equality equates `True` with `1` and `0` with `False`. Thus an on-disk manifest with boolean `version: true` in place of integer `version: 1`, or numeric `benchmark_eligible: 0` in place of boolean false, can pass the final comparison. A downstream strict schema check can reject such a manifest despite the helper having announced success.\n\nAlso, the source loader uses `unique_object` to reject duplicate keys, but the final manifest loader does not. A conflicting earlier duplicate admission flag can be silently discarded by `json.loads`, allowing equality with the expected object. That ambiguity is not compatible with a strict single-value manifest contract.\n\nBoth behaviors were confirmed using in-memory copies/JSON text only: the type-substituted copy compared equal, and a text copy with an earlier conflicting duplicate flag also parsed equal. The checker was not run, and no package file was changed.\n\n**Recommendation:** In a separately authorized checker revision, reject duplicate keys when loading the manifest and compare types as well as values, or enforce its specified canonical serialized representation. Validate the loaded CPU manifest itself and require each outer admission flag with `is False`. Do not treat the current equality assertion as proof of exact schema compliance.\n\nThis is P2 because it is defensive validation coverage without a present bad artifact or an established runtime consumer failure. It does not convert the verified current-data Group 2 PASS into a structural or pilot PASS.\n\n### Checker limitations and final disposition\n\nThe static helper's field allowlists and projection selection are appropriate for the inspected records. The read-only package path reconstructs views, compares their text, checks raw-file hashes and constructs task-content metadata; its assembly branch writes only when separately selected. None of those branches was executed in this review.\n\nOther boundaries remain explicit:\n\n- `validate()` checks schema/AST shape and the existence of declared witness links, not the truth of manual predictions or semantic independence. Its printed `STATIC_SHAPE_CHECKS_ONLY` and `semantics_verified: false` accurately delimit those checks.\n- AST node restrictions are not a complete builtin/method capability allowlist, and cannot serve as a sandbox. The currently reviewed source strings remain unchanged; this review does not generalize that safety assessment to arbitrary future strings accepted by the helper.\n- Unique full-task digests bind content but do not prove novelty; including different IDs in the hashed objects is not semantic deduplication.\n- Hashes do not prove authorship, human sign-off, runtime isolation or preserved access boundaries. The manifest records no completed dynamic or tokenizer gate, and grants no admission.\n- `review_v1.json` and `DATA_AUDIT.md` are not among the supplied Group 2 data files. This scoped verdict does not certify completion or binding of those later review/audit deliverables.\n\n**Disposition:** Finding 4 is closed; findings 1\u20133 remain open. Current static Group 2 projections/bindings/false flags pass, with G2-1 recorded as a nonblocking checker follow-up. The aggregate task bank remains structurally unaccepted, and no pilot is authorized.\n\nOnly this appendix was written. No suite rerun, task-source execution, checker/module import, model/tokenizer/network use, Git mutation, repository edit or additional agent was involved.\n\n---\n\n## Narrow follow-up \u2014 G2-1 canonical-byte comparison closure\n\nDate: 2026-11-11. Scope: the temporary checker change and its manifest-strictness diagnostic only. All preceding report bytes are retained; this appendix supersedes only the earlier open status of G2-1.\n\n**Verdict: G2-1 CLOSED on static inspection.** The checker now compares the on-disk manifest against one canonical, typed serialization rather than comparing parsed Python objects. This directly removes the numeric/bool equality and duplicate-key normalization paths identified in G2-1. No additional finding was identified within this narrow change.\n\n**Unchanged disposition:** Finding 4 remains closed. Findings 1\u20133 remain open pending user reconfirmation. The prior Group 2 current-data PASS remains limited to its static projection/binding/false-flag scope; this checker closure grants no structural acceptance, pilot acceptance, execution permission or model-result claim.\n\n### Inspected change\n\nRead the complete current files without importing or executing them:\n\n- `/tmp/tlf-lora-data-20261111-lW6uR7/check_data.py` \u2014 222 lines.\n- `/tmp/tlf-lora-data-20261111-lW6uR7/check_manifest_strictness.py` \u2014 40 lines.\n\nAt `check_data.py:209`, the expected manifest is serialized once with `ensure_ascii=True`, `sort_keys=True`, `indent=2`, `allow_nan=False`, a final newline, and explicit ASCII encoding. This produces the single `encoded_manifest` byte string.\n\nAt `check_data.py:212`, assembly uses exclusive binary mode `xb`, then writes that exact byte string. At `check_data.py:214`, verification requires `destination.read_bytes() == encoded_manifest`. Assembly and verification therefore share the same representation without a text-mode newline/encoding conversion.\n\nThe expected object still supplies integer version 1, literal-false admission flags, and the validated expected CPU manifest. The on-disk manifest is not parsed before its final comparison:\n\n- Numeric `0` cannot compare equal to the serialized token `false`.\n- Boolean `true` cannot compare equal to the serialized integer token `1`, at either the outer or nested CPU-manifest version.\n- An extra duplicate key cannot disappear through JSON parsing; its additional bytes cause a mismatch.\n\nThis is the canonical-serialization alternative explicitly allowed by the earlier recommendation. A second parsed-object validation step is not required to close this specific issue when exact equality to the validated expected serialization is enforced. Rejection of otherwise equivalent whitespace/key-order variants is intentional under this file-format contract, not a regression.\n\nThe conclusion assumes ordinary assertion-enabled use of this temporary checker, as in main's reported runs; it does not certify the helper as a production security boundary.\n\n### Diagnostic inspection\n\nThe diagnostic uses `runpy` to load the helper, reads task JSON as data, copies the data directory and pinned CPU metadata module into a temporary directory, and redirects `package()` to those copies. It first checks that the unchanged manifest is accepted, then independently overwrites the copied manifest with each of three variants derived from the original:\n\n1. `benchmark_eligible: false` replaced by numeric `0`.\n2. The first serialized `\"version\": 1` replaced by `\"version\": true`.\n3. An earlier conflicting `benchmark_eligible: true` inserted before the existing false flag.\n\nIt verifies that each substitution changed the text and requires an `AssertionError` for each mutated manifest; failure to reject produces the diagnostic's `checker accepted ...` assertion. The baseline acceptance check precedes the negative cases, and the sibling data files remain unchanged while each variant targets the copied manifest.\n\nPrecision note: with the current sorted manifest layout, the first version occurrence is the **nested CPU-manifest version**, so that diagnostic case directly exercises nested rather than outer version typing. The checker's whole-file byte comparison covers both locations by inspection. This distinction does not prevent G2-1 closure.\n\nThe diagnostic does not exercise assembly's `write=True` branch; that branch was inspected statically for reuse of the same bytes. No dynamic assembly coverage is claimed here. The diagnostic's execution of checker/CPU metadata code must also not be confused with execution of embedded task-function strings. This reviewer executed neither.\n\n### Main-reported results, not reviewer reruns\n\nThe following results are attributed to **main's report in the user follow-up**. I did not rerun the diagnostic, package checker or CPU suite, and did not independently inspect separate execution logs:\n\n| Main-reported check | Reported result |\n| --- | --- |\n| Pre-fix strictness diagnostic | RED: `AssertionError: checker accepted numeric flag` |\n| Post-fix strictness diagnostic | GREEN: canonical manifest accepted; numeric flag, boolean version and duplicate flag rejected |\n| Full `--check-package` | GREEN: 44 tasks, 176 strings, 88 public cases, 266 scoring cases, 88 mutants |\n| Existing CPU suite | 26 tests GREEN in 0.094 seconds |\n\nThese reported observations are consistent with the inspected repair and diagnostic, but remain main's execution evidence. The independent evidence supplied by this follow-up is static code inspection plus local file/hash and report-prefix verification, not another test run.\n\n### Identity and append-only preservation\n\nHashes independently read in this follow-up:\n\n| File | SHA256 |\n| --- | --- |\n| Current `check_data.py` | `390d5b4dcc6fe96adc156bed3cf1882c7d5b6eb906f32c25c52ee785eb1763b2` |\n| `check_manifest_strictness.py` | `0121e9f7a054874a75051b4430315a00a7133dfb30b6b34bfef9108ae1d2439f` |\n| `task_sources_v1.json` | `f198764ec17690a7c9e3b289f904a166f77727478212381bb3aaef584efbf8d2` |\n| `manifest_v1.json` | `a9cb2e5bb542857ccafd068d46d2b50ae003611600e1d1f8919a4a48586961a9` |\n| Entire report immediately before this append, 56,341 bytes | `02012298f55dd4488e6397644834b222c1489f8aefaa2b6aa2f8cdabb294c1cd` |\n\nThe source and manifest hashes match the previous reviewed snapshot. The 56,341-byte prefix includes both the original Group 1 report and the entire R10/Group 2 appendix, not merely the original 40,258 bytes. Final prefix verification and the resulting full report hash are returned with this follow-up.\n\nOnly this report appendix was written. No suites, diagnostic, checker, embedded task source, model or tokenizer were run; no network access, Git operation, repository edit or agent delegation occurred.\n"
+  },
+  "isolated": false,
+  "kind": "LORA_NECESSITY_STATIC_REVIEW",
+  "main_validation": {
+    "cpu_protocol_tests": {
+      "elapsed_seconds": 0.094,
+      "passed": 26
+    },
+    "embedded_task_source_executed": false,
+    "static_package": "PASS_SHAPE_ALLOWLIST_AND_HASH_CHECKS_ONLY"
+  },
+  "mutant_manual_traces": [
+    {
+      "M01_trace": "H02: `4`",
+      "M02_trace": "H01: `1`",
+      "same_input_discriminator": "H01: `0` vs `1`",
+      "task_id": "S01"
+    },
+    {
+      "M01_trace": "H01: `2`",
+      "M02_trace": "H01: `2`",
+      "same_input_discriminator": "H05: `2` vs `1`",
+      "task_id": "S02"
+    },
+    {
+      "M01_trace": "H03: `[]`",
+      "M02_trace": "H01: `[0,4]`",
+      "same_input_discriminator": "H03: `[]` vs `[5]`",
+      "task_id": "S03"
+    },
+    {
+      "M01_trace": "H04: `[false]`",
+      "M02_trace": "H03: `[false,true]`",
+      "same_input_discriminator": "H04: `[false]` vs `[true]`",
+      "task_id": "S04"
+    },
+    {
+      "M01_trace": "H01: `3`",
+      "M02_trace": "H01: `6`",
+      "same_input_discriminator": "H01: `3` vs `6`",
+      "task_id": "S05"
+    },
+    {
+      "M01_trace": "H04: `false`",
+      "M02_trace": "H02: `false`",
+      "same_input_discriminator": "H02: `true` vs `false`",
+      "task_id": "S06"
+    },
+    {
+      "M01_trace": "H02: `0`",
+      "M02_trace": "H03: `1`",
+      "same_input_discriminator": "H03: `0` vs `1`",
+      "task_id": "S07"
+    },
+    {
+      "M01_trace": "H02: `[\"x\",\"x\"]`",
+      "M02_trace": "H01: `[\"a\",\"z\"]`",
+      "same_input_discriminator": "H02: `[\"x\",\"x\"]` vs `[\"x\"]`",
+      "task_id": "S08"
+    },
+    {
+      "M01_trace": "H01: `-1`",
+      "M02_trace": "H03: `8`",
+      "same_input_discriminator": "H03: `-1` vs `8`",
+      "task_id": "D01"
+    },
+    {
+      "M01_trace": "H01: `[2,3,4]`",
+      "M02_trace": "H02: `[8]`",
+      "same_input_discriminator": "H02: `[9,8]` vs `[8]`",
+      "task_id": "D02"
+    },
+    {
+      "M01_trace": "H02: `4`",
+      "M02_trace": "H04: `null`",
+      "same_input_discriminator": "H02: `4` vs `6`",
+      "task_id": "D03"
+    },
+    {
+      "M01_trace": "H01: `0`",
+      "M02_trace": "H03: `3`",
+      "same_input_discriminator": "H03: `0` vs `3`",
+      "task_id": "D04"
+    },
+    {
+      "M01_trace": "H02: `[[1,1]]`",
+      "M02_trace": "H02: `[[0,0],[1,1],[0,2]]`",
+      "same_input_discriminator": "H02: one neighbor vs three reversed neighbors",
+      "task_id": "T01"
+    },
+    {
+      "M01_trace": "H01: `[0,1,2]`",
+      "M02_trace": "H01: `[]`",
+      "same_input_discriminator": "H01: `[0,1,2]` vs `[]`",
+      "task_id": "T02"
+    },
+    {
+      "M01_trace": "H03: `true`",
+      "M02_trace": "H02: `false`",
+      "same_input_discriminator": "H02: `true` vs `false`",
+      "task_id": "T03"
+    },
+    {
+      "M01_trace": "H02: `3`",
+      "M02_trace": "H04: `0`",
+      "same_input_discriminator": "H02: `3` vs `2`",
+      "task_id": "T04"
+    },
+    {
+      "M01_trace": "H03: `[false]`",
+      "M02_trace": "H02: `[true]`",
+      "same_input_discriminator": "H02: `[false]` vs `[true]`",
+      "task_id": "T05"
+    },
+    {
+      "M01_trace": "H01: `[[0,0],[2,0]]`",
+      "M02_trace": "H02: `[[0,0],[1,0]]`",
+      "same_input_discriminator": "H02: `[[0,0],[0,1]]` vs `[[0,0],[1,0]]`",
+      "task_id": "T06"
+    },
+    {
+      "M01_trace": "H05: `[]`",
+      "M02_trace": "H02: `[\"1\"]`",
+      "same_input_discriminator": "H05: `[]` vs `[\"2\"]`",
+      "task_id": "T07"
+    },
+    {
+      "M01_trace": "H01: `[-3]`",
+      "M02_trace": "H06: `[]`",
+      "same_input_discriminator": "H01: `[-3]` vs `[3]`",
+      "task_id": "T08"
+    },
+    {
+      "M01_trace": "H02: `[true,false]`",
+      "M02_trace": "H03: `[true]`",
+      "same_input_discriminator": "H03: `[false]` vs `[true]`",
+      "task_id": "T09"
+    },
+    {
+      "M01_trace": "H02: `0`",
+      "M02_trace": "H04: `4`",
+      "same_input_discriminator": "H02: `0` vs `2`",
+      "task_id": "T10"
+    },
+    {
+      "M01_trace": "H02: `2`",
+      "M02_trace": "H01: `8`",
+      "same_input_discriminator": "H01: `12` vs `8`",
+      "task_id": "T11"
+    },
+    {
+      "M01_trace": "H01: `[[4,3]]`",
+      "M02_trace": "H03: `[[2,1],[1,1]]`",
+      "same_input_discriminator": "H03: `[[1,1],[2,1]]` vs `[[2,1],[1,1]]`",
+      "task_id": "T12"
+    },
+    {
+      "M01_trace": "H02: `[[\"a\",1],[\"b\",3]]`",
+      "M02_trace": "H01: `[[\"a\",2],[\"b\",2]]`",
+      "same_input_discriminator": "H01: `[[\"b\",2],[\"a\",2]]` vs reversed order",
+      "task_id": "T13"
+    },
+    {
+      "M01_trace": "H02: `[]`",
+      "M02_trace": "H03: `[]`",
+      "same_input_discriminator": "H02: `[]` vs `[[1,\"x\"]]`",
+      "task_id": "T14"
+    },
+    {
+      "M01_trace": "H02: `[\"a\",\"b\"]`",
+      "M02_trace": "H02: `[\"a\",\"b\"]`",
+      "same_input_discriminator": "H05: `[\"a\",\"b\",\"c\"]` vs `[\"b\",\"c\",\"a\"]`",
+      "task_id": "T15"
+    },
+    {
+      "M01_trace": "H02: `[[\"x\",1]]`",
+      "M02_trace": "H02: `[[\"x\",1],[\"x\",2],[\"x\",3]]`",
+      "same_input_discriminator": "H02: one retained record vs three",
+      "task_id": "T16"
+    },
+    {
+      "M01_trace": "H01: `2`",
+      "M02_trace": "H02: `1`",
+      "same_input_discriminator": "H01: `2` vs `-1`",
+      "task_id": "R01"
+    },
+    {
+      "M01_trace": "H03: `3`",
+      "M02_trace": "H04: `3`",
+      "same_input_discriminator": "H03: `3` vs `-1`",
+      "task_id": "R02"
+    },
+    {
+      "M01_trace": "H01: `1`",
+      "M02_trace": "H02: `2`",
+      "same_input_discriminator": "H02: `1` vs `2`",
+      "task_id": "R03"
+    },
+    {
+      "M01_trace": "H02: `2`",
+      "M02_trace": "H03: `6`",
+      "same_input_discriminator": "H03: `-6` vs `6`",
+      "task_id": "R04"
+    },
+    {
+      "M01_trace": "H01: `[[5,3,1],[6,4,2]]`",
+      "M02_trace": "H02: `[[2],[4]]`",
+      "same_input_discriminator": "H02: `[[2],[4],[6]]` vs `[[2],[4]]`",
+      "task_id": "R05"
+    },
+    {
+      "M01_trace": "H02: `[0,0,0]`",
+      "M02_trace": "H01: `[13,8]`",
+      "same_input_discriminator": "H02: `[0,0,0]` vs `[6,4,2]`",
+      "task_id": "R06"
+    },
+    {
+      "M01_trace": "H02: `[[3],[2],[1]]`",
+      "M02_trace": "H01: `[[1],[2]]`",
+      "same_input_discriminator": "H02: `[[3],[2],[1]]` vs `[[1],[2],[3]]`",
+      "task_id": "R07"
+    },
+    {
+      "M01_trace": "H02: `[]`",
+      "M02_trace": "H02: `[[6,4,2]]`",
+      "same_input_discriminator": "H02: `[]` vs `[[6,4,2]]`",
+      "task_id": "R08"
+    },
+    {
+      "M01_trace": "H02: `[\"a\",\"ab\"]`",
+      "M02_trace": "H03: `[\"a\\\\\"]`",
+      "same_input_discriminator": "H02: `[\"a\",\"ab\"]` vs `[\"a\",\"b\"]`",
+      "task_id": "R09"
+    },
+    {
+      "M01_trace": "H04: `\"x\"`",
+      "M02_trace": "H03: `\"\"`",
+      "same_input_discriminator": "H04: `\"x\"` vs VE",
+      "task_id": "R10"
+    },
+    {
+      "M01_trace": "H01: bare double quote",
+      "M02_trace": "H01: two backslashes followed by quote",
+      "same_input_discriminator": "H01: bare quote vs two backslashes followed by quote",
+      "task_id": "R11"
+    },
+    {
+      "M01_trace": "H02: `-1`",
+      "M02_trace": "H03: `1`",
+      "same_input_discriminator": "H03: `0` vs `1`",
+      "task_id": "R12"
+    },
+    {
+      "M01_trace": "H02: VE",
+      "M02_trace": "H03: `-1`",
+      "same_input_discriminator": "H02: VE vs `100`",
+      "task_id": "R13"
+    },
+    {
+      "M01_trace": "H06: `[1,1]`",
+      "M02_trace": "H04: `[3,2]`",
+      "same_input_discriminator": "H04: `[2,3]` vs `[3,2]`",
+      "task_id": "R14"
+    },
+    {
+      "M01_trace": "H03: `12345`",
+      "M02_trace": "H02: `123`",
+      "same_input_discriminator": "H03: `12345` vs VE",
+      "task_id": "R15"
+    },
+    {
+      "M01_trace": "H02: VE",
+      "M02_trace": "H03: `3`",
+      "same_input_discriminator": "H02: VE vs `0`",
+      "task_id": "R16"
+    }
+  ],
+  "net_benefit_established": false,
+  "original_reviewed_source_sha256": "6a3e2ede42bc9182eef38130ef7d8d193f7bc6e4005b3c8a3f03490d751eede9",
+  "pair_code_legend": {
+    "B1": "Structural rejection under finding 1.",
+    "B2": "Structural rejection under finding 2.",
+    "B3": "Structural rejection under finding 3.",
+    "D": "Distinct repair-bearing structure; not statistical or semantic independence.",
+    "R": "Related mechanism with concrete distinction; not independence."
+  },
+  "per_task": [
+    {
+      "followup": null,
+      "id": "S01",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `2`, expected `0`.",
+      "original_reference_reasoning": "Sorted scan stops at first time at/above cutoff; all earlier duplicates count. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "S02",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `0`.",
+      "original_reference_reasoning": "Clamp `min(ends)-max(starts)` to zero; touching, empty and separated intervals yield zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "S03",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[1,5]`, expected `[1,4]`.",
+      "original_reference_reasoning": "Emit sum at every delimiter, reset, then emit final segment; preserves leading/trailing/adjacent empty segments. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "S04",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[true,false]`, expected `[true,true]`.",
+      "original_reference_reasoning": "Clear membership before each row; repeated entries only affect that row; empty rows are unique. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "S05",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `2`.",
+      "original_reference_reasoning": "Sum the smaller count for each distinct left value; right-only values contribute zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "S06",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `true`, expected `false`.",
+      "original_reference_reasoning": "Each requested character consumes one matching stock character; empty request succeeds. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "S07",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `0`.",
+      "original_reference_reasoning": "Initialize no winner, update only for a strictly larger score; preserves earliest ties and empty `-1`. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "S08",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[\"a\",\"z\"]`, expected `[\"z\",\"a\"]`.",
+      "original_reference_reasoning": "Append only first occurrences and return accumulated order; empty/case-sensitive labels preserved. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "D01",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H02 returns `1`, expected `-1`.",
+      "original_reference_reasoning": "Separate zero, then return positive or negative unit sign. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "D02",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[1,3]`, expected `[2,4]`.",
+      "original_reference_reasoning": "Positive-step slicing starts at the given offset; start equal to length yields empty. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "D03",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `8`, expected `2`.",
+      "original_reference_reasoning": "Fetch selected outer mapping then selected inner key; absent keys give null, stored zero remains zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "D04",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H03 returns `3`, expected `0`.",
+      "original_reference_reasoning": "Count inclusive ASCII digit membership; ignore other ASCII characters. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T01",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[1,0]]`, expected `[]`.",
+      "original_reference_reasoning": "Form four directional candidates then clip both coordinates, preserving candidate order. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T02",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[]`, expected `[0]`.",
+      "original_reference_reasoning": "Complete starts are integers from zero through length minus width, inclusive; none when negative. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T03",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `false`, expected `true`.",
+      "original_reference_reasoning": "Both inner endpoints must be inside the closed outer interval; equality allowed. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T04",
+      "open_structural_finding": "1",
+      "original_initial_scoring_trace": "H01 returns `0`, expected `1`.",
+      "original_reference_reasoning": "Number of crossed cuts includes equality; first larger cut supplies the bucket index. Consistent values, structural finding 1.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T05",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[false,false,true,true]`, expected `[false,false,false,true]`.",
+      "original_reference_reasoning": "Success zeroes the consecutive count; every event emits comparison after its update. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T06",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[0,0],[1,1]]`, expected `[[0,0],[1,0]]`.",
+      "original_reference_reasoning": "Emit current dual index before processing end flag; advance position and reset/increment batch after end. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T07",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[7,78]`, expected `[7,8]`.",
+      "original_reference_reasoning": "Decimal positional accumulation plus active-run state; appended separator flushes trailing run without creating empty numbers. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T08",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[8,3]`, expected `[3]`.",
+      "original_reference_reasoning": "User change clears predecessor; within-session subtraction uses immediately previous time, including zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T09",
+      "open_structural_finding": "2",
+      "original_initial_scoring_trace": "H01 returns `[true,true,true]`, expected `[true,false,false]`.",
+      "original_reference_reasoning": "Successful requests consume one copy; failed requests leave stock intact and processing continues. Consistent values, finding 2.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T10",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `0`, expected `1`.",
+      "original_reference_reasoning": "Accumulate left-minus-right counts; sum absolute differences, disallowing cancellation across values. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T11",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `6`.",
+      "original_reference_reasoning": "Each value with count c contributes c(c\u22121)/2 unordered, distinct-index pairs. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T12",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[4,1]]`, expected `[[4,2]]`.",
+      "original_reference_reasoning": "Sort distinct values; output only counts at least three, using integer quotient by three. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T13",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[\"a\",2],[\"b\",2]]`, expected `[[\"b\",2],[\"a\",2]]`.",
+      "original_reference_reasoning": "Stable sorting on negative score preserves tie order and duplicates. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T14",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[2,\"b\"],[2,\"a\"]]`, expected `[[2,\"a\"],[2,\"b\"]]`.",
+      "original_reference_reasoning": "Advance one of two sorted cursors; choose left on equality, then append both remainders. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T15",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[\"x\",\"y\"]`, expected `[\"y\",\"x\"]`.",
+      "original_reference_reasoning": "Overwrite last position for each label, then order distinct labels by those positions. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "T16",
+      "open_structural_finding": "3",
+      "original_initial_scoring_trace": "H01 returns `[[\"a\",2],[\"z\",1]]`, expected `[[\"z\",1],[\"a\",2]]`.",
+      "original_reference_reasoning": "Dictionary first-insertion order determines group order; each group retains first two records, flattened afterward. Consistent values, finding 3.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R01",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `-3`, expected `-2`.",
+      "original_reference_reasoning": "Divide magnitude using integers, then restore sign; truncates negative fractions toward zero. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R02",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `2`, expected `3`.",
+      "original_reference_reasoning": "Negated floor of the negated numerator is ceiling for positive divisor, including negative inputs. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R03",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `-1`.",
+      "original_reference_reasoning": "Magnitude remainder with numerator sign reconstructs the dividend with truncating quotient. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R04",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `-2`, expected `-4`.",
+      "original_reference_reasoning": "Doubled-integer half-step formula rounds magnitude to nearest with ties upward, then restores sign. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R05",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns original three-by-two matrix, expected its two-by-three transpose.",
+      "original_reference_reasoning": "Output one list per input column, preserving original row order inside it. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R06",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[4,6,11]`, expected `[8,13]`.",
+      "original_reference_reasoning": "Reduce each column vertically; emit columns left to right. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R07",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[1,3,5],[2,4,6]]`, expected `[[5,3,1],[6,4,2]]`.",
+      "original_reference_reasoning": "Transpose while reversing source row traversal, giving clockwise rotation. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R08",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[[1,2,3],[4,5,6],[]]`, expected `[[1,2],[3,4],[5,6]]`.",
+      "original_reference_reasoning": "Row r takes the length-columns slice beginning at r\u00d7columns. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R09",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[\"x\\\\\",\"y\",\"z\"]`, expected `[\"x,y\",\"z\"]`.",
+      "original_reference_reasoning": "Escape consumes the next character literally; only unescaped commas flush fields; unmatched trailing escape raises. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": "R10 H07/H08 coverage reviewed; finding 4 closed.",
+      "id": "R10",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `\"n\"`, expected newline.",
+      "original_reference_reasoning": "Cursor consumes a checked escape pair and emits its mapped character, otherwise copies ordinary text. Supplied outcomes consistent; required adjacent-pair coverage missing.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R11",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H02 returns one backslash, expected two.",
+      "original_reference_reasoning": "Transform each original character exactly once, prefixing slash or quote only. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R12",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1`, expected `-1`.",
+      "original_reference_reasoning": "Escaped state suppresses interpretation of exactly one next character; first ordinary quote returns its zero-based index. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R13",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `false`, expected VE.",
+      "original_reference_reasoning": "Exact-int check precedes range comparison; bool/string/null rejected safely. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R14",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `[2,1]`, expected VE.",
+      "original_reference_reasoning": "Validate outer container, first row and every row/type/width before returning shape; cells must be exact ints. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R15",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `1234`, expected VE.",
+      "original_reference_reasoning": "Exact string, four characters, inclusive ASCII digit range; leading zero allowed and non-ASCII decimals rejected. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    },
+    {
+      "followup": null,
+      "id": "R16",
+      "open_structural_finding": null,
+      "original_initial_scoring_trace": "H01 returns `-1`, expected VE.",
+      "original_reference_reasoning": "Reject non-int endpoints or reversal; otherwise closed integer count is end\u2212start+1. Consistent.",
+      "outcome": "NO_RECORDED_SEMANTIC_DISAGREEMENT_FOUND_STATIC_ONLY"
+    }
+  ],
+  "quality_verdict": "CHANGES_REQUIRED",
+  "remaining_gates": [
+    "User reconfirmation and independent review of three structural replacements.",
+    "Isolated dynamic reference/initial/mutant validation, separately authorized.",
+    "Actual tokenizer and chat-template budget validation, separately authorized.",
+    "Human signoff and scientific acceptance are not supplied by assistant review.",
+    "Training, model generation, runtime isolation and cost binding remain unimplemented here."
+  ],
+  "reviewer": {
+    "agent_id": "01a1c8c6-021c-75c1-b9e4-53275cd621bf",
+    "different_model_independence": "UNVERIFIED",
+    "human_signoff": false,
+    "name": "Hooke",
+    "role": "fresh_assistant_reviewer_not_author"
+  },
+  "source_sha256": "f198764ec17690a7c9e3b289f904a166f77727478212381bb3aaef584efbf8d2",
+  "status": "CHANGES_REQUIRED",
+  "supervision_transfer_pairs": [
+    {
+      "code": "R",
+      "reason": "coordinate clipping vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "R",
+      "reason": "clipping vs overlap length",
+      "supervision_id": "S02",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "reason": "coordinates vs segment state",
+      "supervision_id": "S03",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "reason": "no row membership",
+      "supervision_id": "S04",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "reason": "no stock consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "reason": "fixed directions vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "D",
+      "reason": "no deduplication",
+      "supervision_id": "S08",
+      "transfer_id": "T01"
+    },
+    {
+      "code": "R",
+      "reason": "length-index range vs value rank",
+      "supervision_id": "S01",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "R",
+      "reason": "window-fit length vs intersection",
+      "supervision_id": "S02",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "reason": "no segment state",
+      "supervision_id": "S03",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "reason": "no membership state",
+      "supervision_id": "S04",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "reason": "no requests",
+      "supervision_id": "S06",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "reason": "all starts vs best index",
+      "supervision_id": "S07",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "D",
+      "reason": "no label order",
+      "supervision_id": "S08",
+      "transfer_id": "T02"
+    },
+    {
+      "code": "R",
+      "reason": "endpoint comparisons vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "R",
+      "reason": "closed containment vs half-open size",
+      "supervision_id": "S02",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "reason": "no accumulator",
+      "supervision_id": "S03",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "reason": "no membership",
+      "supervision_id": "S04",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "reason": "no stock",
+      "supervision_id": "S06",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "reason": "predicate vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "D",
+      "reason": "no output dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T03"
+    },
+    {
+      "code": "B1",
+      "reason": "equality-swapped rank",
+      "supervision_id": "S01",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "R",
+      "reason": "bucket rank vs overlap formula",
+      "supervision_id": "S02",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "reason": "no reset state",
+      "supervision_id": "S03",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "reason": "no membership",
+      "supervision_id": "S04",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "reason": "no inventory",
+      "supervision_id": "S06",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "reason": "scalar rank vs argmax",
+      "supervision_id": "S07",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "D",
+      "reason": "no label dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T04"
+    },
+    {
+      "code": "R",
+      "reason": "threshold predicate, not rank",
+      "supervision_id": "S01",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "reason": "no interval operation",
+      "supervision_id": "S02",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "R",
+      "reason": "per-event streak vs segment sum",
+      "supervision_id": "S03",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "R",
+      "reason": "event reset vs row set reset",
+      "supervision_id": "S04",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "reason": "consecutive state, not bags",
+      "supervision_id": "S05",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "reason": "failure streak, not inventory",
+      "supervision_id": "S06",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "reason": "alerts vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "reason": "no dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T05"
+    },
+    {
+      "code": "D",
+      "reason": "dual indices vs value rank",
+      "supervision_id": "S01",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "reason": "no interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "R",
+      "reason": "dual per-event indices vs segment sum",
+      "supervision_id": "S03",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "R",
+      "reason": "scalar batch state vs row set",
+      "supervision_id": "S04",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "reason": "no frequency reduction",
+      "supervision_id": "S05",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "reason": "no stock",
+      "supervision_id": "S06",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "reason": "numbering vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "reason": "numbering vs dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T06"
+    },
+    {
+      "code": "D",
+      "reason": "decimal parsing vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "reason": "no interval operation",
+      "supervision_id": "S02",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "R",
+      "reason": "lexical accumulator and active state",
+      "supervision_id": "S03",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "R",
+      "reason": "number state vs membership set",
+      "supervision_id": "S04",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "reason": "positional number, not counts",
+      "supervision_id": "S05",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "reason": "character grammar, not consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "reason": "no winner selection",
+      "supervision_id": "S07",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "reason": "repeated runs retained",
+      "supervision_id": "S08",
+      "transfer_id": "T07"
+    },
+    {
+      "code": "D",
+      "reason": "predecessor gaps vs cutoff",
+      "supervision_id": "S01",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "reason": "session subtraction vs interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "R",
+      "reason": "predecessor sentinel vs accumulated sum",
+      "supervision_id": "S03",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "R",
+      "reason": "session predecessor vs row membership",
+      "supervision_id": "S04",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "reason": "no frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "reason": "no inventory",
+      "supervision_id": "S06",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "reason": "adjacent differences vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "reason": "contiguous sessions, no dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T08"
+    },
+    {
+      "code": "D",
+      "reason": "request decisions vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "reason": "no interval operation",
+      "supervision_id": "S02",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "reason": "consumption vs delimiter reset",
+      "supervision_id": "S03",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "reason": "multiset consumption vs row set",
+      "supervision_id": "S04",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "R",
+      "reason": "sequential allocation vs bag minimum",
+      "supervision_id": "S05",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "B2",
+      "reason": "same missing consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "reason": "request vector vs winner",
+      "supervision_id": "S07",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "reason": "requests preserved, not deduped",
+      "supervision_id": "S08",
+      "transfer_id": "T09"
+    },
+    {
+      "code": "D",
+      "reason": "histogram vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "reason": "bag distance vs interval length",
+      "supervision_id": "S02",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "reason": "two signed passes, no segment reset",
+      "supervision_id": "S03",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "reason": "persistent count map vs row sets",
+      "supervision_id": "S04",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "R",
+      "reason": "algebraic relation, different accumulation",
+      "supervision_id": "S05",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "R",
+      "reason": "count imbalance vs consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "reason": "no winner",
+      "supervision_id": "S07",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "reason": "order irrelevant",
+      "supervision_id": "S08",
+      "transfer_id": "T10"
+    },
+    {
+      "code": "D",
+      "reason": "combinations vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "reason": "no interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "reason": "frequency reduction, no reset",
+      "supervision_id": "S03",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "reason": "counts vs row uniqueness",
+      "supervision_id": "S04",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "R",
+      "reason": "unary combinatorics vs bag intersection",
+      "supervision_id": "S05",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "R",
+      "reason": "frequency primitive, no request loop",
+      "supervision_id": "S06",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "reason": "no winner",
+      "supervision_id": "S07",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "reason": "occurrences counted, not ordered labels",
+      "supervision_id": "S08",
+      "transfer_id": "T11"
+    },
+    {
+      "code": "D",
+      "reason": "triples vs cutoff rank",
+      "supervision_id": "S01",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "reason": "quotient vs overlap length",
+      "supervision_id": "S02",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "reason": "no segment state",
+      "supervision_id": "S03",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "reason": "unary counts vs per-row sets",
+      "supervision_id": "S04",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "R",
+      "reason": "quotient/filter vs two-bag minimum",
+      "supervision_id": "S05",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "R",
+      "reason": "frequency primitive, no consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "reason": "all values vs best score",
+      "supervision_id": "S07",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "R",
+      "reason": "ascending frequencies vs stable dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T12"
+    },
+    {
+      "code": "D",
+      "reason": "full sort vs prefix rank",
+      "supervision_id": "S01",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "reason": "no interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "reason": "no reset state",
+      "supervision_id": "S03",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "reason": "no row membership",
+      "supervision_id": "S04",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "reason": "duplicates retained, no count reduction",
+      "supervision_id": "S05",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "D",
+      "reason": "no consumption",
+      "supervision_id": "S06",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "R",
+      "reason": "stable full sort vs single argmax",
+      "supervision_id": "S07",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "R",
+      "reason": "score-key tie policy vs label dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T13"
+    },
+    {
+      "code": "R",
+      "reason": "sorted cursors vs single prefix scan",
+      "supervision_id": "S01",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "reason": "no interval intersection",
+      "supervision_id": "S02",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "reason": "cursor movement, not reset",
+      "supervision_id": "S03",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "reason": "no membership set",
+      "supervision_id": "S04",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "reason": "all events retained",
+      "supervision_id": "S05",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "reason": "merge cursors, not stock removal",
+      "supervision_id": "S06",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "R",
+      "reason": "cross-stream tie vs argmax tie",
+      "supervision_id": "S07",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "R",
+      "reason": "stable merge, no dedup",
+      "supervision_id": "S08",
+      "transfer_id": "T14"
+    },
+    {
+      "code": "D",
+      "reason": "last-position map vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "reason": "no interval formula",
+      "supervision_id": "S02",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "reason": "overwriting positions, no segment reset",
+      "supervision_id": "S03",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "reason": "last positions vs row uniqueness",
+      "supervision_id": "S04",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "reason": "positions rather than frequencies",
+      "supervision_id": "S05",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "reason": "no stock",
+      "supervision_id": "S06",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "R",
+      "reason": "last-occurrence ordering vs earliest winner",
+      "supervision_id": "S07",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "R",
+      "reason": "last-index map/sort vs first accumulation",
+      "supervision_id": "S08",
+      "transfer_id": "T15"
+    },
+    {
+      "code": "D",
+      "reason": "group quota vs rank",
+      "supervision_id": "S01",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "reason": "no interval operation",
+      "supervision_id": "S02",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "reason": "grouped storage, not sum reset",
+      "supervision_id": "S03",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "reason": "persistent groups vs per-row membership",
+      "supervision_id": "S04",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "reason": "retained records vs bag minimum",
+      "supervision_id": "S05",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "D",
+      "reason": "per-group quota, no stock requests",
+      "supervision_id": "S06",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "R",
+      "reason": "grouped selection vs single winner",
+      "supervision_id": "S07",
+      "transfer_id": "T16"
+    },
+    {
+      "code": "B3",
+      "reason": "same extraneous final sort",
+      "supervision_id": "S08",
+      "transfer_id": "T16"
+    }
+  ],
+  "task_spec_verdict": "CHANGES_REQUIRED",
+  "version": 1
+}

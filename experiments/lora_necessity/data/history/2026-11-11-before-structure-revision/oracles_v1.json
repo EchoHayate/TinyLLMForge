@@ -1,0 +1,5423 @@
+[
+  {
+    "id": "D01",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 1
+      },
+      "public_case_id": "P01",
+      "reason": "The initial early branch misclassifies zero and negative integers as positive. initial_scoring_case=H02. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": -1
+        },
+        "reason": "Reverses the sign.",
+        "scoring_case_id": "H01",
+        "source": "def integer_sign(number):\n    if number == 0:\n        return 0\n    return -1 if number > 0 else 1\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 8
+        },
+        "reason": "Returns magnitude instead of sign.",
+        "scoring_case_id": "H03",
+        "source": "def integer_sign(number):\n    if number == 0:\n        return 0\n    return number\n"
+      }
+    ],
+    "reference_source": "def integer_sign(number):\n    if number == 0:\n        return 0\n    return 1 if number > 0 else -1\n",
+    "scoring_cases": [
+      {
+        "args": [
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H01",
+        "reason": "Positive."
+      },
+      {
+        "args": [
+          -1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "H02",
+        "reason": "Negative."
+      },
+      {
+        "args": [
+          8
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H03",
+        "reason": "Positive."
+      },
+      {
+        "args": [
+          -8
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "H04",
+        "reason": "Negative."
+      },
+      {
+        "args": [
+          1000
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H05",
+        "reason": "Positive upper boundary."
+      },
+      {
+        "args": [
+          -1000
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "H06",
+        "reason": "Negative lower boundary."
+      }
+    ]
+  },
+  {
+    "id": "D02",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          4,
+          6,
+          8
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Ignores the nonzero start. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            2,
+            3,
+            4
+          ]
+        },
+        "reason": "Ignores the step.",
+        "scoring_case_id": "H01",
+        "source": "def stride_values(values, start, step):\n    return values[start:]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            8
+          ]
+        },
+        "reason": "Starts one element too late.",
+        "scoring_case_id": "H02",
+        "source": "def stride_values(values, start, step):\n    return values[start + 1::step]\n"
+      }
+    ],
+    "reference_source": "def stride_values(values, start, step):\n    return values[start::step]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4
+          ],
+          1,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            4
+          ]
+        },
+        "id": "H01",
+        "reason": "Indices 1 and 3."
+      },
+      {
+        "args": [
+          [
+            9,
+            8
+          ],
+          0,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            9,
+            8
+          ]
+        },
+        "id": "H02",
+        "reason": "Every index."
+      },
+      {
+        "args": [
+          [
+            3
+          ],
+          1,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H03",
+        "reason": "Start is past the last element."
+      },
+      {
+        "args": [
+          [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          2,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            4
+          ]
+        },
+        "id": "H04",
+        "reason": "Indices 2 and 4."
+      },
+      {
+        "args": [
+          [
+            6,
+            7,
+            8
+          ],
+          0,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            6
+          ]
+        },
+        "id": "H05",
+        "reason": "Only index zero fits."
+      },
+      {
+        "args": [
+          [
+            2,
+            4,
+            6
+          ],
+          2,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            6
+          ]
+        },
+        "id": "H06",
+        "reason": "Start at the last element."
+      }
+    ]
+  },
+  {
+    "id": "D03",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 99
+      },
+      "public_case_id": "P01",
+      "reason": "Uses inner as the outer lookup key. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 4
+        },
+        "reason": "Uses the outer key twice.",
+        "scoring_case_id": "H02",
+        "source": "def nested_value(table, outer, inner):\n    return table.get(outer, {}).get(outer)\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": null
+        },
+        "reason": "Conflates stored zero with missing data.",
+        "scoring_case_id": "H04",
+        "source": "def nested_value(table, outer, inner):\n    return table.get(outer, {}).get(inner) or None\n"
+      }
+    ],
+    "reference_source": "def nested_value(table, outer, inner):\n    return table.get(outer, {}).get(inner)\n",
+    "scoring_cases": [
+      {
+        "args": [
+          {
+            "box": {
+              "key": 2
+            },
+            "key": {
+              "key": 8
+            }
+          },
+          "box",
+          "key"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H01",
+        "reason": "Read box then key."
+      },
+      {
+        "args": [
+          {
+            "box": {
+              "box": 4,
+              "key": 6
+            }
+          },
+          "box",
+          "key"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 6
+        },
+        "id": "H02",
+        "reason": "The inner key is key, not box."
+      },
+      {
+        "args": [
+          {
+            "a": {}
+          },
+          "a",
+          "z"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": null
+        },
+        "id": "H03",
+        "reason": "The inner key is absent."
+      },
+      {
+        "args": [
+          {
+            "a": {
+              "b": 0
+            }
+          },
+          "a",
+          "b"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H04",
+        "reason": "Zero is a present value."
+      },
+      {
+        "args": [
+          {
+            "": {
+              "": -2
+            }
+          },
+          "",
+          ""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -2
+        },
+        "id": "H05",
+        "reason": "Empty keys are valid."
+      },
+      {
+        "args": [
+          {
+            "a": {
+              "b": 3
+            }
+          },
+          "z",
+          "b"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": null
+        },
+        "id": "H06",
+        "reason": "The outer key is absent."
+      }
+    ]
+  },
+  {
+    "id": "D04",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 3
+      },
+      "public_case_id": "P01",
+      "reason": "The letter a is wrongly counted. initial_scoring_case=H03. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 0
+        },
+        "reason": "Excludes the boundary digit zero.",
+        "scoring_case_id": "H01",
+        "source": "def ascii_digit_count(text):\n    return sum('0' < character < '9' for character in text)\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 3
+        },
+        "reason": "Counts letters as well as digits.",
+        "scoring_case_id": "H03",
+        "source": "def ascii_digit_count(text):\n    return len(text)\n"
+      }
+    ],
+    "reference_source": "def ascii_digit_count(text):\n    return sum('0' <= character <= '9' for character in text)\n",
+    "scoring_cases": [
+      {
+        "args": [
+          "0"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H01",
+        "reason": "Zero is a digit."
+      },
+      {
+        "args": [
+          "9"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H02",
+        "reason": "Nine is a digit."
+      },
+      {
+        "args": [
+          "abc"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H03",
+        "reason": "Letters are excluded."
+      },
+      {
+        "args": [
+          "12 34"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 4
+        },
+        "id": "H04",
+        "reason": "The space is excluded."
+      },
+      {
+        "args": [
+          "-5+"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H05",
+        "reason": "Only 5 counts."
+      },
+      {
+        "args": [
+          "a7b8c9"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 3
+        },
+        "id": "H06",
+        "reason": "Three digits."
+      }
+    ]
+  },
+  {
+    "id": "T01",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            0,
+            1
+          ],
+          [
+            2,
+            1
+          ],
+          [
+            1,
+            0
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "The row equal to rows is incorrectly allowed. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "reason": "Valid row-zero neighbors are excluded.",
+        "scoring_case_id": "H02",
+        "source": "def grid_neighbors(rows, columns, row, column):\n    choices = [[row - 1, column], [row, column + 1], [row + 1, column], [row, column - 1]]\n    return [[next_row, next_column] for next_row, next_column in choices if 0 < next_row < rows and 0 <= next_column < columns]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              0,
+              2
+            ]
+          ]
+        },
+        "reason": "The specified directional order is reversed.",
+        "scoring_case_id": "H02",
+        "source": "def grid_neighbors(rows, columns, row, column):\n    choices = [[row - 1, column], [row, column + 1], [row + 1, column], [row, column - 1]]\n    return [[next_row, next_column] for next_row, next_column in choices[::-1] if 0 <= next_row < rows and 0 <= next_column < columns]\n"
+      }
+    ],
+    "reference_source": "def grid_neighbors(rows, columns, row, column):\n    choices = [[row - 1, column], [row, column + 1], [row + 1, column], [row, column - 1]]\n    return [[next_row, next_column] for next_row, next_column in choices if 0 <= next_row < rows and 0 <= next_column < columns]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          1,
+          1,
+          0,
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H01",
+        "reason": "The only cell has no neighbors."
+      },
+      {
+        "args": [
+          2,
+          3,
+          0,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              2
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              0,
+              0
+            ]
+          ]
+        },
+        "id": "H02",
+        "reason": "Right, down and left are valid."
+      },
+      {
+        "args": [
+          3,
+          1,
+          1,
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              2,
+              0
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "Only vertical neighbors."
+      },
+      {
+        "args": [
+          1,
+          3,
+          0,
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              1
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "Only the right neighbor."
+      },
+      {
+        "args": [
+          3,
+          3,
+          2,
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              0
+            ],
+            [
+              2,
+              1
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "Up and right."
+      },
+      {
+        "args": [
+          2,
+          2,
+          0,
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "id": "H06",
+        "reason": "Right then down."
+      }
+    ]
+  },
+  {
+    "id": "T02",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          0
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Drops the final complete window. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            0,
+            1,
+            2
+          ]
+        },
+        "reason": "Ignores width and admits incomplete windows.",
+        "scoring_case_id": "H01",
+        "source": "def window_starts(values, width):\n    return list(range(max(0, len(values) + 1)))\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": []
+        },
+        "reason": "Omits start zero.",
+        "scoring_case_id": "H01",
+        "source": "def window_starts(values, width):\n    return list(range(1, max(0, len(values) - width + 1)))\n"
+      }
+    ],
+    "reference_source": "def window_starts(values, width):\n    return list(range(max(0, len(values) - width + 1)))\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            2,
+            4
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0
+          ]
+        },
+        "id": "H01",
+        "reason": "Exactly one whole-list window."
+      },
+      {
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            1,
+            2
+          ]
+        },
+        "id": "H02",
+        "reason": "Three windows."
+      },
+      {
+        "args": [
+          [
+            8
+          ],
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0
+          ]
+        },
+        "id": "H03",
+        "reason": "A singleton forms a width-one window."
+      },
+      {
+        "args": [
+          [
+            8
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H04",
+        "reason": "Too short."
+      },
+      {
+        "args": [
+          [
+            0,
+            0,
+            0
+          ],
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            1,
+            2
+          ]
+        },
+        "id": "H05",
+        "reason": "Each element begins a window."
+      },
+      {
+        "args": [
+          [
+            3,
+            4,
+            5
+          ],
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0
+          ]
+        },
+        "id": "H06",
+        "reason": "Width equals length."
+      }
+    ]
+  },
+  {
+    "id": "T03",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": false
+      },
+      "public_case_id": "P01",
+      "reason": "Incorrectly rejects equal left endpoints. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": true
+        },
+        "reason": "One valid endpoint is insufficient for containment.",
+        "scoring_case_id": "H03",
+        "source": "def interval_contained(start, end, outer_start, outer_end):\n    return outer_start <= start or end <= outer_end\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": false
+        },
+        "reason": "Checks the reverse containment relation.",
+        "scoring_case_id": "H02",
+        "source": "def interval_contained(start, end, outer_start, outer_end):\n    return start <= outer_start and outer_end <= end\n"
+      }
+    ],
+    "reference_source": "def interval_contained(start, end, outer_start, outer_end):\n    return outer_start <= start and end <= outer_end\n",
+    "scoring_cases": [
+      {
+        "args": [
+          2,
+          3,
+          2,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": true
+        },
+        "id": "H01",
+        "reason": "Equality at both boundaries is allowed."
+      },
+      {
+        "args": [
+          2,
+          3,
+          0,
+          5
+        ],
+        "expected": {
+          "kind": "return",
+          "value": true
+        },
+        "id": "H02",
+        "reason": "Both endpoints lie inside."
+      },
+      {
+        "args": [
+          -2,
+          1,
+          -1,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": false
+        },
+        "id": "H03",
+        "reason": "The left endpoint escapes."
+      },
+      {
+        "args": [
+          1,
+          5,
+          0,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": false
+        },
+        "id": "H04",
+        "reason": "The right endpoint escapes."
+      },
+      {
+        "args": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": true
+        },
+        "id": "H05",
+        "reason": "The single point is contained."
+      },
+      {
+        "args": [
+          5,
+          6,
+          1,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": false
+        },
+        "id": "H06",
+        "reason": "The intervals are disjoint."
+      }
+    ]
+  },
+  {
+    "id": "T04",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 0
+      },
+      "public_case_id": "P01",
+      "reason": "Equality is wrongly assigned to the bucket on the left. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 3
+        },
+        "reason": "Numbers a found bucket from one.",
+        "scoring_case_id": "H02",
+        "source": "def bucket_index(cuts, value):\n    for index, cut in enumerate(cuts):\n        if value < cut:\n            return index + 1\n    return len(cuts)\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 0
+        },
+        "reason": "Maps the final bucket back to zero.",
+        "scoring_case_id": "H04",
+        "source": "def bucket_index(cuts, value):\n    for index, cut in enumerate(cuts):\n        if value < cut:\n            return index\n    return 0\n"
+      }
+    ],
+    "reference_source": "def bucket_index(cuts, value):\n    for index, cut in enumerate(cuts):\n        if value < cut:\n            return index\n    return len(cuts)\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            2
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H01",
+        "reason": "Equality crosses the cut."
+      },
+      {
+        "args": [
+          [
+            0,
+            3,
+            6
+          ],
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H02",
+        "reason": "Cuts 0 and 3 have been crossed."
+      },
+      {
+        "args": [
+          [
+            -4,
+            0
+          ],
+          -5
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H03",
+        "reason": "Before the first cut."
+      },
+      {
+        "args": [
+          [
+            1,
+            5
+          ],
+          9
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H04",
+        "reason": "After the last cut."
+      },
+      {
+        "args": [
+          [
+            -2,
+            2
+          ],
+          -2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H05",
+        "reason": "The first cut is included on its right."
+      },
+      {
+        "args": [
+          [
+            0,
+            10
+          ],
+          9
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H06",
+        "reason": "Between the two cuts."
+      }
+    ]
+  },
+  {
+    "id": "T05",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          false,
+          false,
+          true
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Success retains the previous failure count. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            false
+          ]
+        },
+        "reason": "Exact threshold is incorrectly excluded.",
+        "scoring_case_id": "H03",
+        "source": "def failure_alerts(events, threshold):\n    failures = 0\n    result = []\n    for success in events:\n        failures = 0 if success else failures + 1\n        result.append(failures > threshold)\n    return result\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            true
+          ]
+        },
+        "reason": "Treats success as failure.",
+        "scoring_case_id": "H02",
+        "source": "def failure_alerts(events, threshold):\n    failures = 0\n    result = []\n    for success in events:\n        failures = 0 if not success else failures + 1\n        result.append(failures >= threshold)\n    return result\n"
+      }
+    ],
+    "reference_source": "def failure_alerts(events, threshold):\n    failures = 0\n    result = []\n    for success in events:\n        failures = 0 if success else failures + 1\n        result.append(failures >= threshold)\n    return result\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            false,
+            true,
+            false,
+            false
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false,
+            false,
+            false,
+            true
+          ]
+        },
+        "id": "H01",
+        "reason": "The streak after success is counted afresh."
+      },
+      {
+        "args": [
+          [
+            true
+          ],
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false
+          ]
+        },
+        "id": "H02",
+        "reason": "Success leaves zero failures."
+      },
+      {
+        "args": [
+          [
+            false
+          ],
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true
+          ]
+        },
+        "id": "H03",
+        "reason": "A failure reaches threshold one."
+      },
+      {
+        "args": [
+          [],
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H04",
+        "reason": "No events."
+      },
+      {
+        "args": [
+          [
+            false,
+            false,
+            false
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false,
+            true,
+            true
+          ]
+        },
+        "id": "H05",
+        "reason": "Once reached, more failures remain at or above threshold."
+      },
+      {
+        "args": [
+          [
+            false,
+            false,
+            true
+          ],
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            true,
+            false
+          ]
+        },
+        "id": "H06",
+        "reason": "Success clears an already active alert."
+      }
+    ]
+  },
+  {
+    "id": "T06",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            0,
+            0
+          ],
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            2
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "The within-batch index carries into the new batch. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              2,
+              0
+            ]
+          ]
+        },
+        "reason": "Skips a batch number.",
+        "scoring_case_id": "H01",
+        "source": "def batch_positions(flags):\n    batch = 0\n    position = 0\n    result = []\n    for ends_batch in flags:\n        result.append([batch, position])\n        position += 1\n        if ends_batch:\n            batch += 2\n            position = 0\n    return result\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "reason": "Swaps the two output axes.",
+        "scoring_case_id": "H02",
+        "source": "def batch_positions(flags):\n    batch = 0\n    position = 0\n    result = []\n    for ends_batch in flags:\n        result.append([position, batch])\n        position += 1\n        if ends_batch:\n            batch += 1\n            position = 0\n    return result\n"
+      }
+    ],
+    "reference_source": "def batch_positions(flags):\n    batch = 0\n    position = 0\n    result = []\n    for ends_batch in flags:\n        result.append([batch, position])\n        position += 1\n        if ends_batch:\n            batch += 1\n            position = 0\n    return result\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            true,
+            false
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "id": "H01",
+        "reason": "Second event restarts local index."
+      },
+      {
+        "args": [
+          [
+            false,
+            false
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ]
+        },
+        "id": "H02",
+        "reason": "No batch ended."
+      },
+      {
+        "args": [
+          [
+            true,
+            true
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "Each event ends its own batch."
+      },
+      {
+        "args": [
+          [
+            false
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "One initial event."
+      },
+      {
+        "args": [
+          [
+            false,
+            true
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              1
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "The end flag remains in batch zero."
+      },
+      {
+        "args": [
+          [
+            true,
+            false,
+            false
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              0
+            ],
+            [
+              1,
+              0
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "id": "H06",
+        "reason": "Batch one has two events."
+      }
+    ]
+  },
+  {
+    "id": "T07",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          12,
+          123
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "The previous value becomes the prefix of the next number. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": []
+        },
+        "reason": "Without a trailing separator the final run is not flushed.",
+        "scoring_case_id": "H05",
+        "source": "def extract_numbers(text):\n    result = []\n    number = 0\n    active = False\n    for character in text:\n        if '0' <= character <= '9':\n            number = number * 10 + int(character)\n            active = True\n        elif active:\n            result.append(number)\n            number = 0\n            active = False\n    return result\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            "1"
+          ]
+        },
+        "reason": "Returns text instead of integer values.",
+        "scoring_case_id": "H02",
+        "source": "def extract_numbers(text):\n    result = []\n    number = 0\n    active = False\n    for character in text + ' ':\n        if '0' <= character <= '9':\n            number = number * 10 + int(character)\n            active = True\n        elif active:\n            result.append(str(number))\n            number = 0\n            active = False\n    return result\n"
+      }
+    ],
+    "reference_source": "def extract_numbers(text):\n    result = []\n    number = 0\n    active = False\n    for character in text + ' ':\n        if '0' <= character <= '9':\n            number = number * 10 + int(character)\n            active = True\n        elif active:\n            result.append(number)\n            number = 0\n            active = False\n    return result\n",
+    "scoring_cases": [
+      {
+        "args": [
+          "7a8"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            7,
+            8
+          ]
+        },
+        "id": "H01",
+        "reason": "Two distinct runs."
+      },
+      {
+        "args": [
+          "001"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1
+          ]
+        },
+        "id": "H02",
+        "reason": "Leading zeros do not alter the integer."
+      },
+      {
+        "args": [
+          ""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H03",
+        "reason": "Empty input."
+      },
+      {
+        "args": [
+          "-4 +5"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            4,
+            5
+          ]
+        },
+        "id": "H04",
+        "reason": "Signs are separators."
+      },
+      {
+        "args": [
+          "2"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2
+          ]
+        },
+        "id": "H05",
+        "reason": "The trailing run is emitted."
+      },
+      {
+        "args": [
+          "0a00b9"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            0,
+            9
+          ]
+        },
+        "id": "H06",
+        "reason": "Zero-valued runs are still emitted."
+      }
+    ]
+  },
+  {
+    "id": "T08",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          3,
+          5,
+          1
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Time from the prior user's session is retained. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            -3
+          ]
+        },
+        "reason": "Reverses the subtraction.",
+        "scoring_case_id": "H01",
+        "source": "def session_gaps(records):\n    result = []\n    previous_user = None\n    previous_time = None\n    for user, time in records:\n        if user != previous_user:\n            previous_time = None\n        if previous_time is not None:\n            result.append(previous_time - time)\n        previous_user = user\n        previous_time = time\n    return result\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": []
+        },
+        "reason": "Treats a legitimate zero timestamp as absent.",
+        "scoring_case_id": "H06",
+        "source": "def session_gaps(records):\n    result = []\n    previous_user = None\n    previous_time = None\n    for user, time in records:\n        if user != previous_user:\n            previous_time = None\n        if bool(previous_time):\n            result.append(time - previous_time)\n        previous_user = user\n        previous_time = time\n    return result\n"
+      }
+    ],
+    "reference_source": "def session_gaps(records):\n    result = []\n    previous_user = None\n    previous_time = None\n    for user, time in records:\n        if user != previous_user:\n            previous_time = None\n        if previous_time is not None:\n            result.append(time - previous_time)\n        previous_user = user\n        previous_time = time\n    return result\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              9
+            ],
+            [
+              "b",
+              12
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            3
+          ]
+        },
+        "id": "H01",
+        "reason": "Only the two b records are linked."
+      },
+      {
+        "args": [
+          [
+            [
+              "x",
+              2
+            ],
+            [
+              "x",
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0
+          ]
+        },
+        "id": "H02",
+        "reason": "Equal times give zero."
+      },
+      {
+        "args": [
+          [
+            [
+              "x",
+              7
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H03",
+        "reason": "A singleton has no gap."
+      },
+      {
+        "args": [
+          [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              2
+            ],
+            [
+              "a",
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H04",
+        "reason": "Every user change starts a session."
+      },
+      {
+        "args": [
+          [
+            [
+              "z",
+              1
+            ],
+            [
+              "z",
+              4
+            ],
+            [
+              "z",
+              9
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            3,
+            5
+          ]
+        },
+        "id": "H05",
+        "reason": "Adjacent differences, not differences from session start."
+      },
+      {
+        "args": [
+          [
+            [
+              "",
+              0
+            ],
+            [
+              "",
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            6
+          ]
+        },
+        "id": "H06",
+        "reason": "Empty user labels are valid."
+      }
+    ]
+  },
+  {
+    "id": "T09",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          true,
+          true
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "The successful request never consumes inventory. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            true,
+            false
+          ]
+        },
+        "reason": "Deduplicates real inventory.",
+        "scoring_case_id": "H02",
+        "source": "def allocate_stock(stock, requests):\n    remaining = list(set(stock))\n    result = []\n    for request in requests:\n        available = request in remaining\n        result.append(available)\n        if available:\n            remaining.remove(request)\n    return result\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            true
+          ]
+        },
+        "reason": "Inverts the allocation decision.",
+        "scoring_case_id": "H03",
+        "source": "def allocate_stock(stock, requests):\n    remaining = list(stock)\n    result = []\n    for request in requests:\n        available = request in remaining\n        result.append(not available)\n        if available:\n            remaining.remove(request)\n    return result\n"
+      }
+    ],
+    "reference_source": "def allocate_stock(stock, requests):\n    remaining = list(stock)\n    result = []\n    for request in requests:\n        available = request in remaining\n        result.append(available)\n        if available:\n            remaining.remove(request)\n    return result\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            2
+          ],
+          [
+            2,
+            2,
+            2
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            false,
+            false
+          ]
+        },
+        "id": "H01",
+        "reason": "Stock holds only one copy."
+      },
+      {
+        "args": [
+          [
+            1,
+            1
+          ],
+          [
+            1,
+            1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            true
+          ]
+        },
+        "id": "H02",
+        "reason": "Two copies serve two requests."
+      },
+      {
+        "args": [
+          [],
+          [
+            3
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false
+          ]
+        },
+        "id": "H03",
+        "reason": "No stock."
+      },
+      {
+        "args": [
+          [
+            4
+          ],
+          [
+            3,
+            4
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false,
+            true
+          ]
+        },
+        "id": "H04",
+        "reason": "A failed request does not consume 4."
+      },
+      {
+        "args": [
+          [
+            0,
+            -1
+          ],
+          [
+            -1,
+            0,
+            -1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            true,
+            false
+          ]
+        },
+        "id": "H05",
+        "reason": "Each item can be used once."
+      },
+      {
+        "args": [
+          [
+            5,
+            5
+          ],
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H06",
+        "reason": "Unused stock produces no output."
+      }
+    ]
+  },
+  {
+    "id": "T10",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 1
+      },
+      "public_case_id": "P01",
+      "reason": "Deduplicating left ignores one copy; only a right-side 2 appears unmatched. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 0
+        },
+        "reason": "Opposite signed imbalances incorrectly cancel.",
+        "scoring_case_id": "H02",
+        "source": "def bag_deletions(left, right):\n    balance = {}\n    for value in left:\n        balance[value] = balance.get(value, 0) + 1\n    for value in right:\n        balance[value] = balance.get(value, 0) - 1\n    return sum(balance.values())\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 4
+        },
+        "reason": "Right-side copies increase rather than cancel left-side inventory.",
+        "scoring_case_id": "H04",
+        "source": "def bag_deletions(left, right):\n    balance = {}\n    for value in left:\n        balance[value] = balance.get(value, 0) + 1\n    for value in right:\n        balance[value] = balance.get(value, 0) + 1\n    return sum(abs(count) for count in balance.values())\n"
+      }
+    ],
+    "reference_source": "def bag_deletions(left, right):\n    balance = {}\n    for value in left:\n        balance[value] = balance.get(value, 0) + 1\n    for value in right:\n        balance[value] = balance.get(value, 0) - 1\n    return sum(abs(count) for count in balance.values())\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            3,
+            3
+          ],
+          [
+            3
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H01",
+        "reason": "Delete one excess 3."
+      },
+      {
+        "args": [
+          [
+            1
+          ],
+          [
+            2
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H02",
+        "reason": "Delete both unmatched elements."
+      },
+      {
+        "args": [
+          [],
+          [
+            4,
+            4
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H03",
+        "reason": "Delete both copies on the right."
+      },
+      {
+        "args": [
+          [
+            1,
+            2
+          ],
+          [
+            2,
+            1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H04",
+        "reason": "Order is irrelevant."
+      },
+      {
+        "args": [
+          [
+            -1,
+            -1,
+            0
+          ],
+          [
+            0
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H05",
+        "reason": "Delete two copies of -1."
+      },
+      {
+        "args": [
+          [
+            2,
+            2,
+            2
+          ],
+          [
+            2,
+            2,
+            2,
+            2
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H06",
+        "reason": "Delete one right-side copy."
+      }
+    ]
+  },
+  {
+    "id": "T11",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 1
+      },
+      "public_case_id": "P01",
+      "reason": "Counts repeated value kinds instead of index pairs. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 2
+        },
+        "reason": "Counts each pair in both orders.",
+        "scoring_case_id": "H02",
+        "source": "def equal_pairs(values):\n    return sum(count * (count - 1) for count in [values.count(value) for value in set(values)])\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 8
+        },
+        "reason": "Includes self-pair contributions.",
+        "scoring_case_id": "H01",
+        "source": "def equal_pairs(values):\n    return sum(count * count // 2 for count in [values.count(value) for value in set(values)])\n"
+      }
+    ],
+    "reference_source": "def equal_pairs(values):\n    return sum(count * (count - 1) // 2 for count in [values.count(value) for value in set(values)])\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            1,
+            1,
+            1,
+            1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 6
+        },
+        "id": "H01",
+        "reason": "Four choose two is six."
+      },
+      {
+        "args": [
+          [
+            2,
+            2
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H02",
+        "reason": "One pair."
+      },
+      {
+        "args": [
+          [
+            1,
+            2,
+            3
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H03",
+        "reason": "All values differ."
+      },
+      {
+        "args": [
+          [
+            0,
+            0,
+            1,
+            1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H04",
+        "reason": "One pair for each value."
+      },
+      {
+        "args": [
+          [
+            -1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H05",
+        "reason": "One index cannot form a pair."
+      },
+      {
+        "args": [
+          [
+            3,
+            3,
+            3,
+            2,
+            2
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 4
+        },
+        "id": "H06",
+        "reason": "Three pairs of 3 plus one pair of 2."
+      }
+    ]
+  },
+  {
+    "id": "T12",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            2,
+            1
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Collapses every qualifying frequency to one triple. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              4,
+              3
+            ]
+          ]
+        },
+        "reason": "Rounds leftovers up to a nonexistent triple.",
+        "scoring_case_id": "H01",
+        "source": "def triple_counts(values):\n    return [[value, (values.count(value) + 2) // 3] for value in sorted(set(values)) if values.count(value) >= 3]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              2,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "reason": "Reverses ascending value order.",
+        "scoring_case_id": "H03",
+        "source": "def triple_counts(values):\n    return [[value, values.count(value) // 3] for value in sorted(set(values), reverse=True) if values.count(value) >= 3]\n"
+      }
+    ],
+    "reference_source": "def triple_counts(values):\n    return [[value, values.count(value) // 3] for value in sorted(set(values)) if values.count(value) >= 3]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            4,
+            4,
+            4,
+            4,
+            4,
+            4,
+            4
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              4,
+              2
+            ]
+          ]
+        },
+        "id": "H01",
+        "reason": "Seven copies form two triples and one leftover."
+      },
+      {
+        "args": [
+          [
+            1,
+            1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H02",
+        "reason": "Two copies are insufficient."
+      },
+      {
+        "args": [
+          [
+            2,
+            2,
+            2,
+            1,
+            1,
+            1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              1
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "Both triples, in ascending value order."
+      },
+      {
+        "args": [
+          [
+            0,
+            0,
+            0,
+            0
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              1
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "Four copies give one triple."
+      },
+      {
+        "args": [
+          [
+            -1,
+            -1,
+            -1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              -1,
+              1
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "Negative values are valid."
+      },
+      {
+        "args": [
+          [
+            1,
+            2,
+            3
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "H06",
+        "reason": "Different values cannot combine."
+      }
+    ]
+  },
+  {
+    "id": "T13",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            "a",
+            5
+          ],
+          [
+            "z",
+            5
+          ],
+          [
+            "m",
+            1
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Adds a label tie-break not present in the specification. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              3
+            ]
+          ]
+        },
+        "reason": "Sorts scores ascending.",
+        "scoring_case_id": "H02",
+        "source": "def stable_scores(records):\n    return sorted(records, key=lambda record: record[1])\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              "a",
+              2
+            ],
+            [
+              "b",
+              2
+            ]
+          ]
+        },
+        "reason": "Reverses the original order before stable sorting.",
+        "scoring_case_id": "H01",
+        "source": "def stable_scores(records):\n    return sorted(records[::-1], key=lambda record: -record[1])\n"
+      }
+    ],
+    "reference_source": "def stable_scores(records):\n    return sorted(records, key=lambda record: -record[1])\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            [
+              "b",
+              2
+            ],
+            [
+              "a",
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "b",
+              2
+            ],
+            [
+              "a",
+              2
+            ]
+          ]
+        },
+        "id": "H01",
+        "reason": "Stable tie."
+      },
+      {
+        "args": [
+          [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "b",
+              3
+            ],
+            [
+              "a",
+              1
+            ]
+          ]
+        },
+        "id": "H02",
+        "reason": "Larger score first."
+      },
+      {
+        "args": [
+          [
+            [
+              "x",
+              -2
+            ],
+            [
+              "y",
+              -1
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "y",
+              -1
+            ],
+            [
+              "x",
+              -2
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "Negative scores still sort decreasingly."
+      },
+      {
+        "args": [
+          [
+            [
+              "x",
+              0
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "x",
+              0
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "Singleton unchanged."
+      },
+      {
+        "args": [
+          [
+            [
+              "a",
+              2
+            ],
+            [
+              "a",
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "a",
+              2
+            ],
+            [
+              "a",
+              2
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "Duplicates preserved."
+      },
+      {
+        "args": [
+          [
+            [
+              "c",
+              1
+            ],
+            [
+              "b",
+              3
+            ],
+            [
+              "a",
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "b",
+              3
+            ],
+            [
+              "a",
+              3
+            ],
+            [
+              "c",
+              1
+            ]
+          ]
+        },
+        "id": "H06",
+        "reason": "Tie order survives movement ahead of c."
+      }
+    ]
+  },
+  {
+    "id": "T14",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            1,
+            "right"
+          ],
+          [
+            1,
+            "left"
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Equal-time right event is incorrectly chosen first. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": []
+        },
+        "reason": "Drops all remaining right events.",
+        "scoring_case_id": "H02",
+        "source": "def merge_events(left, right):\n    result = []\n    left_index = right_index = 0\n    while left_index < len(left) and right_index < len(right):\n        if left[left_index][0] <= right[right_index][0]:\n            result.append(left[left_index])\n            left_index += 1\n        else:\n            result.append(right[right_index])\n            right_index += 1\n    return result + left[left_index:]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": []
+        },
+        "reason": "Drops all remaining left events.",
+        "scoring_case_id": "H03",
+        "source": "def merge_events(left, right):\n    result = []\n    left_index = right_index = 0\n    while left_index < len(left) and right_index < len(right):\n        if left[left_index][0] <= right[right_index][0]:\n            result.append(left[left_index])\n            left_index += 1\n        else:\n            result.append(right[right_index])\n            right_index += 1\n    return result + right[right_index:]\n"
+      }
+    ],
+    "reference_source": "def merge_events(left, right):\n    result = []\n    left_index = right_index = 0\n    while left_index < len(left) and right_index < len(right):\n        if left[left_index][0] <= right[right_index][0]:\n            result.append(left[left_index])\n            left_index += 1\n        else:\n            result.append(right[right_index])\n            right_index += 1\n    return result + left[left_index:] + right[right_index:]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            [
+              2,
+              "a"
+            ]
+          ],
+          [
+            [
+              2,
+              "b"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              2,
+              "a"
+            ],
+            [
+              2,
+              "b"
+            ]
+          ]
+        },
+        "id": "H01",
+        "reason": "Left-first tie."
+      },
+      {
+        "args": [
+          [],
+          [
+            [
+              1,
+              "x"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              "x"
+            ]
+          ]
+        },
+        "id": "H02",
+        "reason": "Right remainder is retained."
+      },
+      {
+        "args": [
+          [
+            [
+              1,
+              "x"
+            ]
+          ],
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              "x"
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "Left remainder is retained."
+      },
+      {
+        "args": [
+          [
+            [
+              1,
+              "a"
+            ],
+            [
+              3,
+              "c"
+            ]
+          ],
+          [
+            [
+              2,
+              "b"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              "a"
+            ],
+            [
+              2,
+              "b"
+            ],
+            [
+              3,
+              "c"
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "Interleaving by time."
+      },
+      {
+        "args": [
+          [
+            [
+              0,
+              "a"
+            ],
+            [
+              0,
+              "b"
+            ]
+          ],
+          [
+            [
+              0,
+              "c"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              "a"
+            ],
+            [
+              0,
+              "b"
+            ],
+            [
+              0,
+              "c"
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "All tied left events retain order and precede right."
+      },
+      {
+        "args": [
+          [
+            [
+              -2,
+              "n"
+            ]
+          ],
+          [
+            [
+              0,
+              "z"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              -2,
+              "n"
+            ],
+            [
+              0,
+              "z"
+            ]
+          ]
+        },
+        "id": "H06",
+        "reason": "Negative time comes first."
+      }
+    ]
+  },
+  {
+    "id": "T15",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          "a",
+          "b"
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Uses first instead of last occurrence order. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            "a",
+            "b"
+          ]
+        },
+        "reason": "Alphabetically sorts distinct labels.",
+        "scoring_case_id": "H02",
+        "source": "def last_labels(labels):\n    last = {label: index for index, label in enumerate(labels)}\n    return sorted(last)\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            "a",
+            "b"
+          ]
+        },
+        "reason": "Orders last positions from latest to earliest.",
+        "scoring_case_id": "H02",
+        "source": "def last_labels(labels):\n    last = {label: index for index, label in enumerate(labels)}\n    return sorted(last, key=last.get, reverse=True)\n"
+      }
+    ],
+    "reference_source": "def last_labels(labels):\n    last = {label: index for index, label in enumerate(labels)}\n    return sorted(last, key=last.get)\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            "x",
+            "y",
+            "x"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "y",
+            "x"
+          ]
+        },
+        "id": "H01",
+        "reason": "Last positions 1 then 2."
+      },
+      {
+        "args": [
+          [
+            "b",
+            "a"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "b",
+            "a"
+          ]
+        },
+        "id": "H02",
+        "reason": "Both appear once."
+      },
+      {
+        "args": [
+          [
+            "z",
+            "z"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "z"
+          ]
+        },
+        "id": "H03",
+        "reason": "One distinct label."
+      },
+      {
+        "args": [
+          [
+            "",
+            "q",
+            ""
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "q",
+            ""
+          ]
+        },
+        "id": "H04",
+        "reason": "Empty label last occurs at the end."
+      },
+      {
+        "args": [
+          [
+            "a",
+            "b",
+            "c",
+            "b"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "a",
+            "c",
+            "b"
+          ]
+        },
+        "id": "H05",
+        "reason": "Last positions 0,2,3."
+      },
+      {
+        "args": [
+          [
+            "B",
+            "b",
+            "B"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "b",
+            "B"
+          ]
+        },
+        "id": "H06",
+        "reason": "Case-sensitive labels."
+      }
+    ]
+  },
+  {
+    "id": "T16",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            "a",
+            2
+          ],
+          [
+            "b",
+            1
+          ],
+          [
+            "b",
+            3
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Sorts group names instead of preserving appearance order. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              "x",
+              1
+            ]
+          ]
+        },
+        "reason": "Keeps only one record per group.",
+        "scoring_case_id": "H02",
+        "source": "def first_two_per_group(records):\n    groups = {}\n    for group, value in records:\n        groups.setdefault(group, [])\n        if len(groups[group]) < 1:\n            groups[group].append([group, value])\n    return [record for group in groups for record in groups[group]]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              "x",
+              1
+            ],
+            [
+              "x",
+              2
+            ],
+            [
+              "x",
+              3
+            ]
+          ]
+        },
+        "reason": "Admits a third record.",
+        "scoring_case_id": "H02",
+        "source": "def first_two_per_group(records):\n    groups = {}\n    for group, value in records:\n        groups.setdefault(group, [])\n        if len(groups[group]) <= 2:\n            groups[group].append([group, value])\n    return [record for group in groups for record in groups[group]]\n"
+      }
+    ],
+    "reference_source": "def first_two_per_group(records):\n    groups = {}\n    for group, value in records:\n        groups.setdefault(group, [])\n        if len(groups[group]) < 2:\n            groups[group].append([group, value])\n    return [record for group in groups for record in groups[group]]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            [
+              "z",
+              1
+            ],
+            [
+              "a",
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "z",
+              1
+            ],
+            [
+              "a",
+              2
+            ]
+          ]
+        },
+        "id": "H01",
+        "reason": "Groups follow first appearance."
+      },
+      {
+        "args": [
+          [
+            [
+              "x",
+              1
+            ],
+            [
+              "x",
+              2
+            ],
+            [
+              "x",
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "x",
+              1
+            ],
+            [
+              "x",
+              2
+            ]
+          ]
+        },
+        "id": "H02",
+        "reason": "Two-record cap."
+      },
+      {
+        "args": [
+          [
+            [
+              "a",
+              1
+            ],
+            [
+              "b",
+              2
+            ],
+            [
+              "a",
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "a",
+              1
+            ],
+            [
+              "a",
+              3
+            ],
+            [
+              "b",
+              2
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "Group a is output together."
+      },
+      {
+        "args": [
+          [
+            [
+              "",
+              0
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "",
+              0
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "Empty group name is valid."
+      },
+      {
+        "args": [
+          [
+            [
+              "a",
+              1
+            ],
+            [
+              "a",
+              1
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "a",
+              1
+            ],
+            [
+              "a",
+              1
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "Duplicate records still count."
+      },
+      {
+        "args": [
+          [
+            [
+              "b",
+              4
+            ],
+            [
+              "b",
+              3
+            ],
+            [
+              "a",
+              2
+            ],
+            [
+              "a",
+              1
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "b",
+              4
+            ],
+            [
+              "b",
+              3
+            ],
+            [
+              "a",
+              2
+            ],
+            [
+              "a",
+              1
+            ]
+          ]
+        },
+        "id": "H06",
+        "reason": "Within-group order is not sorted by value."
+      }
+    ]
+  },
+  {
+    "id": "R01",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": -3
+      },
+      "public_case_id": "P01",
+      "reason": "Floor rounds a negative noninteger quotient away from zero. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 2
+        },
+        "reason": "Loses the sign.",
+        "scoring_case_id": "H01",
+        "source": "def divide_toward_zero(number, divisor):\n    quotient = abs(number) // divisor\n    return quotient\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 1
+        },
+        "reason": "Uses an incorrect divisor of four.",
+        "scoring_case_id": "H02",
+        "source": "def divide_toward_zero(number, divisor):\n    quotient = abs(number) // (divisor + 1)\n    return -quotient if number < 0 else quotient\n"
+      }
+    ],
+    "reference_source": "def divide_toward_zero(number, divisor):\n    quotient = abs(number) // divisor\n    return -quotient if number < 0 else quotient\n",
+    "scoring_cases": [
+      {
+        "args": [
+          -5,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -2
+        },
+        "id": "H01",
+        "reason": "Truncation of -2.5."
+      },
+      {
+        "args": [
+          7,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H02",
+        "reason": "Truncation of 2.333."
+      },
+      {
+        "args": [
+          -6,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -2
+        },
+        "id": "H03",
+        "reason": "Exact negative division."
+      },
+      {
+        "args": [
+          1,
+          9
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H04",
+        "reason": "Positive quotient less than one."
+      },
+      {
+        "args": [
+          -1,
+          9
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H05",
+        "reason": "Negative quotient magnitude less than one."
+      },
+      {
+        "args": [
+          1000,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1000
+        },
+        "id": "H06",
+        "reason": "Dividing by one changes nothing."
+      }
+    ]
+  },
+  {
+    "id": "R02",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 2
+      },
+      "public_case_id": "P01",
+      "reason": "Uses floor instead of ceiling. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 3
+        },
+        "reason": "Discards the negative input sign before rounding.",
+        "scoring_case_id": "H03",
+        "source": "def divide_ceiling(number, divisor):\n    return -((-abs(number)) // divisor)\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 3
+        },
+        "reason": "Adds one even when the division is exact.",
+        "scoring_case_id": "H04",
+        "source": "def divide_ceiling(number, divisor):\n    return -((-number) // divisor) + 1\n"
+      }
+    ],
+    "reference_source": "def divide_ceiling(number, divisor):\n    return -((-number) // divisor)\n",
+    "scoring_cases": [
+      {
+        "args": [
+          5,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 3
+        },
+        "id": "H01",
+        "reason": "Ceiling of 2.5."
+      },
+      {
+        "args": [
+          -5,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -2
+        },
+        "id": "H02",
+        "reason": "Ceiling of -2.5."
+      },
+      {
+        "args": [
+          -7,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -2
+        },
+        "id": "H03",
+        "reason": "Ceiling of -2.333."
+      },
+      {
+        "args": [
+          6,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H04",
+        "reason": "Exact positive division."
+      },
+      {
+        "args": [
+          0,
+          5
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H05",
+        "reason": "Zero is integral."
+      },
+      {
+        "args": [
+          1,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H06",
+        "reason": "Positive fraction rounds up."
+      }
+    ]
+  },
+  {
+    "id": "R03",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 2
+      },
+      "public_case_id": "P01",
+      "reason": "Python positive-divisor modulo follows floor rather than truncated division. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 1
+        },
+        "reason": "Always returns a nonnegative magnitude.",
+        "scoring_case_id": "H01",
+        "source": "def trunc_remainder(number, divisor):\n    magnitude = abs(number) % divisor\n    return magnitude\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 2
+        },
+        "reason": "Returns quotient magnitude rather than remainder magnitude.",
+        "scoring_case_id": "H02",
+        "source": "def trunc_remainder(number, divisor):\n    magnitude = abs(number) // divisor\n    return -magnitude if number < 0 else magnitude\n"
+      }
+    ],
+    "reference_source": "def trunc_remainder(number, divisor):\n    magnitude = abs(number) % divisor\n    return -magnitude if number < 0 else magnitude\n",
+    "scoring_cases": [
+      {
+        "args": [
+          -5,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "H01",
+        "reason": "-5-(-2*2)=-1."
+      },
+      {
+        "args": [
+          7,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H02",
+        "reason": "7-(2*3)=1."
+      },
+      {
+        "args": [
+          -6,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H03",
+        "reason": "Exact negative division."
+      },
+      {
+        "args": [
+          0,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H04",
+        "reason": "Zero remainder."
+      },
+      {
+        "args": [
+          2,
+          5
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H05",
+        "reason": "Truncated quotient zero."
+      },
+      {
+        "args": [
+          -2,
+          5
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -2
+        },
+        "id": "H06",
+        "reason": "Truncated quotient zero with negative input."
+      }
+    ]
+  },
+  {
+    "id": "R04",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": -4
+      },
+      "public_case_id": "P01",
+      "reason": "Adding half a step sends negative ties toward zero. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 2
+        },
+        "reason": "Always truncates magnitude instead of rounding to nearest.",
+        "scoring_case_id": "H02",
+        "source": "def nearest_multiple(number, step):\n    units = (2 * abs(number)) // (2 * step)\n    rounded = units * step\n    return -rounded if number < 0 else rounded\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 6
+        },
+        "reason": "Drops the negative sign.",
+        "scoring_case_id": "H03",
+        "source": "def nearest_multiple(number, step):\n    units = (2 * abs(number) + step) // (2 * step)\n    rounded = units * step\n    return rounded\n"
+      }
+    ],
+    "reference_source": "def nearest_multiple(number, step):\n    units = (2 * abs(number) + step) // (2 * step)\n    rounded = units * step\n    return -rounded if number < 0 else rounded\n",
+    "scoring_cases": [
+      {
+        "args": [
+          -3,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -4
+        },
+        "id": "H01",
+        "reason": "Negative halfway case rounds away."
+      },
+      {
+        "args": [
+          3,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 4
+        },
+        "id": "H02",
+        "reason": "Positive halfway case rounds away."
+      },
+      {
+        "args": [
+          -7,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -6
+        },
+        "id": "H03",
+        "reason": "Nearest negative multiple."
+      },
+      {
+        "args": [
+          0,
+          5
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H04",
+        "reason": "Zero is already a multiple."
+      },
+      {
+        "args": [
+          8,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 8
+        },
+        "id": "H05",
+        "reason": "Exact multiple unchanged."
+      },
+      {
+        "args": [
+          1,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H06",
+        "reason": "Closer to zero than four."
+      }
+    ]
+  },
+  {
+    "id": "R05",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            1,
+            2,
+            3
+          ],
+          [
+            4,
+            5,
+            6
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Copies rows without swapping axes. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              5,
+              3,
+              1
+            ],
+            [
+              6,
+              4,
+              2
+            ]
+          ]
+        },
+        "reason": "Reverses original rows while transposing.",
+        "scoring_case_id": "H01",
+        "source": "def transpose_matrix(matrix):\n    return [[row[column] for row in matrix[::-1]] for column in range(len(matrix[0]))]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              2
+            ],
+            [
+              4
+            ]
+          ]
+        },
+        "reason": "Drops the last original column.",
+        "scoring_case_id": "H02",
+        "source": "def transpose_matrix(matrix):\n    return [[row[column] for row in matrix] for column in range(len(matrix[0]) - 1)]\n"
+      }
+    ],
+    "reference_source": "def transpose_matrix(matrix):\n    return [[row[column] for row in matrix] for column in range(len(matrix[0]))]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              3,
+              5
+            ],
+            [
+              2,
+              4,
+              6
+            ]
+          ]
+        },
+        "id": "H01",
+        "reason": "Three rows become three output columns."
+      },
+      {
+        "args": [
+          [
+            [
+              2,
+              4,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              2
+            ],
+            [
+              4
+            ],
+            [
+              6
+            ]
+          ]
+        },
+        "id": "H02",
+        "reason": "Single row becomes a column."
+      },
+      {
+        "args": [
+          [
+            [
+              2
+            ],
+            [
+              4
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              2,
+              4
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "Single column becomes a row."
+      },
+      {
+        "args": [
+          [
+            [
+              0,
+              -1
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              2
+            ],
+            [
+              -1,
+              3
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "Values stay at transposed coordinates."
+      },
+      {
+        "args": [
+          [
+            [
+              5,
+              5
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              5
+            ],
+            [
+              5
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "Repeated values do not collapse dimensions."
+      },
+      {
+        "args": [
+          [
+            [
+              -9
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              -9
+            ]
+          ]
+        },
+        "id": "H06",
+        "reason": "Negative singleton."
+      }
+    ]
+  },
+  {
+    "id": "R06",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          6,
+          15
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Computes row sums instead of column sums. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            0,
+            0,
+            0
+          ]
+        },
+        "reason": "Omits the first row.",
+        "scoring_case_id": "H02",
+        "source": "def column_sums(matrix):\n    return [sum(row[column] for row in matrix[1:]) for column in range(len(matrix[0]))]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            13,
+            8
+          ]
+        },
+        "reason": "Reverses column order.",
+        "scoring_case_id": "H01",
+        "source": "def column_sums(matrix):\n    return [sum(row[column] for row in matrix) for column in range(len(matrix[0]) - 1, -1, -1)]\n"
+      }
+    ],
+    "reference_source": "def column_sums(matrix):\n    return [sum(row[column] for row in matrix) for column in range(len(matrix[0]))]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              3
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            8,
+            13
+          ]
+        },
+        "id": "H01",
+        "reason": "Column sums 1+2+5 and 3+4+6."
+      },
+      {
+        "args": [
+          [
+            [
+              2,
+              4,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            4,
+            6
+          ]
+        },
+        "id": "H02",
+        "reason": "A single row contributes once to each column."
+      },
+      {
+        "args": [
+          [
+            [
+              2
+            ],
+            [
+              4
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            6
+          ]
+        },
+        "id": "H03",
+        "reason": "One column sum."
+      },
+      {
+        "args": [
+          [
+            [
+              -2,
+              2
+            ],
+            [
+              2,
+              -2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "id": "H04",
+        "reason": "Signs cancel by column."
+      },
+      {
+        "args": [
+          [
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            3
+          ]
+        },
+        "id": "H05",
+        "reason": "Zero column remains zero."
+      },
+      {
+        "args": [
+          [
+            [
+              5,
+              5
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            5,
+            5
+          ]
+        },
+        "id": "H06",
+        "reason": "Two equal but distinct column totals."
+      }
+    ]
+  },
+  {
+    "id": "R07",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            1,
+            4
+          ],
+          [
+            2,
+            5
+          ],
+          [
+            3,
+            6
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Transposes without reversing the row direction. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              3
+            ],
+            [
+              2
+            ],
+            [
+              1
+            ]
+          ]
+        },
+        "reason": "Reverses the new row order as well.",
+        "scoring_case_id": "H02",
+        "source": "def rotate_clockwise(matrix):\n    return [[row[column] for row in matrix[::-1]] for column in range(len(matrix[0]) - 1, -1, -1)]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              1
+            ],
+            [
+              2
+            ]
+          ]
+        },
+        "reason": "Retains only the first input row.",
+        "scoring_case_id": "H01",
+        "source": "def rotate_clockwise(matrix):\n    return [[row[column] for row in matrix[:1]] for column in range(len(matrix[0]))]\n"
+      }
+    ],
+    "reference_source": "def rotate_clockwise(matrix):\n    return [[row[column] for row in matrix[::-1]] for column in range(len(matrix[0]))]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              5,
+              3,
+              1
+            ],
+            [
+              6,
+              4,
+              2
+            ]
+          ]
+        },
+        "id": "H01",
+        "reason": "Clockwise mapping of a tall rectangle."
+      },
+      {
+        "args": [
+          [
+            [
+              1,
+              2,
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1
+            ],
+            [
+              2
+            ],
+            [
+              3
+            ]
+          ]
+        },
+        "id": "H02",
+        "reason": "Single row becomes a downward column."
+      },
+      {
+        "args": [
+          [
+            [
+              1
+            ],
+            [
+              2
+            ],
+            [
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              3,
+              2,
+              1
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "Single column becomes a reversed row."
+      },
+      {
+        "args": [
+          [
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              2,
+              0
+            ],
+            [
+              3,
+              1
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "Clockwise square rotation."
+      },
+      {
+        "args": [
+          [
+            [
+              -1,
+              -2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              -1
+            ],
+            [
+              -2
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "Signs do not affect placement."
+      },
+      {
+        "args": [
+          [
+            [
+              4,
+              4
+            ],
+            [
+              5,
+              5
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              5,
+              4
+            ],
+            [
+              5,
+              4
+            ]
+          ]
+        },
+        "id": "H06",
+        "reason": "Repeated values preserve dimensions."
+      }
+    ]
+  },
+  {
+    "id": "R08",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            1,
+            2
+          ],
+          [
+            3,
+            4
+          ]
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Uses number of rows as row width. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": []
+        },
+        "reason": "Drops the final row, which is the only row here.",
+        "scoring_case_id": "H02",
+        "source": "def reshape_rows(values, rows, columns):\n    return [values[row * columns:(row + 1) * columns] for row in range(rows - 1)]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            [
+              6,
+              4,
+              2
+            ]
+          ]
+        },
+        "reason": "Reverses the entries within each row.",
+        "scoring_case_id": "H02",
+        "source": "def reshape_rows(values, rows, columns):\n    return [values[row * columns:(row + 1) * columns][::-1] for row in range(rows)]\n"
+      }
+    ],
+    "reference_source": "def reshape_rows(values, rows, columns):\n    return [values[row * columns:(row + 1) * columns] for row in range(rows)]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          3,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              1,
+              2
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              5,
+              6
+            ]
+          ]
+        },
+        "id": "H01",
+        "reason": "Successive pairs form rows."
+      },
+      {
+        "args": [
+          [
+            2,
+            4,
+            6
+          ],
+          1,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              2,
+              4,
+              6
+            ]
+          ]
+        },
+        "id": "H02",
+        "reason": "One row."
+      },
+      {
+        "args": [
+          [
+            2,
+            4,
+            6
+          ],
+          3,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              2
+            ],
+            [
+              4
+            ],
+            [
+              6
+            ]
+          ]
+        },
+        "id": "H03",
+        "reason": "One column."
+      },
+      {
+        "args": [
+          [
+            0,
+            -1,
+            2,
+            -3
+          ],
+          2,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              0,
+              -1
+            ],
+            [
+              2,
+              -3
+            ]
+          ]
+        },
+        "id": "H04",
+        "reason": "Preserve flat order."
+      },
+      {
+        "args": [
+          [
+            5,
+            5
+          ],
+          1,
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              5,
+              5
+            ]
+          ]
+        },
+        "id": "H05",
+        "reason": "Repeated values remain two columns."
+      },
+      {
+        "args": [
+          [
+            8,
+            9
+          ],
+          2,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              8
+            ],
+            [
+              9
+            ]
+          ]
+        },
+        "id": "H06",
+        "reason": "Two singleton rows."
+      }
+    ]
+  },
+  {
+    "id": "R09",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          "a\\",
+          "b",
+          "c"
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Treats the backslash as ordinary text and splits the escaped comma. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            "a",
+            "ab"
+          ]
+        },
+        "reason": "Does not clear a completed field.",
+        "scoring_case_id": "H02",
+        "source": "def split_escaped(text):\n    parts = []\n    current = ''\n    escaped = False\n    for character in text:\n        if escaped:\n            current += character\n            escaped = False\n        elif character == '\\\\':\n            escaped = True\n        elif character == ',':\n            parts.append(current)\n            current = current\n        else:\n            current += character\n    if escaped:\n        raise ValueError()\n    parts.append(current)\n    return parts\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            "a\\"
+          ]
+        },
+        "reason": "Accepts a trailing escape instead of rejecting it.",
+        "scoring_case_id": "H03",
+        "source": "def split_escaped(text):\n    parts = []\n    current = ''\n    escaped = False\n    for character in text:\n        if escaped:\n            current += character\n            escaped = False\n        elif character == '\\\\':\n            escaped = True\n        elif character == ',':\n            parts.append(current)\n            current = ''\n        else:\n            current += character\n    if escaped:\n        current += '\\\\'\n    parts.append(current)\n    return parts\n"
+      }
+    ],
+    "reference_source": "def split_escaped(text):\n    parts = []\n    current = ''\n    escaped = False\n    for character in text:\n        if escaped:\n            current += character\n            escaped = False\n        elif character == '\\\\':\n            escaped = True\n        elif character == ',':\n            parts.append(current)\n            current = ''\n        else:\n            current += character\n    if escaped:\n        raise ValueError()\n    parts.append(current)\n    return parts\n",
+    "scoring_cases": [
+      {
+        "args": [
+          "x\\,y,z"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "x,y",
+            "z"
+          ]
+        },
+        "id": "H01",
+        "reason": "Only the second comma separates fields."
+      },
+      {
+        "args": [
+          "a,b"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "a",
+            "b"
+          ]
+        },
+        "id": "H02",
+        "reason": "Two unescaped fields."
+      },
+      {
+        "args": [
+          "a\\"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H03",
+        "reason": "The final backslash has no character to escape."
+      },
+      {
+        "args": [
+          "a\\\\,b"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "a\\",
+            "b"
+          ]
+        },
+        "id": "H04",
+        "reason": "The paired slashes encode one literal slash; comma then separates."
+      },
+      {
+        "args": [
+          ",a,"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "",
+            "a",
+            ""
+          ]
+        },
+        "id": "H05",
+        "reason": "Leading and trailing empty fields."
+      },
+      {
+        "args": [
+          "\\,"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            ","
+          ]
+        },
+        "id": "H06",
+        "reason": "Escaped comma is a literal field."
+      }
+    ]
+  },
+  {
+    "id": "R10",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": "anb"
+      },
+      "public_case_id": "P01",
+      "reason": "Copies n instead of converting it to newline. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": "x"
+        },
+        "reason": "Silently accepts an unknown escape.",
+        "scoring_case_id": "H04",
+        "source": "def decode_escapes(text):\n    mapping = {'n': '\\n', 't': '\\t', '\\\\': '\\\\'}\n    result = ''\n    index = 0\n    while index < len(text):\n        if text[index] == '\\\\':\n            index += 1\n            if index == len(text):\n                raise ValueError()\n            result += mapping.get(text[index], text[index])\n        else:\n            result += text[index]\n        index += 1\n    return result\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": ""
+        },
+        "reason": "Deletes the escaped literal backslash.",
+        "scoring_case_id": "H03",
+        "source": "def decode_escapes(text):\n    mapping = {'n': '\\n', 't': '\\t', '\\\\': ''}\n    result = ''\n    index = 0\n    while index < len(text):\n        if text[index] == '\\\\':\n            index += 1\n            if index == len(text) or text[index] not in mapping:\n                raise ValueError()\n            result += mapping[text[index]]\n        else:\n            result += text[index]\n        index += 1\n    return result\n"
+      }
+    ],
+    "reference_source": "def decode_escapes(text):\n    mapping = {'n': '\\n', 't': '\\t', '\\\\': '\\\\'}\n    result = ''\n    index = 0\n    while index < len(text):\n        if text[index] == '\\\\':\n            index += 1\n            if index == len(text) or text[index] not in mapping:\n                raise ValueError()\n            result += mapping[text[index]]\n        else:\n            result += text[index]\n        index += 1\n    return result\n",
+    "scoring_cases": [
+      {
+        "args": [
+          "\\n"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\n"
+        },
+        "id": "H01",
+        "reason": "Newline escape."
+      },
+      {
+        "args": [
+          "\\t"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\t"
+        },
+        "id": "H02",
+        "reason": "Tab escape."
+      },
+      {
+        "args": [
+          "\\\\"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\\"
+        },
+        "id": "H03",
+        "reason": "Backslash pair becomes one slash."
+      },
+      {
+        "args": [
+          "\\x"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H04",
+        "reason": "x is not an allowed escape."
+      },
+      {
+        "args": [
+          "end\\"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H05",
+        "reason": "Unmatched trailing slash."
+      },
+      {
+        "args": [
+          "a\\tb\\nc"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "a\tb\nc"
+        },
+        "id": "H06",
+        "reason": "Both supported control-character escapes decode."
+      },
+      {
+        "args": [
+          "\\n\\t"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\n\t"
+        },
+        "id": "H07",
+        "reason": "Adjacent newline and tab escape pairs each consume two source characters with no ordinary character between them."
+      },
+      {
+        "args": [
+          "\\\\\\n"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\\\n"
+        },
+        "id": "H08",
+        "reason": "The first backslash pair becomes one literal backslash; the immediately following backslash-n becomes a newline."
+      }
+    ]
+  },
+  {
+    "id": "R11",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": "a\\\"b\\c"
+      },
+      "public_case_id": "P01",
+      "reason": "Escapes quotes but misses original backslashes. initial_scoring_case=H02. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": "\""
+        },
+        "reason": "Escapes slashes but misses quotes.",
+        "scoring_case_id": "H01",
+        "source": "def escape_quotes(text):\n    return ''.join('\\\\' + character if character == '\\\\' else character for character in text)\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": "\\\\\""
+        },
+        "reason": "Inserts two backslashes rather than one.",
+        "scoring_case_id": "H01",
+        "source": "def escape_quotes(text):\n    return ''.join('\\\\\\\\' + character if character in '\\\\\"' else character for character in text)\n"
+      }
+    ],
+    "reference_source": "def escape_quotes(text):\n    return ''.join('\\\\' + character if character in '\\\\\"' else character for character in text)\n",
+    "scoring_cases": [
+      {
+        "args": [
+          "\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\\\""
+        },
+        "id": "H01",
+        "reason": "One escaped quote."
+      },
+      {
+        "args": [
+          "\\"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\\\\"
+        },
+        "id": "H02",
+        "reason": "One slash becomes two."
+      },
+      {
+        "args": [
+          "\\\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\\\\\\\""
+        },
+        "id": "H03",
+        "reason": "Original slash pair precedes the slash-quote escape."
+      },
+      {
+        "args": [
+          "abc"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "abc"
+        },
+        "id": "H04",
+        "reason": "Ordinary text unchanged."
+      },
+      {
+        "args": [
+          "\"\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "\\\"\\\""
+        },
+        "id": "H05",
+        "reason": "Each quote is escaped exactly once."
+      },
+      {
+        "args": [
+          "x\\y"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": "x\\\\y"
+        },
+        "id": "H06",
+        "reason": "Only the middle slash changes."
+      }
+    ]
+  },
+  {
+    "id": "R12",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 1
+      },
+      "public_case_id": "P01",
+      "reason": "No escape state is entered, so the escaped quote is reported. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": -1
+        },
+        "reason": "Once escaped, the state never clears even after a slash pair.",
+        "scoring_case_id": "H02",
+        "source": "def first_unescaped_quote(text):\n    escaped = False\n    for index, character in enumerate(text):\n        if escaped:\n            escaped = True\n        elif character == '\\\\':\n            escaped = True\n        elif character == '\"':\n            return index\n    return -1\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 1
+        },
+        "reason": "Reports a one-based index.",
+        "scoring_case_id": "H03",
+        "source": "def first_unescaped_quote(text):\n    escaped = False\n    for index, character in enumerate(text):\n        if escaped:\n            escaped = False\n        elif character == '\\\\':\n            escaped = True\n        elif character == '\"':\n            return index + 1\n    return -1\n"
+      }
+    ],
+    "reference_source": "def first_unescaped_quote(text):\n    escaped = False\n    for index, character in enumerate(text):\n        if escaped:\n            escaped = False\n        elif character == '\\\\':\n            escaped = True\n        elif character == '\"':\n            return index\n    return -1\n",
+    "scoring_cases": [
+      {
+        "args": [
+          "\\\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "H01",
+        "reason": "Only an escaped quote."
+      },
+      {
+        "args": [
+          "\\\\\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "H02",
+        "reason": "Two slashes escape each other, leaving the quote unescaped."
+      },
+      {
+        "args": [
+          "\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "H03",
+        "reason": "Quote at the beginning."
+      },
+      {
+        "args": [
+          "\\"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "H04",
+        "reason": "Trailing slash has no quote."
+      },
+      {
+        "args": [
+          "a\"b\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H05",
+        "reason": "The first unescaped quote wins."
+      },
+      {
+        "args": [
+          "\\\\\\\""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "H06",
+        "reason": "Three preceding slashes leave the quote escaped."
+      }
+    ]
+  },
+  {
+    "id": "R13",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": true
+      },
+      "public_case_id": "P01",
+      "reason": "isinstance accepts bool as an int subclass. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "reason": "Rejects the valid upper endpoint.",
+        "scoring_case_id": "H02",
+        "source": "def validate_percentage(value):\n    if type(value) is not int or not 0 <= value < 100:\n        raise ValueError()\n    return value\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": -1
+        },
+        "reason": "Accepts a value below the allowed range.",
+        "scoring_case_id": "H03",
+        "source": "def validate_percentage(value):\n    if type(value) is not int or not -1 <= value <= 100:\n        raise ValueError()\n    return value\n"
+      }
+    ],
+    "reference_source": "def validate_percentage(value):\n    if type(value) is not int or not 0 <= value <= 100:\n        raise ValueError()\n    return value\n",
+    "scoring_cases": [
+      {
+        "args": [
+          false
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H01",
+        "reason": "False is also bool, not an exact int."
+      },
+      {
+        "args": [
+          100
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 100
+        },
+        "id": "H02",
+        "reason": "Upper endpoint is valid."
+      },
+      {
+        "args": [
+          -1
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H03",
+        "reason": "Below the range."
+      },
+      {
+        "args": [
+          101
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H04",
+        "reason": "Above the range."
+      },
+      {
+        "args": [
+          "50"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H05",
+        "reason": "Text is not an integer."
+      },
+      {
+        "args": [
+          null
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H06",
+        "reason": "Null is not an integer."
+      }
+    ]
+  },
+  {
+    "id": "R14",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          2,
+          2
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Does not reject ragged rows and reports first-row width. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "reason": "Accepts a boolean cell.",
+        "scoring_case_id": "H06",
+        "source": "def validated_shape(matrix):\n    if type(matrix) is not list or not matrix:\n        raise ValueError()\n    if type(matrix[0]) is not list or not matrix[0]:\n        raise ValueError()\n    width = len(matrix[0])\n    for row in matrix:\n        if type(row) is not list or len(row) != width:\n            raise ValueError()\n        if any(not isinstance(value, int) for value in row):\n            raise ValueError()\n    return [len(matrix), width]\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": [
+            3,
+            2
+          ]
+        },
+        "reason": "Swaps the row and column counts for a nonsquare valid matrix.",
+        "scoring_case_id": "H04",
+        "source": "def validated_shape(matrix):\n    if type(matrix) is not list or not matrix:\n        raise ValueError()\n    if type(matrix[0]) is not list or not matrix[0]:\n        raise ValueError()\n    width = len(matrix[0])\n    for row in matrix:\n        if type(row) is not list or len(row) != width:\n            raise ValueError()\n        if any(type(value) is not int for value in row):\n            raise ValueError()\n    return [width, len(matrix)]\n"
+      }
+    ],
+    "reference_source": "def validated_shape(matrix):\n    if type(matrix) is not list or not matrix:\n        raise ValueError()\n    if type(matrix[0]) is not list or not matrix[0]:\n        raise ValueError()\n    width = len(matrix[0])\n    for row in matrix:\n        if type(row) is not list or len(row) != width:\n            raise ValueError()\n        if any(type(value) is not int for value in row):\n            raise ValueError()\n    return [len(matrix), width]\n",
+    "scoring_cases": [
+      {
+        "args": [
+          [
+            [
+              1
+            ],
+            [
+              2,
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H01",
+        "reason": "Unequal row widths."
+      },
+      {
+        "args": [
+          [
+            []
+          ]
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H02",
+        "reason": "Rows must be nonempty."
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H03",
+        "reason": "Outer list must be nonempty."
+      },
+      {
+        "args": [
+          [
+            [
+              1,
+              2,
+              3
+            ],
+            [
+              4,
+              5,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            3
+          ]
+        },
+        "id": "H04",
+        "reason": "Two equal-width rows, each with three integer entries."
+      },
+      {
+        "args": [
+          [
+            [
+              1
+            ],
+            "x"
+          ]
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H05",
+        "reason": "Every row must be a list."
+      },
+      {
+        "args": [
+          [
+            [
+              true
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H06",
+        "reason": "Bool is not an exact integer."
+      }
+    ]
+  },
+  {
+    "id": "R15",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 1234
+      },
+      "public_case_id": "P01",
+      "reason": "isdigit accepts non-ASCII decimal digits. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 12345
+        },
+        "reason": "Accepts too-long digit strings.",
+        "scoring_case_id": "H03",
+        "source": "def parse_four_digits(code):\n    if type(code) is not str or len(code) < 4 or any(character < '0' or character > '9' for character in code):\n        raise ValueError()\n    return int(code)\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 123
+        },
+        "reason": "Accepts too-short digit strings.",
+        "scoring_case_id": "H02",
+        "source": "def parse_four_digits(code):\n    if type(code) is not str or len(code) > 4 or any(character < '0' or character > '9' for character in code):\n        raise ValueError()\n    return int(code)\n"
+      }
+    ],
+    "reference_source": "def parse_four_digits(code):\n    if type(code) is not str or len(code) != 4 or any(character < '0' or character > '9' for character in code):\n        raise ValueError()\n    return int(code)\n",
+    "scoring_cases": [
+      {
+        "args": [
+          "\u0661\u0662\u0663\u0664"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H01",
+        "reason": "Arabic-Indic digits are not ASCII."
+      },
+      {
+        "args": [
+          "123"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H02",
+        "reason": "Only three characters."
+      },
+      {
+        "args": [
+          "12345"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H03",
+        "reason": "Five characters."
+      },
+      {
+        "args": [
+          "12a4"
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H04",
+        "reason": "Contains a letter."
+      },
+      {
+        "args": [
+          "9999"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 9999
+        },
+        "id": "H05",
+        "reason": "Four ASCII digits."
+      },
+      {
+        "args": [
+          null
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H06",
+        "reason": "Null is not a string."
+      }
+    ]
+  },
+  {
+    "id": "R16",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": -1
+      },
+      "public_case_id": "P01",
+      "reason": "Returns a negative count rather than rejecting reversed endpoints. initial_scoring_case=H01. Manual prediction only."
+    },
+    "mutants": [
+      {
+        "id": "M01",
+        "predicted_mutant": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "reason": "Rejects a valid singleton.",
+        "scoring_case_id": "H02",
+        "source": "def closed_point_count(start, end):\n    if type(start) is not int or type(end) is not int or start >= end:\n        raise ValueError()\n    return end - start + 1\n"
+      },
+      {
+        "id": "M02",
+        "predicted_mutant": {
+          "kind": "return",
+          "value": 3
+        },
+        "reason": "Counts a half-open interval rather than closed integer points.",
+        "scoring_case_id": "H03",
+        "source": "def closed_point_count(start, end):\n    if type(start) is not int or type(end) is not int or start > end:\n        raise ValueError()\n    return end - start\n"
+      }
+    ],
+    "reference_source": "def closed_point_count(start, end):\n    if type(start) is not int or type(end) is not int or start > end:\n        raise ValueError()\n    return end - start + 1\n",
+    "scoring_cases": [
+      {
+        "args": [
+          4,
+          2
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H01",
+        "reason": "Reversed order."
+      },
+      {
+        "args": [
+          0,
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "H02",
+        "reason": "Singleton at zero."
+      },
+      {
+        "args": [
+          -2,
+          1
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 4
+        },
+        "id": "H03",
+        "reason": "Points -2,-1,0,1."
+      },
+      {
+        "args": [
+          true,
+          2
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H04",
+        "reason": "Bool endpoint is invalid."
+      },
+      {
+        "args": [
+          "1",
+          2
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H05",
+        "reason": "String endpoint is invalid."
+      },
+      {
+        "args": [
+          0,
+          null
+        ],
+        "expected": {
+          "kind": "raises",
+          "type": "ValueError"
+        },
+        "id": "H06",
+        "reason": "Null endpoint is invalid."
+      }
+    ]
+  }
+]

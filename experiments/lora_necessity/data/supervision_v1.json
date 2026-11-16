@@ -1,0 +1,368 @@
+[
+  {
+    "entry_point": "count_before",
+    "id": "S01",
+    "initial_source": "def count_before(times, cutoff):\n    count = 0\n    for time in times:\n        if time > cutoff:\n            break\n        count += 1\n    return count\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 3
+      },
+      "public_case_id": "P01",
+      "reason": "The initial loop also counts both equal timestamps. initial_scoring_case=H01. Manual prediction only."
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            1,
+            3,
+            3,
+            5
+          ],
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [],
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def count_before(times, cutoff):\n    count = 0\n    for time in times:\n        if time >= cutoff:\n            break\n        count += 1\n    return count\n",
+    "spec": "Return the number of times strictly before cutoff in a sorted nondecreasing integer list. List length is 0..32; times and cutoff are integers in [-1000,1000], not bool. Duplicates count; equality does not."
+  },
+  {
+    "entry_point": "overlap_length",
+    "id": "S02",
+    "initial_source": "def overlap_length(left_start, left_end, right_start, right_end):\n    return max(0, min(left_end, right_end) - max(left_start, right_start) + 1)\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 1
+      },
+      "public_case_id": "P01",
+      "reason": "Treating the end as included counts one shared integer at the touching point. initial_scoring_case=H01. Manual prediction only."
+    },
+    "public_cases": [
+      {
+        "args": [
+          0,
+          3,
+          3,
+          7
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          1,
+          5,
+          2,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def overlap_length(left_start, left_end, right_start, right_end):\n    return max(0, min(left_end, right_end) - max(left_start, right_start))\n",
+    "spec": "Return the number of integers in the intersection of half-open intervals [left_start,left_end) and [right_start,right_end). Endpoints are non-bool integers in [-1000,1000], each start<=end. Empty intervals and touching endpoints have length zero."
+  },
+  {
+    "entry_point": "segment_sums",
+    "id": "S03",
+    "initial_source": "def segment_sums(values, separator):\n    result = []\n    total = 0\n    for value in values:\n        if value == separator:\n            result.append(total)\n            total = total\n        else:\n            total += value\n    result.append(total)\n    return result\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          2,
+          5
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "The accumulated 2 survives into the segment containing 3. initial_scoring_case=H01. Manual prediction only."
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            2,
+            0,
+            3
+          ],
+          0
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            3
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [],
+          9
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def segment_sums(values, separator):\n    result = []\n    total = 0\n    for value in values:\n        if value == separator:\n            result.append(total)\n            total = 0\n        else:\n            total += value\n    result.append(total)\n    return result\n",
+    "spec": "Split a list at every occurrence of separator and return segment sums, including empty segments. An empty input produces [0]. Values and separator are non-bool integers in [-1000,1000]; list length<=32. Separator values are not summed."
+  },
+  {
+    "entry_point": "unique_rows",
+    "id": "S04",
+    "initial_source": "def unique_rows(rows):\n    result = []\n    seen = set()\n    for row in rows:\n        unique = True\n        for value in row:\n            if value in seen:\n                unique = False\n            seen.add(value)\n        result.append(unique)\n    return result\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          true,
+          false
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "The second row incorrectly sees 1 from the first row. initial_scoring_case=H01. Manual prediction only."
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              2
+            ],
+            [
+              1,
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            true
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def unique_rows(rows):\n    result = []\n    seen = set()\n    for row in rows:\n        seen.clear()\n        unique = True\n        for value in row:\n            if value in seen:\n                unique = False\n            seen.add(value)\n        result.append(unique)\n    return result\n",
+    "spec": "Return one bool per row, true iff that row contains no repeated integer. Rows and each row length<=32; entries are non-bool integers in [-1000,1000]. Empty rows are unique. Equal entries in different rows do not conflict."
+  },
+  {
+    "entry_point": "bag_intersection_size",
+    "id": "S05",
+    "initial_source": "def bag_intersection_size(left, right):\n    return sum(int(value in right) for value in set(left))\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 1
+      },
+      "public_case_id": "P01",
+      "reason": "Presence alone counts only one shared value. initial_scoring_case=H01. Manual prediction only."
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            1,
+            1,
+            2
+          ],
+          [
+            1,
+            1,
+            1
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 2
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [],
+          [
+            3
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 0
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def bag_intersection_size(left, right):\n    return sum(min(left.count(value), right.count(value)) for value in set(left))\n",
+    "spec": "Return multiset intersection size: for each integer, count the smaller occurrence count in left and right. Lists have length<=32; entries are non-bool integers in [-1000,1000]. Order is irrelevant and empty lists are allowed."
+  },
+  {
+    "entry_point": "can_form",
+    "id": "S06",
+    "initial_source": "def can_form(stock, word):\n    remaining = list(stock)\n    for character in word:\n        if character not in remaining:\n            return False\n    return True\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": true
+      },
+      "public_case_id": "P01",
+      "reason": "The first a is never consumed and can incorrectly be reused. initial_scoring_case=H01. Manual prediction only."
+    },
+    "public_cases": [
+      {
+        "args": [
+          "ab",
+          "aa"
+        ],
+        "expected": {
+          "kind": "return",
+          "value": false
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          "",
+          ""
+        ],
+        "expected": {
+          "kind": "return",
+          "value": true
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def can_form(stock, word):\n    remaining = list(stock)\n    for character in word:\n        if character not in remaining:\n            return False\n        remaining.remove(character)\n    return True\n",
+    "spec": "Return whether stock contains enough copies of each character to form word. Both are ASCII strings of length<=32; comparison is case-sensitive. Each stock character is usable once; empty word is always possible."
+  },
+  {
+    "entry_point": "earliest_max",
+    "id": "S07",
+    "initial_source": "def earliest_max(scores):\n    best = -1\n    for index, score in enumerate(scores):\n        if best == -1 or score >= scores[best]:\n            best = index\n    return best\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": 2
+      },
+      "public_case_id": "P01",
+      "reason": "The later equal maximum replaces index 1. initial_scoring_case=H01. Manual prediction only."
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            5,
+            9,
+            9
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 1
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": -1
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def earliest_max(scores):\n    best = -1\n    for index, score in enumerate(scores):\n        if best == -1 or score > scores[best]:\n            best = index\n    return best\n",
+    "spec": "Return the zero-based index of the earliest largest score; return -1 for an empty list. Scores are non-bool integers in [-1000,1000], list length<=32. Ties retain the earlier index."
+  },
+  {
+    "entry_point": "first_labels",
+    "id": "S08",
+    "initial_source": "def first_labels(labels):\n    result = []\n    for label in labels:\n        if label not in result:\n            result.append(label)\n    return sorted(result)\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          "a",
+          "b"
+        ]
+      },
+      "public_case_id": "P01",
+      "reason": "Alphabetic sorting discards first appearance order. initial_scoring_case=H01. Manual prediction only."
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            "b",
+            "a",
+            "b"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "b",
+            "a"
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          []
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def first_labels(labels):\n    result = []\n    for label in labels:\n        if label not in result:\n            result.append(label)\n    return result\n",
+    "spec": "Return each distinct ASCII label once in order of first appearance. Input is a list of at most 32 ASCII strings, each length<=32; empty labels and an empty list are allowed. Comparison is case-sensitive."
+  }
+]

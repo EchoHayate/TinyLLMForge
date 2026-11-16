@@ -1,0 +1,310 @@
+[
+  {
+    "family": "bounds",
+    "id": "S01",
+    "split": "supervision",
+    "structure_notes": "Sequential prefix scan. M01/M02 differ on H01: 0 versus 1. T01 is grid clipping; T04 bucket assignment still shares comparisons and needs review.",
+    "template_id": "S01_structure_v1"
+  },
+  {
+    "family": "bounds",
+    "id": "S02",
+    "split": "supervision",
+    "structure_notes": "Endpoint arithmetic. M01/M02 differ on H05: 2 versus 1. T03 is closed containment rather than overlap length.",
+    "template_id": "S02_structure_v1"
+  },
+  {
+    "family": "reset",
+    "id": "S03",
+    "split": "supervision",
+    "structure_notes": "Segment accumulator. M01/M02 differ on H03: [] versus [5]. S03/T06 may share delimiter logic; output and state distinction require independent review.",
+    "template_id": "S03_structure_v1"
+  },
+  {
+    "family": "reset",
+    "id": "S04",
+    "split": "supervision",
+    "structure_notes": "Per-row membership state. M01/M02 differ on H04: [False] versus [True]. Retention validation rows are a different primary defect but overlap in container traversal.",
+    "template_id": "S04_structure_v1"
+  },
+  {
+    "family": "multiplicity",
+    "id": "S05",
+    "split": "supervision",
+    "structure_notes": "Frequency minimum reduction. M01/M02 differ on H01: 3 versus 6. T10 uses frequency differences but can share a frequency-loop skeleton; review this explicit risk.",
+    "template_id": "S05_structure_v1"
+  },
+  {
+    "family": "multiplicity",
+    "id": "S06",
+    "split": "supervision",
+    "structure_notes": "Sequential inventory removal. M01/M02 differ on H02: True versus False. T09 changes to per-request outputs but shares inventory consumption.",
+    "template_id": "S06_structure_v1"
+  },
+  {
+    "family": "order",
+    "id": "S07",
+    "split": "supervision",
+    "structure_notes": "Single winner, stable tie rule. M01/M02 differ on H03: 0 versus 1. T13 sorts all records rather than tracking one winner.",
+    "template_id": "S07_structure_v1"
+  },
+  {
+    "family": "order",
+    "id": "S08",
+    "split": "supervision",
+    "structure_notes": "Stable accumulation. M01/M02 differ on H02: [x,x] versus [x]. T15 selects by last rather than first position; semantic distinction needs review.",
+    "template_id": "S08_structure_v1"
+  },
+  {
+    "family": "dev_sign",
+    "id": "D01",
+    "split": "development",
+    "structure_notes": "Three-way scalar classification, distinct from signed division. M01/M02 differ on H03: -1 versus 8.",
+    "template_id": "D01_structure_v1"
+  },
+  {
+    "family": "dev_stride",
+    "id": "D02",
+    "split": "development",
+    "structure_notes": "Strided index selection. M01/M02 differ on H02: [9,8] versus [8]. T02 emits window start indices rather than sampling elements.",
+    "template_id": "D02_structure_v1"
+  },
+  {
+    "family": "dev_nested_lookup",
+    "id": "D03",
+    "split": "development",
+    "structure_notes": "Two-stage mapping access. M01/M02 differ on H02: 4 versus 6; S04 inspects uniqueness rather than nested lookup.",
+    "template_id": "D03_structure_v1"
+  },
+  {
+    "family": "dev_count_predicate",
+    "id": "D04",
+    "split": "development",
+    "structure_notes": "Predicate counting. M01/M02 differ on H03: 0 versus 3. T07 constructs whole numbers with state, not digit counts.",
+    "template_id": "D04_structure_v1"
+  },
+  {
+    "family": "bounds",
+    "id": "T01",
+    "split": "transfer",
+    "structure_notes": "Two-dimensional neighbor enumeration differs from S01/S02. M01/M02 differ on H02: one neighbor versus three reversed neighbors.",
+    "template_id": "T01_structure_v1"
+  },
+  {
+    "family": "bounds",
+    "id": "T02",
+    "split": "transfer",
+    "structure_notes": "Output is an index range; no prefix value scan or interval overlap. M01/M02 differ on H01: [0,1,2] versus [].",
+    "template_id": "T02_structure_v1"
+  },
+  {
+    "family": "bounds",
+    "id": "T03",
+    "split": "transfer",
+    "structure_notes": "Closed interval predicate differs from S02 intersection-size arithmetic. M01/M02 differ on H02: True versus False.",
+    "template_id": "T03_structure_v1"
+  },
+  {
+    "family": "bounds",
+    "id": "T04",
+    "split": "transfer",
+    "structure_notes": "Multi-region classification, but ordered scan/threshold skeleton resembles S01; retain this as a review risk rather than certifying novelty. M01/M02 differ on H02: 3 versus 2.",
+    "template_id": "T04_structure_v1"
+  },
+  {
+    "family": "reset",
+    "id": "T05",
+    "split": "transfer",
+    "structure_notes": "Event-triggered consecutive counter differs from segment sums and per-row membership. M01/M02 differ on H02: [False] versus [True].",
+    "template_id": "T05_structure_v1"
+  },
+  {
+    "family": "reset",
+    "id": "T06",
+    "split": "transfer",
+    "structure_notes": "Delimiter-like reset overlaps with S03, but per-event dual indices differ from per-segment sums. M01/M02 differ on H02: [[0,0],[0,1]] versus [[0,0],[1,0]].",
+    "template_id": "T06_structure_v1"
+  },
+  {
+    "family": "reset",
+    "id": "T07",
+    "split": "transfer",
+    "structure_notes": "Digit-run construction rather than S03 segment summation; shares reset control and needs review. M01/M02 differ on H05: [] versus ['2'].",
+    "template_id": "T07_structure_v1"
+  },
+  {
+    "family": "reset",
+    "id": "T08",
+    "split": "transfer",
+    "structure_notes": "Session-local predecessor state rather than a sum/set. M01/M02 differ on H01: [-3] versus [3].",
+    "template_id": "T08_structure_v1"
+  },
+  {
+    "family": "multiplicity",
+    "id": "T09",
+    "split": "transfer",
+    "structure_notes": "Per-request allocation outputs versus S06 whole-word success; removal loop remains close and is not certified distinct. M01/M02 differ on H03: [False] versus [True].",
+    "template_id": "T09_structure_v1"
+  },
+  {
+    "family": "multiplicity",
+    "id": "T10",
+    "split": "transfer",
+    "structure_notes": "Signed histogram accumulation, unlike S05 frequency-minimum comprehension. Mathematical relation to intersection remains explicit. M01/M02 differ on H02: 0 versus 2.",
+    "template_id": "T10_structure_v1"
+  },
+  {
+    "family": "multiplicity",
+    "id": "T11",
+    "split": "transfer",
+    "structure_notes": "Combinatorial reduction, not bag intersection or stock satisfaction. M01/M02 differ on H01: 12 versus 8.",
+    "template_id": "T11_structure_v1"
+  },
+  {
+    "family": "multiplicity",
+    "id": "T12",
+    "split": "transfer",
+    "structure_notes": "Frequency quotient per value. M01/M02 differ on H03: ascending versus descending rows. Shares counting primitive with S05 but not two-bag reduction.",
+    "template_id": "T12_structure_v1"
+  },
+  {
+    "family": "order",
+    "id": "T13",
+    "split": "transfer",
+    "structure_notes": "Whole-record sorting versus S07 single best index. M01/M02 differ on H01: original versus reversed tie order.",
+    "template_id": "T13_structure_v1"
+  },
+  {
+    "family": "order",
+    "id": "T14",
+    "split": "transfer",
+    "structure_notes": "Dual cursor merge differs from S07/S08 single-container scan. M01/M02 differ on H02: [] versus [[1,x]].",
+    "template_id": "T14_structure_v1"
+  },
+  {
+    "family": "order",
+    "id": "T15",
+    "split": "transfer",
+    "structure_notes": "Index map plus sorting rather than S08 accumulating first occurrences. M01/M02 differ on H01: [x,y] versus [x,y] there, but on H05 [a,b,c] versus [b,c,a].",
+    "template_id": "T15_structure_v1"
+  },
+  {
+    "family": "order",
+    "id": "T16",
+    "split": "transfer",
+    "structure_notes": "Ordered grouping with quota, unlike global dedup or maximum selection. M01/M02 differ on H02: one record versus three.",
+    "template_id": "T16_structure_v1"
+  },
+  {
+    "family": "signed_rounding",
+    "id": "R01",
+    "split": "retention",
+    "structure_notes": "Signed integer arithmetic, not adapted interval/state/bag/order correction. M01/M02 differ on H01: 2 versus -1.",
+    "template_id": "R01_structure_v1"
+  },
+  {
+    "family": "signed_rounding",
+    "id": "R02",
+    "split": "retention",
+    "structure_notes": "Rounding direction formula. M01/M02 differ on H03: 3 versus -1. Not a training family.",
+    "template_id": "R02_structure_v1"
+  },
+  {
+    "family": "signed_rounding",
+    "id": "R03",
+    "split": "retention",
+    "structure_notes": "Sign-aware remainder. M01/M02 differ on H02: 1 versus 2. Relation to R01 is within retention, not supervised transfer.",
+    "template_id": "R03_structure_v1"
+  },
+  {
+    "family": "signed_rounding",
+    "id": "R04",
+    "split": "retention",
+    "structure_notes": "Nearest-multiple tie semantics, not adapted stable sequence ties. M01/M02 differ on H03: -6 versus 6.",
+    "template_id": "R04_structure_v1"
+  },
+  {
+    "family": "matrix_axis",
+    "id": "R05",
+    "split": "retention",
+    "structure_notes": "Matrix coordinate mapping. M01/M02 differ on H02: [[2],[4],[6]] versus [[2],[4]]. No adapted matrix family.",
+    "template_id": "R05_structure_v1"
+  },
+  {
+    "family": "matrix_axis",
+    "id": "R06",
+    "split": "retention",
+    "structure_notes": "Column reduction; S03 sums segments, not spatial axes. M01/M02 differ on H02: zeros versus [6,4,2].",
+    "template_id": "R06_structure_v1"
+  },
+  {
+    "family": "matrix_axis",
+    "id": "R07",
+    "split": "retention",
+    "structure_notes": "Rotation versus simple transpose within retention. M01/M02 differ on H02: [[3],[2],[1]] versus [[1],[2],[3]].",
+    "template_id": "R07_structure_v1"
+  },
+  {
+    "family": "matrix_axis",
+    "id": "R08",
+    "split": "retention",
+    "structure_notes": "Linear-to-matrix indexing, unrelated to adapted bag/state mechanisms. M01/M02 differ on H02: [] versus a reversed row.",
+    "template_id": "R08_structure_v1"
+  },
+  {
+    "family": "escape_scan",
+    "id": "R09",
+    "split": "retention",
+    "structure_notes": "Escaping grammar, although state reset is an auxiliary skill. M01/M02 differ on H02: [a,ab] versus [a,b].",
+    "template_id": "R09_structure_v1"
+  },
+  {
+    "family": "escape_scan",
+    "id": "R10",
+    "split": "retention",
+    "structure_notes": "Validated escape dictionary and cursor, not supervised segment sums. M01/M02 differ on H04: x versus ValueError.",
+    "template_id": "R10_structure_v1"
+  },
+  {
+    "family": "escape_scan",
+    "id": "R11",
+    "split": "retention",
+    "structure_notes": "Character-wise escaping; no recursive replacement of inserted text. M01/M02 differ on H01: bare quote versus two slashes plus quote.",
+    "template_id": "R11_structure_v1"
+  },
+  {
+    "family": "escape_scan",
+    "id": "R12",
+    "split": "retention",
+    "structure_notes": "Escape parity with early return. M01/M02 differ on H03: 0 versus 1. Retention label reflects escaping, though state handling overlaps the learned mechanisms.",
+    "template_id": "R12_structure_v1"
+  },
+  {
+    "family": "validation",
+    "id": "R13",
+    "split": "retention",
+    "structure_notes": "Exact-type and range validation rather than positive-domain endpoint calculation. M01/M02 differ on H02: ValueError versus 100.",
+    "template_id": "R13_structure_v1"
+  },
+  {
+    "family": "validation",
+    "id": "R14",
+    "split": "retention",
+    "structure_notes": "Validation traversal shares containers with S04 but not uniqueness. M01/M02 differ on H04: [2,3] versus [3,2].",
+    "template_id": "R14_structure_v1"
+  },
+  {
+    "family": "validation",
+    "id": "R15",
+    "split": "retention",
+    "structure_notes": "Strict parsing; not digit counting. M01/M02 differ on H03: 12345 versus ValueError.",
+    "template_id": "R15_structure_v1"
+  },
+  {
+    "family": "validation",
+    "id": "R16",
+    "split": "retention",
+    "structure_notes": "Invalid-domain handling is the primary initial defect, but interval semantics overlap S02/T03 and require explicit review. M01/M02 differ on H02: ValueError versus 0.",
+    "template_id": "R16_structure_v1"
+  }
+]
