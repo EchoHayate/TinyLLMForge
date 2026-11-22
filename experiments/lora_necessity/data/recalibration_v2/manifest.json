@@ -1,0 +1,114 @@
+{
+  "version": 2,
+  "kind": "lora_recalibration_development_static_snapshot",
+  "date": "2026-11-19",
+  "materialization_status": "complete",
+  "static_status": "blocked_near_template",
+  "metadata_status": "passed",
+  "semantic_review_status": "passed_static_only",
+  "structural_review_status": "completed_blocked",
+  "dynamic_status": "pending",
+  "tokenizer_length_status": "pending",
+  "run_authorized": false,
+  "benchmark_eligible": false,
+  "formal_evaluation_ready": false,
+  "net_benefit_established": false,
+  "isolated": false,
+  "files": {
+    "structure.json": {
+      "sha256": "da668d0b0a86341abe0583bb5abf0de1b34a94210e404c607a4a8e361e1d74ca",
+      "bytes": 31166
+    },
+    "prompts.json": {
+      "sha256": "dafcc1ed5fb64c93f34333f30ea88b53e014a58fe03d0b13728251cb3e7eb3a3",
+      "bytes": 22022
+    },
+    "oracles.json": {
+      "sha256": "6307ab3690880660083e25dcad126a66ac04adf5b082a881fb09091f0c670021",
+      "bytes": 75364
+    },
+    "review.md": {
+      "sha256": "dc587547b96168fab2f7cb068458585834fc070ca5ca3b5cbf28a34d8b65a10a",
+      "bytes": 9357
+    }
+  },
+  "inputs": {
+    "docs/superpowers/specs/2026-11-19-lora-recalibration-data-design.md": "9e80f6b516577a4b2b3d19e24b1cb08c846d67fa0b681459845e0ffaa9186f10",
+    "docs/superpowers/specs/2026-11-17-lora-development-recalibration-design.md": "8c665324c66723c379611f99a81f3fe7f08b71c0828b14680484254d6c26caf1",
+    "experiments/lora_necessity/data/supervision_v1.json": "4dafb0ac759697e9b80c5bf097b363082a17a34e6b78fb3d3b91d37a76beb78a"
+  },
+  "counts": {
+    "tasks": 12,
+    "public_cases": 24,
+    "private_cases": 72,
+    "all_cases": 96,
+    "references": 24,
+    "incorrect_programs": 36,
+    "source_functions": 60,
+    "bound_incorrect_witnesses": 36,
+    "structural_pairs": 210,
+    "future_dynamic_source_case_positions": 480
+  },
+  "observed_execution_counts": {
+    "task_source_calls": 0,
+    "model_generations": 0,
+    "tokenizer_loads": 0,
+    "training_steps": 0,
+    "remote_runs": 0
+  },
+  "open_structural_blockers": [
+    {
+      "id": "F01",
+      "pair": "C01:S01",
+      "reason": "Actual minimum repair only excludes equality from time membership.",
+      "status": "open_initial_defect_unchanged"
+    },
+    {
+      "id": "F02",
+      "pair": "C04:S03",
+      "reason": "Actual minimum repair only resets the existing cumulative ID slot at begin.",
+      "status": "classification_corrected_underlying_blocker_open"
+    }
+  ],
+  "classification_counts": {
+    "near_template": 2,
+    "shared_mechanism": 59,
+    "different_structure": 149
+  },
+  "authorship": {
+    "cases_and_structure": "parent_controller",
+    "reference_a_and_incorrect_sources": "Kant, agent 01a1f270-b7c8-78b2-b2cb-4f640b298e66",
+    "reference_b": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412",
+    "independent_reviewer": "Franklin, agent 01a1f26c-ae6f-7e83-82bf-9ce2044047b7",
+    "reference_b_sealed_before_a_existed": true,
+    "primary_sealed_before_reading_reference_b": true,
+    "human_signoff": false,
+    "primary_sources_sha256": "a55695cf0d8fb8d8a1d49deec00a56ae0e0a60e375314d77e3b294b9f29729ef",
+    "reference_b_sha256": "4fd8137a14c2b6fd1495b84636913b5508ce20699e0cb29e0ee768ef59084e45",
+    "corrected_cases_sha256": "220f30b8b1d8c3720bfb7374ff9fa913669241a0a65f8d9b278f7573747bfd91"
+  },
+  "review_evidence": {
+    "directory": "/private/tmp/lora-recalibration-v2-20261119",
+    "cases-review.md": "7c9063e9544019bcc12b7533313e2ae80ef9dc063937c805447b9730ff93a0ab",
+    "reference-b-review.md": "ed45a3cc56ebcffebfc78362abadce8e623e2385e62f3155021e257700bab904",
+    "primary-report.md": "2efa57a17b3a102929028b8598de42be511ff2f48b808b39092cf258cb7cdfd1",
+    "full-review/independent-review.md": "23be8acbfdd4deac1ebaaf2c80123212d9aa3fb8016fbe3cb17837f73ffe407f",
+    "full-review/findings.json": "ecf1388cde9f3de103c982d1be52cc6c9a09a4de48105d3f98c5164f614cd7b5",
+    "full-review/disposition-review.md": "ffd165b9b0e512bfaac178b34a623a8e54b3056e3fb0b293d9a9538010f6df4e"
+  },
+  "preservation": {
+    "old_lora_file_count": 154,
+    "old_lora_aggregate_sha256": "e9b4510aa7247fe926764d6ff43a4d1b046fd09fa8ad19c5680243ee1137792e",
+    "algorithm": "SHA256 of sorted repository-relative path bytes, NUL, then binary SHA256(file) for each preexisting file; exclude __pycache__, this new dataset and the new data-results report.",
+    "tracked_changes": false,
+    "commit_or_push": false
+  },
+  "limits": [
+    "Checksums seal a blocked static-review snapshot, not an execution-ready dataset.",
+    "Hand-derived outcomes and AST parsing are not dynamic execution receipts.",
+    "Prompt/scoring file separation is not runtime isolation.",
+    "No smaller ten-task experiment is admitted by excluding the blocked tasks.",
+    "Initial-defect redesign, dynamic isolation, tokenizer checks and model evaluation are separate unperformed steps.",
+    "Development tasks are not independent LoRA transfer or retention evaluation material."
+  ]
+}

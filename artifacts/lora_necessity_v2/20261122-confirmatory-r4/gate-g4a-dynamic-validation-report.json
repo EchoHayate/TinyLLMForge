@@ -1,0 +1,13 @@
+{
+  "all_checks_passed": true,
+  "benchmark_eligible": false,
+  "completed": 1280,
+  "data_version": "confirmatory_v2_r1",
+  "formal_evaluation_ready": false,
+  "isolated": false,
+  "kind": "LORA_CONFIRMATORY_V2_DYNAMIC_REPORT",
+  "net_benefit_established": false,
+  "references_passed": 512,
+  "version": 1,
+  "witnesses_matched": 96
+}

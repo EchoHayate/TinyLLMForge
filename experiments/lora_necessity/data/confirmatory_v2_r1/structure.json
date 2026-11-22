@@ -1,0 +1,385 @@
+{
+  "data_version": "confirmatory_v2_r1",
+  "kind": "LORA_CONFIRMATORY_V2_STRUCTURE",
+  "tasks": [
+    {
+      "entry_point": "lease_occupancy",
+      "family": "bounds",
+      "id": "V01",
+      "initial_repair_obligation": "Filter expired leases using prev_end <= start before summing active seats.",
+      "mechanics": "Expire completed leases at start before sequential capacity check; rejected leases never enter active state.",
+      "parameters": [
+        "limit",
+        "requests"
+      ],
+      "split": "supervision"
+    },
+    {
+      "entry_point": "clipped_band_sum",
+      "family": "bounds",
+      "id": "V02",
+      "initial_repair_obligation": "Clip endpoints to [low, high) instead of requiring full containment.",
+      "mechanics": "Clip partially overlapping intervals rather than dropping them; ignore spans with right <= left.",
+      "parameters": [
+        "low",
+        "high",
+        "spans"
+      ],
+      "split": "supervision"
+    },
+    {
+      "entry_point": "channel_highwater",
+      "family": "reset",
+      "id": "V03",
+      "initial_repair_obligation": "Reset only the target channel mark instead of clearing all channels.",
+      "mechanics": "Per-channel high-water state ignores stale/duplicate seq and resets locally per channel.",
+      "parameters": [
+        "events"
+      ],
+      "split": "supervision"
+    },
+    {
+      "entry_point": "nested_batch_max",
+      "family": "reset",
+      "id": "V04",
+      "initial_repair_obligation": "Keep batch_max intact on soft reset while still allowing negative batch peaks.",
+      "mechanics": "Soft reset clears accumulator only; hard reset emits and clears both accumulator and historical batch peak.",
+      "parameters": [
+        "ops"
+      ],
+      "split": "supervision"
+    },
+    {
+      "entry_point": "atomic_kit_builds",
+      "family": "multiplicity",
+      "id": "V05",
+      "initial_repair_obligation": "Check full per-part multiplicity of a kit before mutating inventory.",
+      "mechanics": "Sequential multiset demand with atomic rollback/precheck on partial shortage and empty-kit success.",
+      "parameters": [
+        "inventory",
+        "kits"
+      ],
+      "split": "supervision"
+    },
+    {
+      "entry_point": "panel_consensus",
+      "family": "multiplicity",
+      "id": "V06",
+      "initial_repair_obligation": "Count distinct panel memberships per non-empty tag instead of raw tag occurrences.",
+      "mechanics": "Deduplicate within each panel rather than globally or summing raw occurrences.",
+      "parameters": [
+        "panels",
+        "threshold"
+      ],
+      "split": "supervision"
+    },
+    {
+      "entry_point": "lru_pin_evictions",
+      "family": "order",
+      "id": "V07",
+      "initial_repair_obligation": "Move refreshed resident key to newest on 'put' and skip pinned keys when evicting.",
+      "mechanics": "Refresh moves resident key to newest while preserving pin flag; eviction skips pinned keys without reordering survivors.",
+      "parameters": [
+        "capacity",
+        "actions"
+      ],
+      "split": "supervision"
+    },
+    {
+      "entry_point": "tiered_seat_assign",
+      "family": "order",
+      "id": "V08",
+      "initial_repair_obligation": "Consume group quotas in score-priority order before restoring original index order.",
+      "mechanics": "Consume group quotas in priority order, then emit chosen positions in original index order without deduplicating names.",
+      "parameters": [
+        "candidates",
+        "group_caps"
+      ],
+      "split": "supervision"
+    },
+    {
+      "entry_point": "berth_allocations",
+      "family": "bounds",
+      "id": "WT01",
+      "initial_repair_obligation": "Expire vessels with prev_depart <= arrive before computing active tonnage.",
+      "mechanics": "Release departed vessels before admission check; rejected vessels neither occupy berth nor affect peak tonnage.",
+      "parameters": [
+        "tonnage_cap",
+        "vessels"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "payload_slice_hits",
+      "family": "bounds",
+      "id": "WT02",
+      "initial_repair_obligation": "Advance logical cursor only for 'data' segments while emitting one count per 'data' segment.",
+      "mechanics": "Skip 'meta' segments without advancing logical payload cursor; preserve zero-overlap 'data' positions.",
+      "parameters": [
+        "segments",
+        "offset",
+        "span"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "tariff_window_charge",
+      "family": "bounds",
+      "id": "WT03",
+      "initial_repair_obligation": "Clip bookings to [open_hr, close_hr) instead of skipping bookings that extend past window bounds.",
+      "mechanics": "Clip bookings partially outside [open_hr, close_hr) and accumulate signed rates across duplicate or overlapping bookings.",
+      "parameters": [
+        "open_hr",
+        "close_hr",
+        "bookings"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "escrow_ledgers",
+      "family": "reset",
+      "id": "WT04",
+      "initial_repair_obligation": "Isolate per-escrow balances instead of sharing a global running balance across interleaved escrows.",
+      "mechanics": "Interleaved escrow lifetimes maintain independent balances; voided escrows discard only their own balance and closed IDs reopen at zero.",
+      "parameters": [
+        "records"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "sensor_epoch_deltas",
+      "family": "reset",
+      "id": "WT05",
+      "initial_repair_obligation": "Reset only the recalibrated sensor rather than clearing all sensor baselines.",
+      "mechanics": "Per-sensor baseline starts on first sample of epoch (supporting negative values), ignores drops, and resets locally.",
+      "parameters": [
+        "readings"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "stage_drawdowns",
+      "family": "reset",
+      "id": "WT06",
+      "initial_repair_obligation": "Preserve stage_min across 'pause' while resetting current level to 0.",
+      "mechanics": "Inner pause resets current level only; outer close emits historical minimum (including positive-only minima) and clears stage state.",
+      "parameters": [
+        "steps"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "voucher_redemptions",
+      "family": "multiplicity",
+      "id": "WT07",
+      "initial_repair_obligation": "Aggregate per-sku basket demand and validate availability before mutating stock.",
+      "mechanics": "Aggregate repeated sku lines within a basket before atomic check-and-deduct; rejected baskets leave stock unchanged.",
+      "parameters": [
+        "stock",
+        "baskets"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "ward_endorsements",
+      "family": "multiplicity",
+      "id": "WT08",
+      "initial_repair_obligation": "Deduplicate repeated endorsements from the same ward before counting.",
+      "mechanics": "Deduplicate (ward, candidate) pairs before counting wards per candidate; sort by (-count, candidate).",
+      "parameters": [
+        "ballots",
+        "min_wards"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "bipartite_pair_weights",
+      "family": "multiplicity",
+      "id": "WT09",
+      "initial_repair_obligation": "Iterate or aggregate over full row multiplicities instead of deduplicating rows per key.",
+      "mechanics": "Preserve repeated identical rows as distinct index positions while excluding same-team matches.",
+      "parameters": [
+        "left_rows",
+        "right_rows"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "workqueue_promotions",
+      "family": "order",
+      "id": "WT10",
+      "initial_repair_obligation": "Promote an already-queued job to newest on 'push' before future drops or pops.",
+      "mechanics": "Re-pushing queued job promotes it to newest without duplication or eviction; pop removes current oldest.",
+      "parameters": [
+        "limit",
+        "commands"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "audit_first_ranks",
+      "family": "order",
+      "id": "WT11",
+      "initial_repair_obligation": "Record first appearance index only when valid_flag == 1.",
+      "mechanics": "Ignore invalid logs for both point totals and tie-break appearance index; exclude actors with only invalid logs.",
+      "parameters": [
+        "logs"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "budgeted_grant_order",
+      "family": "order",
+      "id": "WT12",
+      "initial_repair_obligation": "Evaluate budget deductions in priority order rather than input order, then emit accepted indices in input order.",
+      "mechanics": "Allocate department budgets in priority order (skipping unaffordable high-priority items while still allowing cheaper lower-priority items), then restore input order.",
+      "parameters": [
+        "proposals",
+        "dept_budgets"
+      ],
+      "split": "transfer"
+    },
+    {
+      "entry_point": "fsm_door_cycles",
+      "family": "dispatch",
+      "id": "WR01",
+      "initial_repair_obligation": "Guard 'lock' and 'close' transitions on current state instead of unconditionally mutating state or counting redundant closes.",
+      "mechanics": "State-guarded command dispatch ignores illegal transitions (such as locking while open or opening while locked) and counts only open->closed transitions.",
+      "parameters": [
+        "commands"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "frame_byte_decoder",
+      "family": "dispatch",
+      "id": "WR02",
+      "initial_repair_obligation": "Consume literal bytes in escape/pair modes before control dispatch and reject incomplete trailing modes.",
+      "mechanics": "Multi-byte modal decoder consumes literal escaped/pair bytes without re-interpreting 254/255 inside payload positions and rejects truncated tails.",
+      "parameters": [
+        "stream"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "retry_backoff_sim",
+      "family": "dispatch",
+      "id": "WR03",
+      "initial_repair_obligation": "Add current delay before doubling, reset delay on 'ok', and break on 'fatal'.",
+      "mechanics": "State-dependent backoff doubles after 'temp' up to max_delay, resets on 'ok', and halts immediately on 'fatal'.",
+      "parameters": [
+        "base_delay",
+        "max_delay",
+        "outcomes"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "sliding_singleton_counts",
+      "family": "window",
+      "id": "WR04",
+      "initial_repair_obligation": "Count elements with window frequency == 1 instead of len(set(window)) or cumulative frequency.",
+      "mechanics": "Count multiplicity-1 elements inside each sliding window rather than distinct-set cardinality.",
+      "parameters": [
+        "values",
+        "width"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "bounded_span_count",
+      "family": "window",
+      "id": "WR05",
+      "initial_repair_obligation": "Track running window max and min rather than comparing only endpoints.",
+      "mechanics": "Check full window max-min spread (not just adjacent differences or endpoint differences) bounded by max_len.",
+      "parameters": [
+        "nums",
+        "tolerance",
+        "max_len"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "ema_breach_streaks",
+      "family": "window",
+      "id": "WR06",
+      "initial_repair_obligation": "Initialize avg to samples[0] on index 0 and reset current streak on non-breach without losing max streak.",
+      "mechanics": "Initialize EMA from first sample (not zero), update with floor division by 10, and track both longest breach streak and total breach count.",
+      "parameters": [
+        "samples",
+        "weight",
+        "hi_mark"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "scoped_tag_validator",
+      "family": "balance",
+      "id": "WR07",
+      "initial_repair_obligation": "Check matching tag names on close, count transient depth on 'self', and require empty stack at end.",
+      "mechanics": "Nested LIFO tag matching with depth ceiling applied to both open and self-closing tags, plus unclosed-stack rejection at EOF.",
+      "parameters": [
+        "max_depth",
+        "tokens"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "min_paren_repairs",
+      "family": "balance",
+      "id": "WR08",
+      "initial_repair_obligation": "Leave non-matching opener on the stack when a mismatched closer arrives instead of popping it.",
+      "mechanics": "Two-type LIFO bracket repair where mismatched closer neither pops nor closes an incompatible opener on the stack.",
+      "parameters": [
+        "symbols"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "callstack_exclusive_time",
+      "family": "balance",
+      "id": "WR09",
+      "initial_repair_obligation": "Credit elapsed time to current stack top before pushing callee or popping exiting function, rather than subtracting total span naively.",
+      "mechanics": "Stack profiler accrues timestamp delta to current top-of-stack on both enter and exit transitions, supporting recursive self-calls.",
+      "parameters": [
+        "trace"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "coalesce_signed_runs",
+      "family": "dedup",
+      "id": "WR10",
+      "initial_repair_obligation": "Maintain a stack and drop zero-sum merged runs so newly adjacent matching labels coalesce.",
+      "mechanics": "Stack-based run coalescing where cancellation to zero exposes earlier neighbor for cascading merges.",
+      "parameters": [
+        "runs"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "ordered_union_versions",
+      "family": "dedup",
+      "id": "WR11",
+      "initial_repair_obligation": "Ignore negative versions before recording first-seen package order, and update stored version with max.",
+      "mechanics": "Negative versions neither appear in output nor establish first-seen package order; valid versions take max while keeping first-valid order.",
+      "parameters": [
+        "streams"
+      ],
+      "split": "retention"
+    },
+    {
+      "entry_point": "k_way_quorum_merge",
+      "family": "dedup",
+      "id": "WR12",
+      "initial_repair_obligation": "Deduplicate values within each list before counting list memberships, and validate non-decreasing order on all lists.",
+      "mechanics": "Validate non-decreasing input order on every list, count distinct list memberships per value, and emit qualifying values in ascending order.",
+      "parameters": [
+        "sorted_lists",
+        "min_lists"
+      ],
+      "split": "retention"
+    }
+  ],
+  "version": 1
+}

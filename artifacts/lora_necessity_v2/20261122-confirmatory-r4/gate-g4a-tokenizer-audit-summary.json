@@ -1,0 +1,41 @@
+{
+  "all_200_rows_within_budget": true,
+  "benchmark_eligible": false,
+  "by_category": {
+    "first": {
+      "checked": 48,
+      "max_input_tokens": 3548,
+      "over_limit": 0,
+      "scheduled": 48
+    },
+    "references": {
+      "checked": 96,
+      "max_input_tokens": 3548,
+      "over_limit": 0,
+      "scheduled": 96
+    },
+    "sampled_second": {
+      "checked": 48,
+      "max_input_tokens": 3810,
+      "over_limit": 0,
+      "scheduled": 48
+    },
+    "training": {
+      "checked": 8,
+      "max_input_tokens": 389,
+      "over_limit": 0,
+      "scheduled": 8
+    }
+  },
+  "checked_rows": 200,
+  "expected_tokenizer_sha256": "7743a3dacfe43382819ca9e9d87993c92ad45f31d9b8afa432b425437d6f2136",
+  "formal_evaluation_ready": false,
+  "isolated": false,
+  "kind": "LORA_CONFIRMATORY_V2_TOKENIZER_SUMMARY",
+  "max_input_tokens": 3810,
+  "max_target_tokens": 241,
+  "min_input_tokens": 229,
+  "min_target_tokens": 80,
+  "net_benefit_established": false,
+  "version": 1
+}

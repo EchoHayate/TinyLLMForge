@@ -1,0 +1,578 @@
+[
+  {
+    "id": "C01",
+    "entry_point": "admit_reservations",
+    "cases": [
+      {"id":"P01","args":[2,[[0,2,2],[1,1,4],[2,2,3],[2,1,4],[3,1,4]]],"expected":{"kind":"return","value":[true,false,true,false,true]},"derivation":"Occupancy after processing each request is 2,2,2,2,1. At time 2 the first reservation expires; at time 3 the third expires, then the final size-1 request occupies one unit. Rejected requests never occupy capacity.","coverage":["expiration_equality","exact_capacity","rejection_no_state"]},
+      {"id":"P02","args":[0,[[0,1,1]]],"expected":{"kind":"return","value":[false]},"derivation":"A positive request cannot fit capacity zero.","coverage":["zero_capacity"]},
+      {"id":"H01","args":[3,[]],"expected":{"kind":"return","value":[]},"derivation":"No requests produce no decisions.","coverage":["empty_requests"]},
+      {"id":"H02","args":[3,[[1,1,5],[1,2,5],[1,1,5]]],"expected":{"kind":"return","value":[true,true,false]},"derivation":"At the same time, occupancy becomes 1 then 3; the final unit would exceed 3.","coverage":["same_time","exact_capacity"]},
+      {"id":"H03","args":[3,[[0,1,2],[0,2,2],[2,3,4]]],"expected":{"kind":"return","value":[true,true,true]},"derivation":"The first two requests occupy 3; both expire at time 2 before the third size-3 request.","coverage":["multiple_simultaneous_expiry"]},
+      {"id":"H04","args":[2,[[0,3,1]]],"expected":{"kind":"return","value":[false]},"derivation":"Size 3 exceeds total capacity 2 even when empty.","coverage":["oversized_request"]},
+      {"id":"H05","args":[3,[[0,2,5],[1,2,5],[1,1,3]]],"expected":{"kind":"return","value":[true,false,true]},"derivation":"Occupancy 2 leaves one unit. The rejected size-2 request does not consume it, so size 1 succeeds.","coverage":["smaller_request_after_rejection"]},
+      {"id":"H06","args":[2,[[0,2,2],[1,1,5],[2,1,3],[2,1,4],[3,1,4]]],"expected":{"kind":"return","value":[true,false,true,true,true]},"derivation":"The time-1 request is rejected. At time 2 capacity frees, then fills with two units; at time 3 one unit expires and is replaced.","coverage":["expiration_and_rejection","same_time"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def admit_reservations(capacity, requests):\n    active = []\n    decisions = []\n    for time, size, expires in requests:\n        active = [reservation for reservation in active if reservation[1] > time]\n        occupied = sum(reservation[0] for reservation in active)\n        accepted = occupied + size <= capacity\n        decisions.append(accepted)\n        if accepted:\n            active.append([size, expires])\n    return decisions\n",
+        "decomposition": "Maintain only active accepted reservations; remove expirations at or before each request time, sum their sizes, and append a reservation only after successful admission.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def admit_reservations(capacity, requests):\n    approved = []\n    decisions = []\n    for time, size, expires in requests:\n        occupied = sum(amount for amount, deadline in approved if deadline > time)\n        accepted = occupied + size <= capacity\n        decisions.append(accepted)\n        if accepted:\n            approved.append((size, expires))\n    return decisions\n",
+        "decomposition": "Retain all historically approved reservations. For each request, recompute occupancy from approved reservations whose expiry is strictly later than the current time; append only approvals.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def admit_reservations(capacity, requests):\n    active = []\n    decisions = []\n    for time, size, expires in requests:\n        active = [reservation for reservation in active if reservation[1] >= time]\n        occupied = sum(reservation[0] for reservation in active)\n        accepted = occupied + size <= capacity\n        decisions.append(accepted)\n        if accepted:\n            active.append([size, expires])\n    return decisions\n",
+        "defect": "Expires reservations only when expires < time, retaining reservations at their expiration boundary.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [true, false, false, false, true]}, "reason": "Manual trace: the first size-2 reservation is accepted and the time-1 request is rejected. At both time-2 requests its expires=2 is retained, so both fail. At time 3 it is removed and size 1 succeeds. No source was executed."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def admit_reservations(capacity, requests):\n    active = []\n    decisions = []\n    for time, size, expires in requests:\n        active = [reservation for reservation in active if reservation[1] > time]\n        occupied = sum(reservation[0] for reservation in active)\n        accepted = occupied + size < capacity\n        decisions.append(accepted)\n        if accepted:\n            active.append([size, expires])\n    return decisions\n",
+        "defect": "Rejects requests that would exactly fill capacity, while expiration and accepted-only accounting remain correct.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [false, true, false, false, false]}, "reason": "Manual trace: size 2 cannot satisfy strict capacity 2. The time-1 size 1 succeeds and stays until time 4. Each remaining request would bring occupancy to at least 2 and is rejected."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def admit_reservations(capacity, requests):\n    active = []\n    decisions = []\n    for time, size, expires in requests:\n        active = [reservation for reservation in active if reservation[1] > time]\n        occupied = sum(reservation[0] for reservation in active)\n        accepted = occupied + size <= capacity\n        decisions.append(accepted)\n        active.append([size, expires])\n    return decisions\n",
+        "defect": "Adds rejected requests to active occupancy, although expiration and the admission comparison are correct.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [true, false, false, false, false]}, "reason": "Manual trace: after the first acceptance, the rejected time-1 unit is still stored. At time 2 the first reservation expires but this unit blocks size 2; that rejected size 2 is also stored and blocks the next unit. At time 3 the size-2 request expires, leaving two rejected units, so the final request fails."}
+      }
+    ]
+  },
+  {
+    "id": "C02",
+    "entry_point": "logical_block_coverage",
+    "cases": [
+      {"id":"P01","args":[[["data",2],["control",9],["data",3],["data",0]],2,2],"expected":{"kind":"return","value":[0,2,0]},"derivation":"Data intervals are [0,2), [2,5), [5,5). Their overlap lengths with [2,4) are 0,2,0; control consumes no address.","coverage":["control_no_address","touching_endpoint","zero_length_block"]},
+      {"id":"P02","args":[[],3,4],"expected":{"kind":"return","value":[]},"derivation":"There are no data blocks to receive output entries.","coverage":["empty_blocks"]},
+      {"id":"H01","args":[[["control",5]],0,4],"expected":{"kind":"return","value":[]},"derivation":"A control-only stream contains no output positions.","coverage":["control_only"]},
+      {"id":"H02","args":[[["data",3]],1,0],"expected":{"kind":"return","value":[0]},"derivation":"The query [1,1) is empty but the one data block retains an output position.","coverage":["zero_count"]},
+      {"id":"H03","args":[[["data",2],["data",1]],1,6],"expected":{"kind":"return","value":[1,1]},"derivation":"Query [1,7) intersects [0,2) in one byte and [2,3) in one byte; no data exists after 3.","coverage":["beyond_end"]},
+      {"id":"H04","args":[[["data",1],["data",0],["data",2]],0,3],"expected":{"kind":"return","value":[1,0,2]},"derivation":"Intervals [0,1), [1,1), [1,3) contribute 1,0,2, keeping the empty block.","coverage":["interior_zero_length"]},
+      {"id":"H05","args":[[["data",2],["data",3],["data",1]],1,4],"expected":{"kind":"return","value":[1,3,0]},"derivation":"Query [1,5) contains one byte of [0,2), all three of [2,5), none of [5,6).","coverage":["cross_block_query"]},
+      {"id":"H06","args":[[["control",32],["data",2],["control",32],["data",2]],2,2],"expected":{"kind":"return","value":[0,2]},"derivation":"Both controls are ignored; [2,4) touches the first data interval without overlap and covers the second.","coverage":["large_controls","touching_endpoint"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def logical_block_coverage(blocks, start, count):\n    offset = 0\n    coverage = []\n    for kind, length in blocks:\n        if kind == 'data':\n            end = offset + length\n            coverage.append(max(0, min(end, start + count) - max(offset, start)))\n            offset = end\n    return coverage\n",
+        "decomposition": "Accumulate addresses only for data blocks and compute each half-open intersection, retaining a result for every data block.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def logical_block_coverage(blocks, start, count):\n    lengths = [length for kind, length in blocks if kind == 'data']\n    owners = [block_index for block_index, length in enumerate(lengths) for byte_offset in range(length)]\n    covered = [0] * len(lengths)\n    for block_index in owners[start:start + count]:\n        covered[block_index] += 1\n    return covered\n",
+        "decomposition": "Expand data blocks into one owner index per logical byte, excluding controls. Count owners in the queried byte slice while retaining one output slot per data block.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def logical_block_coverage(blocks, start, count):\n    offset = 0\n    coverage = []\n    for kind, length in blocks:\n        end = offset + length\n        if kind == 'data':\n            coverage.append(max(0, min(end, start + count) - max(offset, start)))\n        offset = end\n    return coverage\n",
+        "defect": "Advances the logical address through control blocks instead of ignoring their lengths.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [0, 0, 0]}, "reason": "Manual trace: data blocks are incorrectly placed at [0,2), [11,14), [14,14). None intersects query [2,4), so all three output positions are zero."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def logical_block_coverage(blocks, start, count):\n    offset = 0\n    coverage = []\n    for kind, length in blocks:\n        if kind == 'data':\n            end = offset + length\n            coverage.append(max(0, min(end, start + count + 1) - max(offset, start)))\n            offset = end\n    return coverage\n",
+        "defect": "Includes the query's right-end integer position, treating [start,start+count) as including start+count.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [0, 3, 0]}, "reason": "Manual trace: controls do not advance addresses, but the query now includes positions 2,3,4. All three belong to the second data block; the first and empty last block contribute zero."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def logical_block_coverage(blocks, start, count):\n    offset = 0\n    coverage = []\n    for kind, length in blocks:\n        if kind == 'data':\n            end = offset + length\n            overlap = max(0, min(end, start + count) - max(offset, start))\n            if overlap > 0:\n                coverage.append(overlap)\n            offset = end\n    return coverage\n",
+        "defect": "Omits zero-intersection data blocks instead of preserving their output positions.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [2]}, "reason": "Manual trace: the three computed overlaps are 0,2,0. The positive-only append drops the first and third positions, leaving just 2."}
+      }
+    ]
+  },
+  {
+    "id": "C03",
+    "entry_point": "weighted_load",
+    "cases": [
+      {"id":"P01","args":[0,4,[[-1,2,2],[2,5,-1],[1,3,3]]],"expected":{"kind":"return","value":[2,5,2,-1]},"derivation":"At positions 0,1,2,3 the contributions are 2; 2+3; -1+3; -1.","coverage":["both_side_clipping","negative_weight","half_open"]},
+      {"id":"P02","args":[2,2,[[0,4,3]]],"expected":{"kind":"return","value":[]},"derivation":"The domain [2,2) has no integer positions.","coverage":["empty_domain"]},
+      {"id":"H01","args":[-1,2,[]],"expected":{"kind":"return","value":[0,0,0]},"derivation":"The three domain positions -1,0,1 have no contributing intervals.","coverage":["no_intervals"]},
+      {"id":"H02","args":[0,3,[[-3,-1,2],[3,5,4]]],"expected":{"kind":"return","value":[0,0,0]},"derivation":"Both intervals lie outside [0,3); a start exactly at upper contributes nothing.","coverage":["outside_domain"]},
+      {"id":"H03","args":[-2,2,[[-4,0,2],[0,4,3]]],"expected":{"kind":"return","value":[2,2,3,3]},"derivation":"Positions -2,-1 receive 2; positions 0,1 receive 3, after clipping both exterior ends.","coverage":["negative_lower","both_side_clipping"]},
+      {"id":"H04","args":[0,3,[[1,1,4],[0,3,0]]],"expected":{"kind":"return","value":[0,0,0]},"derivation":"The weight-4 interval is empty and the nonempty interval has zero weight.","coverage":["empty_interval","zero_weight"]},
+      {"id":"H05","args":[0,2,[[0,2,3],[0,2,3]]],"expected":{"kind":"return","value":[6,6]},"derivation":"Each position gets 3 from each of two separate identical intervals.","coverage":["duplicate_intervals"]},
+      {"id":"H06","args":[0,4,[[0,2,-2],[2,4,3],[1,3,-1]]],"expected":{"kind":"return","value":[-2,-3,2,3]},"derivation":"Contributions are -2; -2-1; 3-1; 3. Position 2 excludes the first interval.","coverage":["negative_weight","adjacent_endpoints"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def weighted_load(lower, upper, intervals):\n    differences = [0] * (upper - lower + 1)\n    for start, end, weight in intervals:\n        clipped_start = max(lower, start)\n        clipped_end = min(upper, end)\n        if clipped_start < clipped_end:\n            differences[clipped_start - lower] += weight\n            differences[clipped_end - lower] -= weight\n    loads = []\n    running = 0\n    for offset in range(upper - lower):\n        running += differences[offset]\n        loads.append(running)\n    return loads\n",
+        "decomposition": "Clip each interval to the domain, record signed changes in a difference array, then prefix-sum exactly the domain width.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def weighted_load(lower, upper, intervals):\n    return [sum(weight for start, end, weight in intervals if start <= position < end) for position in range(lower, upper)]\n",
+        "decomposition": "For each integer position in the requested domain, enumerate the original intervals and sum exactly the weights whose half-open intervals contain that position.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def weighted_load(lower, upper, intervals):\n    differences = [0] * (upper - lower + 1)\n    for start, end, weight in intervals:\n        if lower <= start < end <= upper:\n            differences[start - lower] += weight\n            differences[end - lower] -= weight\n    loads = []\n    running = 0\n    for offset in range(upper - lower):\n        running += differences[offset]\n        loads.append(running)\n    return loads\n",
+        "defect": "Discards intervals that extend outside either domain boundary instead of clipping and retaining their interior contribution.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [0, 3, 3, 0]}, "reason": "Manual trace: [-1,2,2] and [2,5,-1] are discarded. Only [1,3,3] remains, contributing 3 at positions 1 and 2 and zero at positions 0 and 3."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def weighted_load(lower, upper, intervals):\n    differences = [0] * (upper - lower + 1)\n    for start, end, weight in intervals:\n        clipped_start = max(lower, start)\n        clipped_end = min(upper, end + 1)\n        if clipped_start < clipped_end:\n            differences[clipped_start - lower] += weight\n            differences[clipped_end - lower] -= weight\n    loads = []\n    running = 0\n    for offset in range(upper - lower):\n        running += differences[offset]\n        loads.append(running)\n    return loads\n",
+        "defect": "Treats each original interval's right endpoint as included before clipping to the domain.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [2, 5, 4, 2]}, "reason": "Manual trace: position 0 gets 2; position 1 gets 2+3; position 2 incorrectly still gets the first interval, giving 2-1+3=4; position 3 incorrectly still gets the third interval, giving -1+3=2."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def weighted_load(lower, upper, intervals):\n    differences = [0] * (upper - lower + 1)\n    for start, end, weight in intervals:\n        clipped_start = max(lower, start)\n        clipped_end = min(upper, end)\n        if clipped_start < clipped_end:\n            contribution = max(0, weight)\n            differences[clipped_start - lower] += contribution\n            differences[clipped_end - lower] -= contribution\n    loads = []\n    running = 0\n    for offset in range(upper - lower):\n        running += differences[offset]\n        loads.append(running)\n    return loads\n",
+        "defect": "Replaces negative interval weights with zero, removing valid negative contributions.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [2, 5, 3, 0]}, "reason": "Manual trace: the -1 interval contributes zero. The remaining intervals contribute 2 at position 0, 2+3 at position 1, 3 at position 2, and zero at position 3."}
+      }
+    ]
+  },
+  {
+    "id": "C04",
+    "entry_point": "transaction_totals",
+    "cases": [
+      {"id":"P01","args":[[["begin","a",0],["begin","b",0],["add","a",5],["add","b",2],["rollback","a",0],["begin","a",0],["commit","a",0],["commit","b",0]]],"expected":{"kind":"return","value":[["a",0],["b",2]]},"derivation":"Rollback discards the first a total 5, new a starts at 0, while b retains 2. Commits emit in a,b order.","coverage":["rollback_reuse","interleaving","local_reset"]},
+      {"id":"P02","args":[[["begin","a",0],["add","a",-3]]],"expected":{"kind":"return","value":[]},"derivation":"The sole transaction never commits, so its -3 is not emitted.","coverage":["unfinished_transaction"]},
+      {"id":"H01","args":[[]],"expected":{"kind":"return","value":[]},"derivation":"There are no commit events.","coverage":["empty_events"]},
+      {"id":"H02","args":[[["begin","a",0],["add","a",-3],["add","a",-2],["commit","a",0]]],"expected":{"kind":"return","value":[["a",-5]]},"derivation":"The committed total is -3 + -2 = -5.","coverage":["negative_commit"]},
+      {"id":"H03","args":[[["begin","a",0],["add","a",4],["commit","a",0],["begin","a",0],["add","a",1],["commit","a",0]]],"expected":{"kind":"return","value":[["a",4],["a",1]]},"derivation":"Two distinct committed lifetimes total 4 then 1; the second does not inherit 4.","coverage":["commit_reuse"]},
+      {"id":"H04","args":[[["begin","a",0],["add","a",7],["rollback","a",0],["begin","a",0],["add","a",2],["commit","a",0]]],"expected":{"kind":"return","value":[["a",2]]},"derivation":"The rolled-back 7 produces no output; only the new lifetime's 2 commits.","coverage":["rollback_reuse"]},
+      {"id":"H05","args":[[["begin","a",0],["begin","b",0],["begin","c",0],["add","a",1],["add","b",2],["add","c",3],["commit","b",0],["commit","a",0],["commit","c",0]]],"expected":{"kind":"return","value":[["b",2],["a",1],["c",3]]},"derivation":"Each ID keeps its own total; output follows commit order b,a,c rather than begin order.","coverage":["three_interleaved_transactions"]},
+      {"id":"H06","args":[[["begin","a",0],["begin","b",0],["add","b",9],["add","a",2],["commit","a",0],["begin","a",0],["add","a",-1],["commit","a",0]]],"expected":{"kind":"return","value":[["a",2],["a",-1]]},"derivation":"a commits two lifetimes 2 and -1. b's 9 remains active at EOF and is omitted.","coverage":["repeated_commits_with_unfinished_peer"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def transaction_totals(events):\n    active = {}\n    committed = []\n    for operation, transaction, amount in events:\n        if operation == 'begin':\n            active[transaction] = 0\n        elif operation == 'add':\n            active[transaction] += amount\n        elif operation == 'commit':\n            committed.append([transaction, active.pop(transaction)])\n        else:\n            active.pop(transaction)\n    return committed\n",
+        "decomposition": "Maintain one active total per transaction ID, initialize each begin to zero, and remove only the terminated transaction, emitting only commits.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def transaction_totals(events):\n    committed = []\n    for beginning, (operation, transaction, amount) in enumerate(events):\n        if operation != 'begin':\n            continue\n        for ending in range(beginning + 1, len(events)):\n            terminal, owner, ignored_amount = events[ending]\n            if owner == transaction and terminal in ('commit', 'rollback'):\n                if terminal == 'commit':\n                    total = sum(value for action, identity, value in events[beginning + 1:ending] if identity == transaction and action == 'add')\n                    committed.append((ending, transaction, total))\n                break\n    return [[transaction, total] for ending, transaction, total in sorted(committed)]\n",
+        "decomposition": "Independently identify each begin-to-first-matching-terminal lifetime. Sum only that lifetime's own add events, discard rollback and unfinished lifetimes, then order committed totals by terminal event index.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def transaction_totals(events):\n    totals = {}\n    committed = []\n    for operation, transaction, amount in events:\n        if operation == 'begin':\n            totals.setdefault(transaction, 0)\n        elif operation == 'add':\n            totals[transaction] += amount\n        elif operation == 'commit':\n            committed.append([transaction, totals[transaction]])\n    return committed\n",
+        "defect": "Keeps completed or rolled-back ID totals and uses setdefault at begin, so a reused ID inherits its previous lifetime's amount.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [["a", 5], ["b", 2]]}, "reason": "Manual trace: a reaches 5 and b reaches 2. Rollback leaves a's stored 5 untouched, and its new begin does not overwrite it. The commits therefore emit a=5 followed by b=2."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def transaction_totals(events):\n    active = {}\n    committed = []\n    for operation, transaction, amount in events:\n        if operation == 'begin':\n            active[transaction] = 0\n        elif operation == 'add':\n            active[transaction] = active.get(transaction, 0) + amount\n        else:\n            if operation == 'commit':\n                committed.append([transaction, active.get(transaction, 0)])\n            active.clear()\n    return committed\n",
+        "defect": "Clears every transaction total whenever any transaction ends; still-live peer totals are thereby reset to zero.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [["a", 0], ["b", 0]]}, "reason": "Manual trace: rollback a clears both a=5 and live b=2. New a starts at zero and commits zero, clearing all state again. The still-valid b commit reads its erased total as zero."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def transaction_totals(events):\n    active = {}\n    committed = []\n    for operation, transaction, amount in events:\n        if operation == 'begin':\n            active[transaction] = 0\n        elif operation == 'add':\n            active[transaction] += amount\n        else:\n            committed.append([transaction, active.pop(transaction)])\n    return committed\n",
+        "defect": "Emits rollback totals as if they were commits, while correctly terminating only the addressed lifetime.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [["a", 5], ["a", 0], ["b", 2]]}, "reason": "Manual trace: rollback a incorrectly emits its 5. New a begins at zero and emits zero on commit; b retains its 2 and emits it last."}
+      }
+    ]
+  },
+  {
+    "id": "C05",
+    "entry_point": "sequence_gaps",
+    "cases": [
+      {"id":"P01","args":[[["seq","a",1],["seq","b",5],["seq","a",4],["seq","a",4],["seq","a",2],["reset","a",0],["seq","a",9],["seq","b",7]]],"expected":{"kind":"return","value":[0,0,2,0,0,0,0,1]},"derivation":"First a/b values establish baselines; a=4 skips 2,3; duplicate 4 and older 2 do not move it. Reset makes a=9 first again; b=7 skips 6.","coverage":["per_key","duplicates","older_sequence","reset"]},
+      {"id":"P02","args":[[["reset","a",0],["seq","a",0]]],"expected":{"kind":"return","value":[0,0]},"derivation":"Reset of an absent key is valid and seq 0 is then a first observation.","coverage":["reset_absent","zero_sequence"]},
+      {"id":"H01","args":[[]],"expected":{"kind":"return","value":[]},"derivation":"No events have no gap positions.","coverage":["empty_events"]},
+      {"id":"H02","args":[[["seq","a",3],["seq","a",4],["seq","a",5]]],"expected":{"kind":"return","value":[0,0,0]},"derivation":"The first value is a baseline; successive differences are one, hence no missing numbers.","coverage":["consecutive_sequences"]},
+      {"id":"H03","args":[[["seq","a",0],["seq","a",1000]]],"expected":{"kind":"return","value":[0,999]},"derivation":"Exactly the integers 1..999 are skipped after initial 0.","coverage":["maximum_jump"]},
+      {"id":"H04","args":[[["seq","a",5],["seq","a",2],["seq","a",7]]],"expected":{"kind":"return","value":[0,0,1]},"derivation":"Older 2 does not replace high-water 5, so only 6 is missing when 7 arrives.","coverage":["older_then_forward"]},
+      {"id":"H05","args":[[["seq","a",2],["seq","b",4],["reset","a",0],["seq","b",7],["seq","a",8]]],"expected":{"kind":"return","value":[0,0,0,2,0]},"derivation":"a reset does not reset b; b skips 5,6, while a=8 is a fresh baseline.","coverage":["reset_one_key_only"]},
+      {"id":"H06","args":[[["seq","a",5],["seq","a",5],["reset","a",0],["reset","a",0],["seq","a",2],["seq","a",2],["seq","a",4]]],"expected":{"kind":"return","value":[0,0,0,0,0,0,1]},"derivation":"Duplicates and both resets emit zero; after the new baseline 2, only 3 is skipped by 4.","coverage":["repeated_reset_and_duplicates"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def sequence_gaps(events):\n    highest = {}\n    gaps = []\n    for operation, key, number in events:\n        if operation == 'reset':\n            highest.pop(key, None)\n            gaps.append(0)\n        elif key not in highest:\n            highest[key] = number\n            gaps.append(0)\n        elif number > highest[key]:\n            gaps.append(number - highest[key] - 1)\n            highest[key] = number\n        else:\n            gaps.append(0)\n    return gaps\n",
+        "decomposition": "Maintain independent per-key high-water marks; reset removes only that key, and only a strictly larger sequence number changes an existing mark.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def sequence_gaps(events):\n    gaps = []\n    for position, (operation, key, number) in enumerate(events):\n        if operation == 'reset':\n            gaps.append(0)\n            continue\n        previous = [event for event in events[:position] if event[1] == key]\n        boundary = max((offset for offset, event in enumerate(previous) if event[0] == 'reset'), default=-1)\n        numbers = [event[2] for event in previous[boundary + 1:] if event[0] == 'seq']\n        gaps.append(max(0, number - max(numbers) - 1) if numbers else 0)\n    return gaps\n",
+        "decomposition": "For every seq event, rescan earlier events for its key, find the most recent reset, and compare against the maximum earlier seq after that boundary. Keep no high-water state between events.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def sequence_gaps(events):\n    highest = {}\n    gaps = []\n    for operation, key, number in events:\n        if operation == 'reset':\n            gaps.append(0)\n        elif key not in highest:\n            highest[key] = number\n            gaps.append(0)\n        elif number > highest[key]:\n            gaps.append(number - highest[key] - 1)\n            highest[key] = number\n        else:\n            gaps.append(0)\n    return gaps\n",
+        "defect": "Emits zero for reset but fails to remove the addressed high-water mark.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [0, 0, 2, 0, 0, 0, 4, 1]}, "reason": "Manual trace: a remains at high-water 4 through its reset. Thus later a=9 reports 9-4-1=4 rather than a fresh baseline. b still moves from 5 to 7 with gap 1; all preceding outputs are unchanged."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def sequence_gaps(events):\n    highest = None\n    gaps = []\n    for operation, key, number in events:\n        if operation == 'reset':\n            highest = None\n            gaps.append(0)\n        elif highest is None:\n            highest = number\n            gaps.append(0)\n        elif number > highest:\n            gaps.append(number - highest - 1)\n            highest = number\n        else:\n            gaps.append(0)\n    return gaps\n",
+        "defect": "Uses one shared high-water mark for all keys, including a shared reset, rather than independent per-key state.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [0, 3, 0, 0, 0, 0, 0, 0]}, "reason": "Manual trace: a=1 establishes the global mark; b=5 reports gap 3 and sets it to 5. The following a values 4,4,2 are older and emit zero. Reset clears the global mark; a=9 establishes 9 and b=7 is now older, so both emit zero."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def sequence_gaps(events):\n    highest = {}\n    gaps = []\n    for operation, key, number in events:\n        if operation == 'reset':\n            highest.pop(key, None)\n            gaps.append(0)\n        else:\n            if key in highest:\n                gaps.append(max(0, number - highest[key] - 1))\n            else:\n                gaps.append(0)\n            highest[key] = number\n    return gaps\n",
+        "defect": "Overwrites a key's high-water mark with every sequence number, including older arrivals.",
+        "witness": {"case_id": "H04", "predicted": {"kind": "return", "value": [0, 0, 4]}, "reason": "Manual trace: initial 5 emits zero. Older 2 emits zero but incorrectly lowers the mark to 2. Next 7 therefore reports 7-2-1=4 instead of the single missing value 6."}
+      }
+    ]
+  },
+  {
+    "id": "C06",
+    "entry_point": "group_peaks",
+    "cases": [
+      {"id":"P01","args":[[-3,2,-999,-2,-1000,-2]],"expected":{"kind":"return","value":[-1,-2]},"derivation":"First-group data-prefix sums are -3,-1,-2 across the reset, so peak is -1. Second group has only -2.","coverage":["inner_reset_preserves_peak","negative_peak","group_reset"]},
+      {"id":"P02","args":[[-1000,-999]],"expected":{"kind":"return","value":[null,null]},"derivation":"The group before the end marker has no data; the final group contains only a reset and also has no data.","coverage":["empty_groups","reset_without_data"]},
+      {"id":"H01","args":[[]],"expected":{"kind":"return","value":[null]},"derivation":"EOF always emits the final empty group.","coverage":["empty_input"]},
+      {"id":"H02","args":[[-4,-2]],"expected":{"kind":"return","value":[-4]},"derivation":"Data-prefix sums are -4,-6; peak -4 must not be replaced by initial zero.","coverage":["all_negative"]},
+      {"id":"H03","args":[[5,-999,1]],"expected":{"kind":"return","value":[5]},"derivation":"Reset changes current sum but preserves the earlier peak 5, which exceeds the new prefix 1.","coverage":["higher_peak_before_reset"]},
+      {"id":"H04","args":[[-1000,-1000]],"expected":{"kind":"return","value":[null,null,null]},"derivation":"Two end markers emit two empty groups and EOF emits a third.","coverage":["consecutive_group_end"]},
+      {"id":"H05","args":[[2,-1000]],"expected":{"kind":"return","value":[2,null]},"derivation":"The first group peak is 2; the trailing end marker leaves an empty final group.","coverage":["trailing_group_end"]},
+      {"id":"H06","args":[[2,-999,1,-999,3,-1000,-2,-999,-3,-999,-1]],"expected":{"kind":"return","value":[3,-1]},"derivation":"First-group reset-separated prefixes are 2,1,3, peak 3; second-group values are -2,-3,-1, peak -1.","coverage":["multiple_resets_in_two_groups"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def group_peaks(tokens):\n    peaks = []\n    current = 0\n    peak = None\n    seen_data = False\n    for token in tokens:\n        if token == -1000:\n            peaks.append(peak if seen_data else None)\n            current = 0\n            peak = None\n            seen_data = False\n        elif token == -999:\n            current = 0\n        else:\n            current += token\n            if not seen_data or current > peak:\n                peak = current\n            seen_data = True\n    peaks.append(peak if seen_data else None)\n    return peaks\n",
+        "decomposition": "Track current sum, group-wide peak, and whether the group has seen data; inner reset clears only the sum and an end marker clears all three states.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def group_peaks(tokens):\n    groups = [[[]]]\n    for token in tokens:\n        if token == -1000:\n            groups.append([[]])\n        elif token == -999:\n            groups[-1].append([])\n        else:\n            groups[-1][-1].append(token)\n    return [max((sum(segment[:length]) for segment in group for length in range(1, len(segment) + 1)), default=None) for group in groups]\n",
+        "decomposition": "First partition into groups at end markers and into independent data segments at reset markers. Enumerate nonempty prefixes of every segment and take one maximum across all prefixes in each group, or null if none exist.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def group_peaks(tokens):\n    peaks = []\n    current = 0\n    peak = None\n    seen_data = False\n    for token in tokens:\n        if token == -1000:\n            peaks.append(peak if seen_data else None)\n            current = 0\n            peak = None\n            seen_data = False\n        elif token == -999:\n            current = 0\n            peak = None\n            seen_data = False\n        else:\n            current += token\n            if not seen_data or current > peak:\n                peak = current\n            seen_data = True\n    peaks.append(peak if seen_data else None)\n    return peaks\n",
+        "defect": "Clears the group's peak history and data-presence state on an inner reset, rather than clearing only its running sum.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [-2, -2]}, "reason": "Manual trace: -3 then +2 produce peak -1, but the inner reset discards it. The next -2 becomes the first group's replacement peak. The end marker clears all state and the final group peaks at -2."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def group_peaks(tokens):\n    peaks = []\n    current = 0\n    peak = None\n    seen_data = False\n    for token in tokens:\n        if token == -1000:\n            peaks.append(peak if seen_data else None)\n            current = 0\n            seen_data = False\n        elif token == -999:\n            current = 0\n        else:\n            current += token\n            if peak is None or current > peak:\n                peak = current\n            seen_data = True\n    peaks.append(peak if seen_data else None)\n    return peaks\n",
+        "defect": "Retains the previous group's peak across an end marker, contaminating later nonempty groups while keeping empty groups null.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [-1, -1]}, "reason": "Manual trace: the first group's peak -1 survives its inner reset and is emitted. The outer end resets the sum but leaves peak=-1. The second group's -2 cannot exceed that inherited peak, so it incorrectly emits -1."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def group_peaks(tokens):\n    peaks = []\n    current = 0\n    peak = 0\n    seen_data = False\n    for token in tokens:\n        if token == -1000:\n            peaks.append(peak if seen_data else None)\n            current = 0\n            peak = 0\n            seen_data = False\n        elif token == -999:\n            current = 0\n        else:\n            current += token\n            peak = max(peak, current)\n            seen_data = True\n    peaks.append(peak if seen_data else None)\n    return peaks\n",
+        "defect": "Uses zero as a floor for every nonempty group's peak, even when all data-position running sums are negative.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [0, 0]}, "reason": "Manual trace: first-group data sums -3,-1,-2 never exceed the initialized zero peak. The second group's sole sum -2 also never exceeds zero. Both nonempty groups therefore emit zero."}
+      }
+    ]
+  },
+  {
+    "id": "C07",
+    "entry_point": "fulfill_orders",
+    "cases": [
+      {"id":"P01","args":[["a","a","b"],[["a","b","b"],["a","a"],["b"],[]]],"expected":{"kind":"return","value":[false,true,true,true]},"derivation":"The first order needs two b but only one exists, so stock stays a,a,b. The next two orders consume all stock; the empty order still succeeds.","coverage":["atomic_rejection","duplicate_demand","empty_order"]},
+      {"id":"P02","args":[[],[[],["a"]]],"expected":{"kind":"return","value":[true,false]},"derivation":"Empty demand succeeds with empty stock; one a cannot be supplied.","coverage":["empty_stock"]},
+      {"id":"H01","args":[["a"],[]],"expected":{"kind":"return","value":[]},"derivation":"There are no order decisions.","coverage":["no_orders"]},
+      {"id":"H02","args":[["a","a"],[["a","a"]]],"expected":{"kind":"return","value":[true]},"derivation":"Exactly two required a match the two available copies.","coverage":["exact_duplicate_demand"]},
+      {"id":"H03","args":[["a","b"],[["a","a"]]],"expected":{"kind":"return","value":[false]},"derivation":"The required label exists but its multiplicity 2 exceeds available 1.","coverage":["present_but_insufficient"]},
+      {"id":"H04","args":[["a","b"],[["a","b","b"],["a","b"]]],"expected":{"kind":"return","value":[false,true]},"derivation":"The rejected first order leaves both coupons untouched, so the second exactly fits.","coverage":["success_after_rejection"]},
+      {"id":"H05","args":[["a"],[["a"],["a"]]],"expected":{"kind":"return","value":[true,false]},"derivation":"The first order consumes the only coupon; the second must fail.","coverage":["consumption_then_exhaustion"]},
+      {"id":"H06","args":[["a","b"],[["a","a"],["b","b"],[],["a","b"]]],"expected":{"kind":"return","value":[false,false,true,true]},"derivation":"Both repeated-label orders are rejected atomically; the empty order changes nothing and the last order consumes a,b.","coverage":["two_rejections_then_valid_orders"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def fulfill_orders(stock, orders):\n    available = {}\n    for label in stock:\n        available[label] = available.get(label, 0) + 1\n    decisions = []\n    for order in orders:\n        needed = {}\n        for label in order:\n            needed[label] = needed.get(label, 0) + 1\n        accepted = all(available.get(label, 0) >= amount for label, amount in needed.items())\n        decisions.append(accepted)\n        if accepted:\n            for label, amount in needed.items():\n                available[label] -= amount\n    return decisions\n",
+        "decomposition": "Count current inventory and each complete order; check all multiplicities before committing any stock deductions.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def fulfill_orders(stock, orders):\n    available = list(stock)\n    decisions = []\n    for order in orders:\n        trial = list(available)\n        for label in order:\n            if label not in trial:\n                decisions.append(False)\n                break\n            trial.remove(label)\n        else:\n            available = trial\n            decisions.append(True)\n    return decisions\n",
+        "decomposition": "Attempt each order by deleting individual coupons from a private inventory copy. Replace the retained inventory only if every deletion succeeds; otherwise discard the trial copy.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def fulfill_orders(stock, orders):\n    available = list(stock)\n    decisions = []\n    for order in orders:\n        accepted = True\n        for label in order:\n            if label not in available:\n                accepted = False\n                break\n            available.remove(label)\n        decisions.append(accepted)\n    return decisions\n",
+        "defect": "Consumes individual coupons immediately and never rolls back earlier consumption when the rest of an order cannot be filled.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [false, false, false, true]}, "reason": "Manual trace: first order consumes one a and the sole b before failing on a second b, leaving one a. Second order consumes that a before failing on its second a, leaving nothing. Third order lacks b; the empty final order succeeds."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def fulfill_orders(stock, orders):\n    available = {}\n    for label in stock:\n        available[label] = available.get(label, 0) + 1\n    decisions = []\n    for order in orders:\n        needed = set(order)\n        accepted = all(available.get(label, 0) > 0 for label in needed)\n        decisions.append(accepted)\n        if accepted:\n            for label in needed:\n                available[label] -= 1\n    return decisions\n",
+        "defect": "Collapses each order to label presence, checking and consuming only one coupon per distinct requested label.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [true, true, false, true]}, "reason": "Manual trace: the first order is treated as one a and one b and succeeds, leaving one a. The second is treated as one a and succeeds. Third requires unavailable b and fails; the empty order succeeds."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def fulfill_orders(stock, orders):\n    available = {}\n    for label in stock:\n        available[label] = available.get(label, 0) + 1\n    decisions = []\n    for order in orders:\n        needed = {}\n        for label in order:\n            needed[label] = needed.get(label, 0) + 1\n        accepted = all(available.get(label, 0) >= amount for label, amount in needed.items())\n        decisions.append(accepted)\n    return decisions\n",
+        "defect": "Checks full order multiplicities but does not consume any stock after successful orders.",
+        "witness": {"case_id": "H05", "predicted": {"kind": "return", "value": [true, true]}, "reason": "Manual trace: the first order sees one a and succeeds without decrementing it. The second order sees the same unconsumed a and also succeeds, instead of failing after exhaustion."}
+      }
+    ]
+  },
+  {
+    "id": "C08",
+    "entry_point": "source_quorum",
+    "cases": [
+      {"id":"P01","args":[[["b","b","a","d","d"],["b","c"],["a","a"]],2],"expected":{"kind":"return","value":["a","b"]},"derivation":"a and b each occur in two sources. c and d each occur in only one; repeated d in that source does not meet quorum 2.","coverage":["within_source_dedup","cross_source_count","sorting"]},
+      {"id":"P02","args":[[],1],"expected":{"kind":"return","value":[]},"derivation":"No sources contain any label.","coverage":["empty_sources"]},
+      {"id":"H01","args":[[["a","a","a"]],2],"expected":{"kind":"return","value":[]},"derivation":"Three occurrences in one source give a only one source vote, below two.","coverage":["one_source_many_duplicates"]},
+      {"id":"H02","args":[[["z"],["z"]],2],"expected":{"kind":"return","value":["z"]},"derivation":"z occurs in exactly two sources and equality with the threshold qualifies.","coverage":["exact_threshold"]},
+      {"id":"H03","args":[[["a"],["b"]],3],"expected":{"kind":"return","value":[]},"derivation":"With two sources no label can reach a three-source threshold.","coverage":["threshold_above_source_count"]},
+      {"id":"H04","args":[[[],["b"],[]],1],"expected":{"kind":"return","value":["b"]},"derivation":"Empty sources cast no votes; b appears in one nonempty source and qualifies.","coverage":["empty_source_members"]},
+      {"id":"H05","args":[[["b","b","a"],["a","a"],["a","b","b"]],2],"expected":{"kind":"return","value":["a","b"]},"derivation":"a has three source votes and b two, regardless of repetitions; both reach two.","coverage":["three_sources_with_duplicates"]},
+      {"id":"H06","args":[[["z","a"],["z","a"]],1],"expected":{"kind":"return","value":["a","z"]},"derivation":"Both labels qualify; ASCII order places a before z rather than encounter order.","coverage":["ascii_output_order"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def source_quorum(sources, minimum):\n    votes = {}\n    for source in sources:\n        for label in set(source):\n            votes[label] = votes.get(label, 0) + 1\n    return sorted(label for label, count in votes.items() if count >= minimum)\n",
+        "decomposition": "Deduplicate labels separately within each source, accumulate one source vote per remaining label, then sort all labels reaching the threshold.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def source_quorum(sources, minimum):\n    labels = {label for source in sources for label in source}\n    return sorted(label for label in labels if sum(label in source for source in sources) >= minimum)\n",
+        "decomposition": "Build the label universe, then independently count how many source lists contain each label. Include threshold-equal labels and return them in ASCII order.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def source_quorum(sources, minimum):\n    votes = {}\n    for source in sources:\n        for label in source:\n            votes[label] = votes.get(label, 0) + 1\n    return sorted(label for label, count in votes.items() if count >= minimum)\n",
+        "defect": "Counts every occurrence, including repeats within a single source, as an additional source vote.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": ["a", "b", "d"]}, "reason": "Manual trace: occurrence totals are a=3,b=3,c=1,d=2. At threshold 2, the repeated d incorrectly qualifies along with a and b; sorting gives a,b,d."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def source_quorum(sources, minimum):\n    labels = set()\n    for source in sources:\n        labels.update(source)\n    return sorted(label for label in labels if 1 >= minimum)\n",
+        "defect": "Deduplicates globally and credits every present label exactly one vote regardless of how many sources contain it.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": []}, "reason": "Manual trace: the global set contains a,b,c,d but each is credited only one vote. None meets minimum 2, so the result is empty."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def source_quorum(sources, minimum):\n    votes = {}\n    for source in sources:\n        for label in set(source):\n            votes[label] = votes.get(label, 0) + 1\n    return sorted(label for label, count in votes.items() if count > minimum)\n",
+        "defect": "Requires strictly more than the threshold instead of accepting equality after correct per-source deduplication.",
+        "witness": {"case_id": "H05", "predicted": {"kind": "return", "value": ["a"]}, "reason": "Manual trace: a appears in all three sources and b in exactly two. With minimum 2, strict comparison accepts a=3 but wrongly excludes b=2."}
+      }
+    ]
+  },
+  {
+    "id": "C09",
+    "entry_point": "cross_source_matches",
+    "cases": [
+      {"id":"P01","args":[[[7,"a"],[7,"a"],[7,"b"]],[[7,"a"],[7,"b"],[7,"b"],[8,"c"]]],"expected":{"kind":"return","value":5},"derivation":"Two left a records each match two right b records: four pairs. Left b matches one right a: one pair. Value 8 contributes zero.","coverage":["frequency_product","exclude_same_source","different_values"]},
+      {"id":"P02","args":[[[1,"a"]],[[1,"a"]]],"expected":{"kind":"return","value":0},"derivation":"The sole equal-value pair has equal source and is excluded.","coverage":["same_source_exclusion"]},
+      {"id":"H01","args":[[],[]],"expected":{"kind":"return","value":0},"derivation":"No left or right index exists.","coverage":["both_empty"]},
+      {"id":"H02","args":[[],[[1,"a"]]],"expected":{"kind":"return","value":0},"derivation":"A nonempty right side cannot form a pair without a left index.","coverage":["one_side_empty"]},
+      {"id":"H03","args":[[[1,"a"]],[[2,"b"]]],"expected":{"kind":"return","value":0},"derivation":"Sources differ but values do not match.","coverage":["no_equal_values"]},
+      {"id":"H04","args":[[[-1,"a"],[-1,"a"]],[[-1,"b"],[-1,"b"]]],"expected":{"kind":"return","value":4},"derivation":"Each of two left records matches each of two right records: 2*2=4, with negative value equality allowed.","coverage":["negative_value_duplicates"]},
+      {"id":"H05","args":[[[4,"a"],[4,"a"]],[[4,"a"],[4,"a"],[4,"a"]]],"expected":{"kind":"return","value":0},"derivation":"All six equal-value pairs have the same source a and are excluded.","coverage":["all_same_source"]},
+      {"id":"H06","args":[[[2,"a"],[2,"a"],[2,"b"],[2,"c"]],[[2,"a"],[2,"b"],[2,"b"],[2,"c"],[2,"c"],[2,"c"]]],"expected":{"kind":"return","value":17},"derivation":"Left a copies contribute 2*(2+3)=10, left b contributes 1+3=4, and left c contributes 1+2=3; total 17.","coverage":["three_sources_unequal_frequencies"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def cross_source_matches(left, right):\n    matches = 0\n    for left_value, left_source in left:\n        for right_value, right_source in right:\n            if left_value == right_value and left_source != right_source:\n                matches += 1\n    return matches\n",
+        "decomposition": "Enumerate every left record index against every right record index and count exactly equal-value, different-source pairs, without deduplicating records.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def cross_source_matches(left, right):\n    total = 0\n    for value in {record[0] for record in left}:\n        left_sources = [source for candidate, source in left if candidate == value]\n        right_sources = [source for candidate, source in right if candidate == value]\n        total += len(left_sources) * len(right_sources)\n        total -= sum(left_sources.count(source) * right_sources.count(source) for source in set(left_sources))\n    return total\n",
+        "decomposition": "For each left-side value, multiply total left and right multiplicities, then subtract the per-source multiplicity products. Right-only values contribute zero and need no iteration.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def cross_source_matches(left, right):\n    distinct_left = set(tuple(record) for record in left)\n    distinct_right = set(tuple(record) for record in right)\n    matches = 0\n    for left_value, left_source in distinct_left:\n        for right_value, right_source in distinct_right:\n            if left_value == right_value and left_source != right_source:\n                matches += 1\n    return matches\n",
+        "defect": "Deduplicates each side by full record before matching, discarding distinct record indices and their multiplicity.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": 2}, "reason": "Manual trace: unique left records are (7,a),(7,b); unique right records are (7,a),(7,b),(8,c). Only left (7,a) with right (7,b), and left (7,b) with right (7,a), are counted."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def cross_source_matches(left, right):\n    matches = 0\n    for left_value, left_source in left:\n        for right_value, right_source in right:\n            if left_value == right_value:\n                matches += 1\n    return matches\n",
+        "defect": "Counts equal-value pairs even when their sources are the same.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": 9}, "reason": "Manual trace: each of the three left records with value 7 matches all three right records with value 7. The value-8 record never matches, leaving 3*3=9 pairs."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def cross_source_matches(left, right):\n    left_counts = {}\n    right_counts = {}\n    for record in left:\n        identity = tuple(record)\n        left_counts[identity] = left_counts.get(identity, 0) + 1\n    for record in right:\n        identity = tuple(record)\n        right_counts[identity] = right_counts.get(identity, 0) + 1\n    matches = 0\n    for left_identity, left_count in left_counts.items():\n        for right_identity, right_count in right_counts.items():\n            if left_identity[0] == right_identity[0] and left_identity[1] != right_identity[1]:\n                matches += min(left_count, right_count)\n    return matches\n",
+        "defect": "Uses the smaller frequency instead of the frequency product for each eligible pair of record identities.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": 3}, "reason": "Manual trace: left (7,a) count 2 against right (7,b) count 2 contributes min(2,2)=2, and left (7,b) count 1 against right (7,a) count 1 contributes 1. Total is 3 rather than 4+1."}
+      }
+    ]
+  },
+  {
+    "id": "C10",
+    "entry_point": "recency_evictions",
+    "cases": [
+      {"id":"P01","args":[2,[["a",1],["b",2],["a",3],["c",4]]],"expected":{"kind":"return","value":{"evicted":[null,null,null,"b"],"keys":["a","c"]}},"derivation":"Resident order goes a; a,b; b,a; a,c. Refreshing a changes the next eviction from a to b.","coverage":["refresh_existing","eviction_trace"]},
+      {"id":"P02","args":[0,[["a",1]]],"expected":{"kind":"return","value":{"evicted":["a"],"keys":[]}},"derivation":"With zero capacity the newly inserted a is immediately evicted.","coverage":["zero_capacity"]},
+      {"id":"H01","args":[2,[]],"expected":{"kind":"return","value":{"evicted":[],"keys":[]}},"derivation":"No updates create no trace and no resident keys.","coverage":["empty_updates"]},
+      {"id":"H02","args":[1,[["a",1],["a",2],["a",3]]],"expected":{"kind":"return","value":{"evicted":[null,null,null],"keys":["a"]}},"derivation":"Refreshing the same resident key never creates a duplicate or exceeds capacity one.","coverage":["same_key_capacity_one"]},
+      {"id":"H03","args":[3,[["a",1],["b",1]]],"expected":{"kind":"return","value":{"evicted":[null,null],"keys":["a","b"]}},"derivation":"Two distinct keys fit capacity three; equal values do not merge keys.","coverage":["below_capacity"]},
+      {"id":"H04","args":[2,[["a",1],["b",2],["c",3],["a",4]]],"expected":{"kind":"return","value":{"evicted":[null,null,"a","b"],"keys":["c","a"]}},"derivation":"c evicts a from a,b; reinserting a evicts b from b,c and leaves c,a.","coverage":["reinsertion_after_eviction"]},
+      {"id":"H05","args":[2,[["a",1],["b",1],["c",1],["b",2],["a",2],["c",2]]],"expected":{"kind":"return","value":{"evicted":[null,null,"a",null,"c","b"],"keys":["a","c"]}},"derivation":"Orders after each update are a; a,b; b,c; c,b; b,a; a,c. Evictions occur on c,a,c insertions as a,c,b.","coverage":["three_key_interleaving"]},
+      {"id":"H06","args":[2,[["x",7],["y",7],["x",8]]],"expected":{"kind":"return","value":{"evicted":[null,null,null],"keys":["y","x"]}},"derivation":"Same-value x/y remain distinct; a changed value on x is still a refresh of the existing key.","coverage":["keys_not_values","changed_value_refresh"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def recency_evictions(capacity, updates):\n    keys = []\n    evicted = []\n    for key, value in updates:\n        if key in keys:\n            keys.remove(key)\n        keys.append(key)\n        if len(keys) > capacity:\n            evicted.append(keys.pop(0))\n        else:\n            evicted.append(None)\n    return {'evicted': evicted, 'keys': keys}\n",
+        "decomposition": "Maintain resident keys from oldest to newest; move an updated key to the end and, when over capacity, remove and record the first key.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def recency_evictions(capacity, updates):\n    last_seen = {}\n    evicted = []\n    for position, (key, value) in enumerate(updates):\n        last_seen[key] = position\n        removed = None\n        if len(last_seen) > capacity:\n            removed = min(last_seen, key=last_seen.get)\n            del last_seen[removed]\n        evicted.append(removed)\n    return {'evicted': evicted, 'keys': sorted(last_seen, key=last_seen.get)}\n",
+        "decomposition": "Store only resident keys and their latest update indices. When over capacity, remove the resident with the smallest timestamp; sort final residents by timestamp and retain the per-update eviction trace.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def recency_evictions(capacity, updates):\n    keys = []\n    evicted = []\n    for key, value in updates:\n        if key not in keys:\n            keys.append(key)\n        if len(keys) > capacity:\n            evicted.append(keys.pop(0))\n        else:\n            evicted.append(None)\n    return {'evicted': evicted, 'keys': keys}\n",
+        "defect": "Leaves existing keys in their old position on update instead of refreshing them to the newest end.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": {"evicted": [null, null, null, "a"], "keys": ["b", "c"]}}, "reason": "Manual trace: resident order is a, then a,b, and remains a,b after refreshing a. Inserting c removes the still-oldest a, leaving b,c; only that fourth update evicts."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def recency_evictions(capacity, updates):\n    keys = []\n    evicted = []\n    for key, value in updates:\n        keys.append(key)\n        if len(keys) > capacity:\n            evicted.append(keys.pop(0))\n        else:\n            evicted.append(None)\n    return {'evicted': evicted, 'keys': keys}\n",
+        "defect": "Appends every update without removing an existing key, allowing duplicate resident entries and spurious eviction.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": {"evicted": [null, null, "a", "b"], "keys": ["a", "c"]}}, "reason": "Manual trace: a then b fills capacity. Updating a creates a,b,a, so the first a is spuriously evicted and residents become b,a. Inserting c then evicts b, leaving a,c."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def recency_evictions(capacity, updates):\n    keys = []\n    evicted = []\n    for key, value in updates:\n        if key in keys:\n            keys.remove(key)\n        keys.append(key)\n        if len(keys) > capacity:\n            evicted.append(keys.pop())\n        else:\n            evicted.append(None)\n    return {'evicted': evicted, 'keys': keys}\n",
+        "defect": "Evicts the newest key rather than the oldest whenever capacity is exceeded.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": {"evicted": [null, null, null, "c"], "keys": ["b", "a"]}}, "reason": "Manual trace: updates yield a, then a,b, then b,a after refreshing a. Adding c forms b,a,c but pop() evicts the newest c, leaving b,a."}
+      }
+    ]
+  },
+  {
+    "id": "C11",
+    "entry_point": "rank_votes",
+    "cases": [
+      {"id":"P01","args":[[[["b",false],["a",true],["b",true]],[["b",true],["a",true]]]],"expected":{"kind":"return","value":["a","b"]},"derivation":"Each candidate has two valid votes; the first valid a precedes first valid b. The earlier invalid b does not set tie order.","coverage":["invalid_vote_no_position","duplicate_votes","stable_tie"]},
+      {"id":"P02","args":[[[["a",false]]]],"expected":{"kind":"return","value":[]},"derivation":"A candidate with only an invalid vote has zero valid votes and is excluded.","coverage":["no_valid_votes"]},
+      {"id":"H01","args":[[]],"expected":{"kind":"return","value":[]},"derivation":"There are no sources and no candidates.","coverage":["no_sources"]},
+      {"id":"H02","args":[[[],[]]],"expected":{"kind":"return","value":[]},"derivation":"Both sources contain no votes.","coverage":["empty_sources"]},
+      {"id":"H03","args":[[[["a",true],["a",true],["b",true]]]],"expected":{"kind":"return","value":["a","b"]},"derivation":"Same-source repetitions count: a receives two votes, b one.","coverage":["repeated_valid_votes_in_source"]},
+      {"id":"H04","args":[[[["b",true],["a",true]],[["a",true]]]],"expected":{"kind":"return","value":["a","b"]},"derivation":"a's two votes outrank b's one despite b appearing first.","coverage":["different_vote_counts"]},
+      {"id":"H05","args":[[[["z",true],["b",true],["a",true]]]],"expected":{"kind":"return","value":["z","b","a"]},"derivation":"All have one vote, so first-valid order z,b,a wins over ASCII order.","coverage":["three_way_nonlexical_tie"]},
+      {"id":"H06","args":[[[["z",false],["b",true],["b",true],["a",true]],[["a",true],["z",true],["z",true]]]],"expected":{"kind":"return","value":["b","a","z"]},"derivation":"b,a,z each have two valid votes, with first-valid order b,a,z; invalid leading z has no position.","coverage":["invalid_duplicate_cross_source_tie"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def rank_votes(sources):\n    counts = {}\n    first = {}\n    position = 0\n    for source in sources:\n        for candidate, valid in source:\n            if valid:\n                if candidate not in first:\n                    first[candidate] = position\n                counts[candidate] = counts.get(candidate, 0) + 1\n            position += 1\n    return sorted(counts, key=lambda candidate: (-counts[candidate], first[candidate]))\n",
+        "decomposition": "In one ordered pass, count every valid vote and record each candidate's first valid position; rank by descending count and ascending first-valid position.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def rank_votes(sources):\n    valid_votes = [candidate for source in sources for candidate, valid in source if valid]\n    ranking = sorted((-valid_votes.count(candidate), valid_votes.index(candidate), candidate) for candidate in set(valid_votes))\n    return [candidate for negative_count, first_position, candidate in ranking]\n",
+        "decomposition": "Flatten only valid votes in encounter order. For each distinct candidate independently recount votes and locate its first valid position, then sort by descending count and ascending first position.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def rank_votes(sources):\n    counts = {}\n    first = {}\n    position = 0\n    for source in sources:\n        for candidate, valid in source:\n            if candidate not in first:\n                first[candidate] = position\n            if valid:\n                counts[candidate] = counts.get(candidate, 0) + 1\n            position += 1\n    return sorted(counts, key=lambda candidate: (-counts[candidate], first[candidate]))\n",
+        "defect": "Lets invalid votes establish first-occurrence tie positions even though they do not increase valid vote counts.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": ["b", "a"]}, "reason": "Manual trace: invalid b is recorded at position 0, before valid a at position 1. Both candidates finish with two valid votes, so the erroneous stored first positions rank b before a."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def rank_votes(sources):\n    counts = {}\n    first = {}\n    position = 0\n    for source in sources:\n        seen = set()\n        for candidate, valid in source:\n            if valid:\n                if candidate not in first:\n                    first[candidate] = position\n                if candidate not in seen:\n                    counts[candidate] = counts.get(candidate, 0) + 1\n                    seen.add(candidate)\n            position += 1\n    return sorted(counts, key=lambda candidate: (-counts[candidate], first[candidate]))\n",
+        "defect": "Counts at most one valid vote per candidate per source, incorrectly deduplicating repeated valid votes.",
+        "witness": {"case_id": "H06", "predicted": {"kind": "return", "value": ["a", "b", "z"]}, "reason": "Manual trace: source one contributes one b and one a despite two valid b records. Source two contributes one a and one z despite two valid z records. Thus a=2 outranks b=z=1, and b precedes z by first valid appearance."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def rank_votes(sources):\n    counts = {}\n    for source in sources:\n        for candidate, valid in source:\n            if valid:\n                counts[candidate] = counts.get(candidate, 0) + 1\n    return sorted(counts, key=lambda candidate: (-counts[candidate], candidate))\n",
+        "defect": "Breaks equal-count ties by ASCII label order rather than first valid appearance.",
+        "witness": {"case_id": "H05", "predicted": {"kind": "return", "value": ["a", "b", "z"]}, "reason": "Manual trace: z,b,a each has one valid vote. The lexical tie key reorders them as a,b,z instead of their first-valid order z,b,a."}
+      }
+    ]
+  },
+  {
+    "id": "C12",
+    "entry_point": "quota_selection",
+    "cases": [
+      {"id":"P01","args":[[["x","a",2],["y","b",0],["z","a",1],["w","b",0]],[["a",1],["b",1]]],"expected":{"kind":"return","value":[1,2]},"derivation":"Consider indices 1,3,2,0 by priority then index. Accept 1 for b and 2 for a; return sorted original indices 1,2.","coverage":["priority_selection","stable_tie","category_quota"]},
+      {"id":"P02","args":[[["x","a",0]],[]],"expected":{"kind":"return","value":[]},"derivation":"Missing category a has quota zero.","coverage":["missing_quota"]},
+      {"id":"H01","args":[[],[["a",1]]],"expected":{"kind":"return","value":[]},"derivation":"No records can consume the declared quota.","coverage":["empty_records"]},
+      {"id":"H02","args":[[["x","a",0]],[["a",0]]],"expected":{"kind":"return","value":[]},"derivation":"An explicitly zero quota admits no a records.","coverage":["zero_quota"]},
+      {"id":"H03","args":[[["x","a",0],["y","a",-2],["z","b",-1]],[["a",1],["b",1]]],"expected":{"kind":"return","value":[1,2]},"derivation":"Negative priorities -2,-1 outrank 0. Indices 1 and 2 consume the two category slots.","coverage":["negative_priorities"]},
+      {"id":"H04","args":[[["x","a",1],["y","a",1],["z","a",1]],[["a",2]]],"expected":{"kind":"return","value":[0,1]},"derivation":"Equal-priority same-category records compete for two slots; smaller original indices 0 and 1 win.","coverage":["same_category_tie_exhaustion"]},
+      {"id":"H05","args":[[["x","a",2],["x","b",1]],[["a",1],["b",1]]],"expected":{"kind":"return","value":[0,1]},"derivation":"Identical labels do not merge distinct records. Index 1 is chosen first, then 0; output restores 0,1 order.","coverage":["duplicate_label_different_categories"]},
+      {"id":"H06","args":[[["x","a",9],["y","b",1],["z","c",5]],[["a",1],["b",1],["c",1]]],"expected":{"kind":"return","value":[0,1,2]},"derivation":"Selection order is 1,2,0, but all fit their quotas and output must be original-index order 0,1,2.","coverage":["selection_order_differs_from_output"]}
+    ],
+    "references": [
+      {
+        "id": "reference_a",
+        "source": "def quota_selection(records, quotas):\n    remaining = dict(quotas)\n    ranked = sorted(range(len(records)), key=lambda index: (records[index][2], index))\n    selected = []\n    for index in ranked:\n        category = records[index][1]\n        if remaining.get(category, 0) > 0:\n            selected.append(index)\n            remaining[category] -= 1\n    return sorted(selected)\n",
+        "decomposition": "Globally rank original indices by priority then index, consume the corresponding category quota on acceptance, and sort selected indices for the final output.",
+        "author": "TRAE primary data author, session 01a1f270-b7c8-78b2-b2cb-4f640b298e66"
+      },
+      {
+        "id": "reference_b",
+        "source": "def quota_selection(records, quotas):\n    selected = []\n    for category, limit in quotas:\n        ranked = sorted((priority, position) for position, (label, owner, priority) in enumerate(records) if owner == category)\n        selected.extend(position for priority, position in ranked[:limit])\n    return sorted(selected)\n",
+        "decomposition": "Independently sort each quota-listed category by priority and original index, select its first limit records, then merge and sort the selected original indices. Unlisted categories select nothing.",
+        "author": "Huygens, agent 01a1f26b-d5cc-73c2-94fe-0d5d36bb1412"
+      }
+    ],
+    "incorrect_programs": [
+      {
+        "id": "initial",
+        "source": "def quota_selection(records, quotas):\n    remaining = dict(quotas)\n    selected = []\n    for index, record in enumerate(records):\n        category = record[1]\n        if remaining.get(category, 0) > 0:\n            selected.append(index)\n            remaining[category] -= 1\n    return selected\n",
+        "defect": "Consumes category quotas in original input order, ignoring record priority.",
+        "witness": {"case_id": "P01", "predicted": {"kind": "return", "value": [0, 1]}, "reason": "Manual trace: index 0 consumes the only a slot and index 1 consumes the only b slot. Indices 2 and 3 are then rejected, even though index 2 has better priority than index 0."}
+      },
+      {
+        "id": "variant_1",
+        "source": "def quota_selection(records, quotas):\n    remaining = dict(quotas)\n    ranked = sorted(range(len(records)), key=lambda index: (records[index][2], index))\n    selected = []\n    for index in ranked:\n        category = records[index][1]\n        if remaining.get(category, 0) > 0:\n            selected.append(index)\n            remaining[category] -= 1\n    return selected\n",
+        "defect": "Returns accepted records in priority-selection order instead of restoring ascending original-index order.",
+        "witness": {"case_id": "H06", "predicted": {"kind": "return", "value": [1, 2, 0]}, "reason": "Manual trace: priorities 1,5,9 produce selection order 1,2,0. All three categories have one slot, so every index is accepted, but the final sort is missing."}
+      },
+      {
+        "id": "variant_2",
+        "source": "def quota_selection(records, quotas):\n    remaining = dict(quotas)\n    ranked = sorted(range(len(records)), key=lambda index: (records[index][2], index))\n    selected = []\n    seen_labels = set()\n    for index in ranked:\n        label, category, priority = records[index]\n        if label not in seen_labels and remaining.get(category, 0) > 0:\n            selected.append(index)\n            seen_labels.add(label)\n            remaining[category] -= 1\n    return sorted(selected)\n",
+        "defect": "Deduplicates accepted records by label, preventing distinct same-label records from using their own category quotas.",
+        "witness": {"case_id": "H05", "predicted": {"kind": "return", "value": [1]}, "reason": "Manual trace: index 1 with label x, category b and priority 1 is selected first. Index 0 has its own available a quota but shares label x, so it is wrongly skipped and only index 1 remains."}
+      }
+    ]
+  }
+]

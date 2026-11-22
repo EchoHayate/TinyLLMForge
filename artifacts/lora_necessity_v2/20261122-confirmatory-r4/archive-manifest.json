@@ -1,0 +1,22 @@
+{
+  "gate-g3-72-diagnostic-report.json": {
+    "bytes": 55342,
+    "sha256": "325773a55549c7a5645381468690f29fb61440d4bf3087e7344e846b63e99ca9"
+  },
+  "gate-g4a-dynamic-validation-report.json": {
+    "bytes": 337,
+    "sha256": "621c3352575fd9dfa489cabe6d27f8172808d333cf3601e2965bf94f03780a8a"
+  },
+  "gate-g4a-tokenizer-audit-summary.json": {
+    "bytes": 982,
+    "sha256": "a2c239e2686ff105a97e76affd4c57b10e2fd946928bd306d5d3d20b3462b8f0"
+  },
+  "gate-g4b-confirmatory-report-full.json": {
+    "bytes": 159188,
+    "sha256": "a5f442fc2d95ad03f2dbf9d89c96598fda6ed2897cb5cbb6c1abb2ddf43751c3"
+  },
+  "gate-g5-converged-ablation-report.json": {
+    "bytes": 27566,
+    "sha256": "76f1d0dda7d8b309b061e8e2134c6e49276d3ad9f0b6ce718ad2664f48e0ae27"
+  }
+}

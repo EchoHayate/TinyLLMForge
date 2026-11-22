@@ -1,0 +1,22 @@
+{
+  "benchmark_eligible": false,
+  "counts": {
+    "cases_per_task": 8,
+    "retention": 12,
+    "supervision": 8,
+    "total": 32,
+    "transfer": 12
+  },
+  "data_version": "confirmatory_v2_r1",
+  "file_sha256": {
+    "oracles.json": "8d251cdc6d2f7163d6e928965bd46a04d0b418904cd89eb6cfa83dcb3f1d3a04",
+    "prompts.json": "f78ea75b5a3010f5d5d5038f29d7f22037aad3c020d47ba5705b1048244ce37b",
+    "structure.json": "5e8083da8cb8323ade8ee9b0360204c795dd4f8124a061304fc6e1e5ecf21b68",
+    "supervision.json": "1b2173eb0cd45dec646485e2e4b6eedb03d3e44aad43caff8aab8111f05213cc"
+  },
+  "formal_evaluation_ready": false,
+  "isolated": false,
+  "kind": "LORA_CONFIRMATORY_V2_MANIFEST",
+  "net_benefit_established": false,
+  "version": 1
+}

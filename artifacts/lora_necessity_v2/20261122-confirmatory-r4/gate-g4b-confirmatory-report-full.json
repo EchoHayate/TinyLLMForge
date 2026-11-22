@@ -1,0 +1,6399 @@
+{
+  "benchmark_eligible": false,
+  "by_split": {
+    "retention": {
+      "base": {
+        "feedback": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "initial": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "planned_tasks": 12
+      },
+      "lora": {
+        "feedback": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "initial": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "planned_tasks": 12
+      },
+      "lora_text": {
+        "feedback": {
+          "EXECUTION_FAIL": 1,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 5,
+          "SEMANTIC_FAIL": 6,
+          "UNKNOWN": 0
+        },
+        "initial": {
+          "EXECUTION_FAIL": 1,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 5,
+          "SEMANTIC_FAIL": 6,
+          "UNKNOWN": 0
+        },
+        "planned_tasks": 12
+      },
+      "text": {
+        "feedback": {
+          "EXECUTION_FAIL": 1,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 7,
+          "UNKNOWN": 0
+        },
+        "initial": {
+          "EXECUTION_FAIL": 1,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 7,
+          "UNKNOWN": 0
+        },
+        "planned_tasks": 12
+      }
+    },
+    "transfer": {
+      "base": {
+        "feedback": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 3,
+          "SEMANTIC_FAIL": 9,
+          "UNKNOWN": 0
+        },
+        "initial": {
+          "EXECUTION_FAIL": 1,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 3,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "planned_tasks": 12
+      },
+      "lora": {
+        "feedback": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 2,
+          "SEMANTIC_FAIL": 10,
+          "UNKNOWN": 0
+        },
+        "initial": {
+          "EXECUTION_FAIL": 1,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 2,
+          "SEMANTIC_FAIL": 9,
+          "UNKNOWN": 0
+        },
+        "planned_tasks": 12
+      },
+      "lora_text": {
+        "feedback": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "initial": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "planned_tasks": 12
+      },
+      "text": {
+        "feedback": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "initial": {
+          "EXECUTION_FAIL": 0,
+          "INVALID_EVIDENCE": 0,
+          "PASS": 4,
+          "SEMANTIC_FAIL": 8,
+          "UNKNOWN": 0
+        },
+        "planned_tasks": 12
+      }
+    }
+  },
+  "comparisons": {
+    "feedback": {
+      "retention": {
+        "lora_text_vs_text": {
+          "baseline_arm": "text",
+          "both_right": 4,
+          "both_wrong": 7,
+          "missing_or_unknown": 0,
+          "net_gain": 1,
+          "observed_subset_net": 1,
+          "right_to_wrong": 0,
+          "target_arm": "lora_text",
+          "wrong_to_right": 1
+        },
+        "lora_vs_base": {
+          "baseline_arm": "base",
+          "both_right": 4,
+          "both_wrong": 8,
+          "missing_or_unknown": 0,
+          "net_gain": 0,
+          "observed_subset_net": 0,
+          "right_to_wrong": 0,
+          "target_arm": "lora",
+          "wrong_to_right": 0
+        },
+        "lora_vs_text": {
+          "baseline_arm": "text",
+          "both_right": 3,
+          "both_wrong": 7,
+          "missing_or_unknown": 0,
+          "net_gain": 0,
+          "observed_subset_net": 0,
+          "right_to_wrong": 1,
+          "target_arm": "lora",
+          "wrong_to_right": 1
+        },
+        "text_vs_base": {
+          "baseline_arm": "base",
+          "both_right": 3,
+          "both_wrong": 7,
+          "missing_or_unknown": 0,
+          "net_gain": 0,
+          "observed_subset_net": 0,
+          "right_to_wrong": 1,
+          "target_arm": "text",
+          "wrong_to_right": 1
+        }
+      },
+      "transfer": {
+        "lora_text_vs_text": {
+          "baseline_arm": "text",
+          "both_right": 4,
+          "both_wrong": 8,
+          "missing_or_unknown": 0,
+          "net_gain": 0,
+          "observed_subset_net": 0,
+          "right_to_wrong": 0,
+          "target_arm": "lora_text",
+          "wrong_to_right": 0
+        },
+        "lora_vs_base": {
+          "baseline_arm": "base",
+          "both_right": 2,
+          "both_wrong": 9,
+          "missing_or_unknown": 0,
+          "net_gain": -1,
+          "observed_subset_net": -1,
+          "right_to_wrong": 1,
+          "target_arm": "lora",
+          "wrong_to_right": 0
+        },
+        "lora_vs_text": {
+          "baseline_arm": "text",
+          "both_right": 1,
+          "both_wrong": 7,
+          "missing_or_unknown": 0,
+          "net_gain": -2,
+          "observed_subset_net": -2,
+          "right_to_wrong": 3,
+          "target_arm": "lora",
+          "wrong_to_right": 1
+        },
+        "text_vs_base": {
+          "baseline_arm": "base",
+          "both_right": 1,
+          "both_wrong": 6,
+          "missing_or_unknown": 0,
+          "net_gain": 1,
+          "observed_subset_net": 1,
+          "right_to_wrong": 2,
+          "target_arm": "text",
+          "wrong_to_right": 3
+        }
+      }
+    },
+    "initial": {
+      "retention": {
+        "lora_text_vs_text": {
+          "baseline_arm": "text",
+          "both_right": 4,
+          "both_wrong": 7,
+          "missing_or_unknown": 0,
+          "net_gain": 1,
+          "observed_subset_net": 1,
+          "right_to_wrong": 0,
+          "target_arm": "lora_text",
+          "wrong_to_right": 1
+        },
+        "lora_vs_base": {
+          "baseline_arm": "base",
+          "both_right": 4,
+          "both_wrong": 8,
+          "missing_or_unknown": 0,
+          "net_gain": 0,
+          "observed_subset_net": 0,
+          "right_to_wrong": 0,
+          "target_arm": "lora",
+          "wrong_to_right": 0
+        },
+        "lora_vs_text": {
+          "baseline_arm": "text",
+          "both_right": 3,
+          "both_wrong": 7,
+          "missing_or_unknown": 0,
+          "net_gain": 0,
+          "observed_subset_net": 0,
+          "right_to_wrong": 1,
+          "target_arm": "lora",
+          "wrong_to_right": 1
+        },
+        "text_vs_base": {
+          "baseline_arm": "base",
+          "both_right": 3,
+          "both_wrong": 7,
+          "missing_or_unknown": 0,
+          "net_gain": 0,
+          "observed_subset_net": 0,
+          "right_to_wrong": 1,
+          "target_arm": "text",
+          "wrong_to_right": 1
+        }
+      },
+      "transfer": {
+        "lora_text_vs_text": {
+          "baseline_arm": "text",
+          "both_right": 4,
+          "both_wrong": 8,
+          "missing_or_unknown": 0,
+          "net_gain": 0,
+          "observed_subset_net": 0,
+          "right_to_wrong": 0,
+          "target_arm": "lora_text",
+          "wrong_to_right": 0
+        },
+        "lora_vs_base": {
+          "baseline_arm": "base",
+          "both_right": 2,
+          "both_wrong": 9,
+          "missing_or_unknown": 0,
+          "net_gain": -1,
+          "observed_subset_net": -1,
+          "right_to_wrong": 1,
+          "target_arm": "lora",
+          "wrong_to_right": 0
+        },
+        "lora_vs_text": {
+          "baseline_arm": "text",
+          "both_right": 1,
+          "both_wrong": 7,
+          "missing_or_unknown": 0,
+          "net_gain": -2,
+          "observed_subset_net": -2,
+          "right_to_wrong": 3,
+          "target_arm": "lora",
+          "wrong_to_right": 1
+        },
+        "text_vs_base": {
+          "baseline_arm": "base",
+          "both_right": 1,
+          "both_wrong": 6,
+          "missing_or_unknown": 0,
+          "net_gain": 1,
+          "observed_subset_net": 1,
+          "right_to_wrong": 2,
+          "target_arm": "text",
+          "wrong_to_right": 3
+        }
+      }
+    }
+  },
+  "costs": {
+    "amortization": {
+      "break_even_episodes_lora_vs_text": 0.27950056799972217,
+      "break_even_single_turns_lora_vs_text": 0.5870687393863695,
+      "lora_fixed_overhead_ns": 69093901505,
+      "per_episode_saved_ns_lora_vs_text": 247204869741.33334,
+      "per_single_turn_saved_ns_lora_vs_text": 117693034681.45833,
+      "text_to_lora_generation_wall_ratio": 8.870744510770479
+    },
+    "by_arm": {
+      "base": {
+        "feedback_wall_ns": 368119099937,
+        "forward_calls": 6957,
+        "generation_calls": 48,
+        "generation_wall_ns": 669567404270,
+        "initial_wall_ns": 301448304333,
+        "input_tokens": 21654,
+        "max_peak_allocated_bytes": 16801008640,
+        "max_peak_reserved_bytes": 77888225280,
+        "output_tokens": 6957,
+        "public_execution_ns": 5704712918
+      },
+      "lora": {
+        "feedback_wall_ns": 390481640173,
+        "forward_calls": 6812,
+        "generation_calls": 48,
+        "generation_wall_ns": 753749638114,
+        "initial_wall_ns": 363267997941,
+        "input_tokens": 21590,
+        "max_peak_allocated_bytes": 16816344064,
+        "max_peak_reserved_bytes": 77888225280,
+        "output_tokens": 6812,
+        "public_execution_ns": 5530806448
+      },
+      "lora_text": {
+        "feedback_wall_ns": 3590081193374,
+        "forward_calls": 6882,
+        "generation_calls": 48,
+        "generation_wall_ns": 6866240329554,
+        "initial_wall_ns": 3276159136180,
+        "input_tokens": 167980,
+        "max_peak_allocated_bytes": 21911199744,
+        "max_peak_reserved_bytes": 84030783488,
+        "output_tokens": 6882,
+        "public_execution_ns": 5154708197
+      },
+      "text": {
+        "feedback_wall_ns": 3498419634499,
+        "forward_calls": 6886,
+        "generation_calls": 48,
+        "generation_wall_ns": 6686320464795,
+        "initial_wall_ns": 3187900830296,
+        "input_tokens": 167982,
+        "max_peak_allocated_bytes": 21895864320,
+        "max_peak_reserved_bytes": 84303413248,
+        "output_tokens": 6886,
+        "public_execution_ns": 5876853559
+      }
+    },
+    "final_scoring_execution_ns": 98870503211,
+    "shared": {
+      "checkpoint_verify_ns": 28722001444,
+      "episodes_wall_ns": 16953684417640,
+      "final_integrity_ns": 31679487149,
+      "model_and_tokenizer_load_ns": 23016870664,
+      "model_load_peak_allocated_bytes": 16383586816,
+      "model_load_peak_reserved_bytes": 16536043520,
+      "training_tokenize_prep_ns": 11220258801
+    }
+  },
+  "data_version": "confirmatory_v2_r1",
+  "episodes": [
+    {
+      "arm": "base",
+      "episode_index": 0,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT01"
+    },
+    {
+      "arm": "text",
+      "episode_index": 1,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT01"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 2,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT01"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 3,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT01"
+    },
+    {
+      "arm": "text",
+      "episode_index": 4,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT02"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 5,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT02"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 6,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT02"
+    },
+    {
+      "arm": "base",
+      "episode_index": 7,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT02"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 8,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT03"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 9,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT03"
+    },
+    {
+      "arm": "base",
+      "episode_index": 10,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT03"
+    },
+    {
+      "arm": "text",
+      "episode_index": 11,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT03"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 12,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT04"
+    },
+    {
+      "arm": "base",
+      "episode_index": 13,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT04"
+    },
+    {
+      "arm": "text",
+      "episode_index": 14,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT04"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 15,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT04"
+    },
+    {
+      "arm": "base",
+      "episode_index": 16,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "program_error"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "program_error",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "program_error"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": false,
+          "state": "EXECUTION_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT05"
+    },
+    {
+      "arm": "text",
+      "episode_index": 17,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT05"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 18,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "program_error"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "program_error",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "program_error"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": false,
+          "state": "EXECUTION_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT05"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 19,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT05"
+    },
+    {
+      "arm": "text",
+      "episode_index": 20,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT06"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 21,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT06"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 22,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT06"
+    },
+    {
+      "arm": "base",
+      "episode_index": 23,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT06"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 24,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT07"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 25,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT07"
+    },
+    {
+      "arm": "base",
+      "episode_index": 26,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT07"
+    },
+    {
+      "arm": "text",
+      "episode_index": 27,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT07"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 28,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT08"
+    },
+    {
+      "arm": "base",
+      "episode_index": 29,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT08"
+    },
+    {
+      "arm": "text",
+      "episode_index": 30,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT08"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 31,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT08"
+    },
+    {
+      "arm": "base",
+      "episode_index": 32,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT09"
+    },
+    {
+      "arm": "text",
+      "episode_index": 33,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT09"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 34,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT09"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 35,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT09"
+    },
+    {
+      "arm": "text",
+      "episode_index": 36,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT10"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 37,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT10"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 38,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT10"
+    },
+    {
+      "arm": "base",
+      "episode_index": 39,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT10"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 40,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT11"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 41,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT11"
+    },
+    {
+      "arm": "base",
+      "episode_index": 42,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT11"
+    },
+    {
+      "arm": "text",
+      "episode_index": 43,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT11"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 44,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT12"
+    },
+    {
+      "arm": "base",
+      "episode_index": 45,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT12"
+    },
+    {
+      "arm": "text",
+      "episode_index": 46,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT12"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 47,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT12"
+    },
+    {
+      "arm": "base",
+      "episode_index": 48,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR01"
+    },
+    {
+      "arm": "text",
+      "episode_index": 49,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR01"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 50,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR01"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 51,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR01"
+    },
+    {
+      "arm": "text",
+      "episode_index": 52,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR02"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 53,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR02"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 54,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR02"
+    },
+    {
+      "arm": "base",
+      "episode_index": 55,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR02"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 56,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR03"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 57,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR03"
+    },
+    {
+      "arm": "base",
+      "episode_index": 58,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR03"
+    },
+    {
+      "arm": "text",
+      "episode_index": 59,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR03"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 60,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR04"
+    },
+    {
+      "arm": "base",
+      "episode_index": 61,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR04"
+    },
+    {
+      "arm": "text",
+      "episode_index": 62,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR04"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 63,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR04"
+    },
+    {
+      "arm": "base",
+      "episode_index": 64,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR05"
+    },
+    {
+      "arm": "text",
+      "episode_index": 65,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR05"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 66,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR05"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 67,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR05"
+    },
+    {
+      "arm": "text",
+      "episode_index": 68,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR06"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 69,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR06"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 70,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR06"
+    },
+    {
+      "arm": "base",
+      "episode_index": 71,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR06"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 72,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR07"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 73,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR07"
+    },
+    {
+      "arm": "base",
+      "episode_index": 74,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR07"
+    },
+    {
+      "arm": "text",
+      "episode_index": 75,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR07"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 76,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR08"
+    },
+    {
+      "arm": "base",
+      "episode_index": 77,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR08"
+    },
+    {
+      "arm": "text",
+      "episode_index": 78,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR08"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 79,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR08"
+    },
+    {
+      "arm": "base",
+      "episode_index": 80,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR09"
+    },
+    {
+      "arm": "text",
+      "episode_index": 81,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR09"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 82,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR09"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 83,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "mismatch"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR09"
+    },
+    {
+      "arm": "text",
+      "episode_index": 84,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR10"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 85,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR10"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 86,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR10"
+    },
+    {
+      "arm": "base",
+      "episode_index": 87,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR10"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 88,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR11"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 89,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR11"
+    },
+    {
+      "arm": "base",
+      "episode_index": 90,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR11"
+    },
+    {
+      "arm": "text",
+      "episode_index": 91,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "pass"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR11"
+    },
+    {
+      "arm": "lora_text",
+      "episode_index": 92,
+      "public_feedback": {
+        "kind": "invalid_source"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 0,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": false,
+          "state": "EXECUTION_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 0,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": false,
+          "state": "EXECUTION_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR12"
+    },
+    {
+      "arm": "base",
+      "episode_index": 93,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR12"
+    },
+    {
+      "arm": "text",
+      "episode_index": 94,
+      "public_feedback": {
+        "kind": "invalid_source"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 0,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": false,
+          "state": "EXECUTION_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source",
+            "not_executed_invalid_source"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 0,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": false,
+          "state": "EXECUTION_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR12"
+    },
+    {
+      "arm": "lora",
+      "episode_index": 95,
+      "public_feedback": {
+        "cases": [
+          {
+            "id": "P01",
+            "status": "mismatch"
+          },
+          {
+            "id": "P02",
+            "status": "pass"
+          }
+        ],
+        "kind": "visible_tests"
+      },
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR12"
+    }
+  ],
+  "file_sha256": {
+    "manifest.json": "8d9beab7820e4f1b731cabcfc16ba43502d7faf83d6256807bd5974209a59597",
+    "oracles.json": "8d251cdc6d2f7163d6e928965bd46a04d0b418904cd89eb6cfa83dcb3f1d3a04",
+    "prompts.json": "f78ea75b5a3010f5d5d5038f29d7f22037aad3c020d47ba5705b1048244ce37b",
+    "structure.json": "5e8083da8cb8323ade8ee9b0360204c795dd4f8124a061304fc6e1e5ecf21b68",
+    "supervision.json": "1b2173eb0cd45dec646485e2e4b6eedb03d3e44aad43caff8aab8111f05213cc"
+  },
+  "formal_evaluation_ready": false,
+  "isolated": false,
+  "kind": "LORA_CONFIRMATORY_V2_REPORT",
+  "net_benefit_established": false,
+  "run_authorized": false,
+  "run_id": "b1261c5babc7aa8d0ec0d3cdc89f9f6d",
+  "training": {
+    "adapter_bytes": 15335424,
+    "adapter_load_ns": 116560697,
+    "adapter_save_ns": 230247111,
+    "adapter_sha256": "78e6ec7f5b150d0bfa7dfb3900320706e70d9c9faa86014031b4304b9ce511ba",
+    "artifact_file_bytes": 30767794,
+    "artifact_file_sha256": "2e72e411535ea83b70e2187497421e082ba172f1ded02baae5ec5a0c96d87bd7",
+    "configuration_sha256": "4a43a41ed38e9641a2fb76508789d0cb3397a2d4d838e35b65bb1c440520c080",
+    "core_wall_ns": 68747093697,
+    "dataset_sha256": "5d7903944505304dc169a3ad87e2f56ae0126f65c5e8bfb7d822139df9d410bf",
+    "final_loss": 1.1831287145614624,
+    "initial_adapter_sha256": "c290a8da6eafd9ac2672c9228ee73068343f316da7aabd243eb41fc115d65f9c",
+    "initial_loss": 0.20511381328105927,
+    "optimizer_tensor_bytes": 30671424,
+    "peak_allocated_bytes": 22868983296,
+    "peak_reserved_bytes": 23651680256,
+    "preparation_ns": 31346704458,
+    "steps": [
+      {
+        "elapsed_ns": 1353709275,
+        "gradient_norm": 0.226140096783638,
+        "loss": 0.20511381328105927,
+        "step": 1,
+        "task_id": "V01"
+      },
+      {
+        "elapsed_ns": 310266080,
+        "gradient_norm": 1.5073550939559937,
+        "loss": 1.681488037109375,
+        "step": 2,
+        "task_id": "V02"
+      },
+      {
+        "elapsed_ns": 311189170,
+        "gradient_norm": 0.6336899399757385,
+        "loss": 0.42631155252456665,
+        "step": 3,
+        "task_id": "V03"
+      },
+      {
+        "elapsed_ns": 303412392,
+        "gradient_norm": 1.1160573959350586,
+        "loss": 0.41650816798210144,
+        "step": 4,
+        "task_id": "V04"
+      },
+      {
+        "elapsed_ns": 310390241,
+        "gradient_norm": 0.8127298951148987,
+        "loss": 0.5829219222068787,
+        "step": 5,
+        "task_id": "V05"
+      },
+      {
+        "elapsed_ns": 314657519,
+        "gradient_norm": 1.605094313621521,
+        "loss": 1.7464828491210938,
+        "step": 6,
+        "task_id": "V06"
+      },
+      {
+        "elapsed_ns": 322130904,
+        "gradient_norm": 1.5170825719833374,
+        "loss": 0.9121281504631042,
+        "step": 7,
+        "task_id": "V07"
+      },
+      {
+        "elapsed_ns": 304005656,
+        "gradient_norm": 1.9959386587142944,
+        "loss": 1.5528545379638672,
+        "step": 8,
+        "task_id": "V08"
+      },
+      {
+        "elapsed_ns": 304730850,
+        "gradient_norm": 0.24686352908611298,
+        "loss": 0.18646296858787537,
+        "step": 9,
+        "task_id": "V01"
+      },
+      {
+        "elapsed_ns": 303294875,
+        "gradient_norm": 3.0819456577301025,
+        "loss": 1.484082579612732,
+        "step": 10,
+        "task_id": "V02"
+      },
+      {
+        "elapsed_ns": 312768638,
+        "gradient_norm": 0.5754838585853577,
+        "loss": 0.37886080145835876,
+        "step": 11,
+        "task_id": "V03"
+      },
+      {
+        "elapsed_ns": 326625555,
+        "gradient_norm": 1.1151337623596191,
+        "loss": 0.3317074477672577,
+        "step": 12,
+        "task_id": "V04"
+      },
+      {
+        "elapsed_ns": 323553576,
+        "gradient_norm": 1.0893141031265259,
+        "loss": 0.48363447189331055,
+        "step": 13,
+        "task_id": "V05"
+      },
+      {
+        "elapsed_ns": 306375254,
+        "gradient_norm": 2.1636812686920166,
+        "loss": 1.448611855506897,
+        "step": 14,
+        "task_id": "V06"
+      },
+      {
+        "elapsed_ns": 310430374,
+        "gradient_norm": 1.2401323318481445,
+        "loss": 0.7530837059020996,
+        "step": 15,
+        "task_id": "V07"
+      },
+      {
+        "elapsed_ns": 311176357,
+        "gradient_norm": 2.1967828273773193,
+        "loss": 1.1831287145614624,
+        "step": 16,
+        "task_id": "V08"
+      }
+    ],
+    "supervised_tokens": 1840,
+    "training_ns": 6058620843,
+    "verification_ns": 31341767171
+  },
+  "trusted_collection_accepted": false,
+  "verdict": {
+    "incomplete_reasons": [],
+    "protocol_contradictions": [],
+    "status": "NO_LORA_GAIN_OBSERVED"
+  },
+  "version": 1
+}

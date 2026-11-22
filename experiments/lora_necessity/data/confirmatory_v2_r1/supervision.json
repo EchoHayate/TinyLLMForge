@@ -1,0 +1,655 @@
+[
+  {
+    "entry_point": "lease_occupancy",
+    "family": "bounds",
+    "id": "V01",
+    "initial_source": "def lease_occupancy(limit, requests):\n    if limit < 0:\n        raise ValueError(\"limit\")\n    live, out = [], []\n    for st, en, seats in requests:\n        if en <= st or seats < 0:\n            raise ValueError(\"lease\")\n        ok = sum(it[2] for it in live) + seats <= limit\n        live = [it for it in live if it[1] > st]\n        if ok:\n            live.append([st, en, seats])\n        out.append(ok)\n    return out\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          true,
+          false
+        ]
+      },
+      "public_case_id": "P01"
+    },
+    "public_cases": [
+      {
+        "args": [
+          4,
+          [
+            [
+              0,
+              3,
+              3
+            ],
+            [
+              4,
+              6,
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            true
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          5,
+          [
+            [
+              0,
+              5,
+              3
+            ],
+            [
+              2,
+              6,
+              3
+            ],
+            [
+              6,
+              8,
+              4
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            false,
+            true
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def lease_occupancy(limit, requests):\n    if limit < 0:\n        raise ValueError(\"limit\")\n    live, out = [], []\n    for st, en, seats in requests:\n        if en <= st or seats < 0:\n            raise ValueError(\"lease\")\n        live = [it for it in live if it[1] > st]\n        ok = sum(it[2] for it in live) + seats <= limit\n        if ok:\n            live.append([st, en, seats])\n        out.append(ok)\n    return out\n",
+    "spec": "Admit [start, end, seats] leases against limit >= 0 (end > start, seats >= 0 else ValueError): drop active leases with prev_end <= start before checking sum + seats <= limit."
+  },
+  {
+    "entry_point": "clipped_band_sum",
+    "family": "bounds",
+    "id": "V02",
+    "initial_source": "def clipped_band_sum(low, high, spans):\n    if high <= low:\n        raise ValueError(\"invalid band\")\n    total = 0\n    hits = 0\n    for left, right, weight in spans:\n        if right <= left:\n            continue\n        if left >= low and right <= high:\n            total += (right - left) * weight\n            hits += 1\n    return [total, hits]\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          4,
+          1
+        ]
+      },
+      "public_case_id": "P01"
+    },
+    "public_cases": [
+      {
+        "args": [
+          2,
+          6,
+          [
+            [
+              0,
+              4,
+              3
+            ],
+            [
+              3,
+              5,
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            10,
+            2
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          0,
+          5,
+          [
+            [
+              1,
+              8,
+              4
+            ],
+            [
+              6,
+              9,
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            16,
+            1
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def clipped_band_sum(low, high, spans):\n    if high <= low:\n        raise ValueError(\"band\")\n    total, hits = 0, 0\n    for left, right, weight in spans:\n        if right > left:\n            ov = min(high, right) - max(low, left)\n            if ov > 0:\n                total += ov * weight\n                hits += 1\n    return [total, hits]\n",
+    "spec": "For band [low, high) (high > low, else ValueError) and [left, right, weight] spans, clip spans with right > left to [low, high) and return [sum(overlap * weight), positive_overlap_count]."
+  },
+  {
+    "entry_point": "channel_highwater",
+    "family": "reset",
+    "id": "V03",
+    "initial_source": "def channel_highwater(events):\n    marks, out = {}, []\n    for kind, ch, seq in events:\n        if kind == \"msg\":\n            if seq < 1:\n                raise ValueError(\"seq\")\n            prev = marks.get(ch, 0)\n            out.append(seq - prev if seq > prev else 0)\n            if seq > prev:\n                marks[ch] = seq\n        elif kind == \"reset\":\n            marks.clear()\n        else:\n            raise ValueError(\"kind\")\n    return out\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          3,
+          4,
+          5,
+          2
+        ]
+      },
+      "public_case_id": "P01"
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "msg",
+              "alpha",
+              3
+            ],
+            [
+              "msg",
+              "beta",
+              4
+            ],
+            [
+              "reset",
+              "alpha",
+              0
+            ],
+            [
+              "msg",
+              "beta",
+              5
+            ],
+            [
+              "msg",
+              "alpha",
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            3,
+            4,
+            1,
+            2
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "msg",
+              "alpha",
+              2
+            ],
+            [
+              "msg",
+              "alpha",
+              2
+            ],
+            [
+              "reset",
+              "unseen",
+              0
+            ],
+            [
+              "msg",
+              "alpha",
+              5
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            0,
+            3
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def channel_highwater(events):\n    marks, out = {}, []\n    for kind, ch, seq in events:\n        if kind == \"msg\":\n            if seq < 1:\n                raise ValueError(\"seq\")\n            prev = marks.get(ch, 0)\n            out.append(seq - prev if seq > prev else 0)\n            if seq > prev:\n                marks[ch] = seq\n        elif kind == \"reset\":\n            marks.pop(ch, None)\n        else:\n            raise ValueError(\"kind\")\n    return out\n",
+    "spec": "Over [kind, ch, seq] events: 'msg' (seq >= 1, else ValueError) emits seq - mark and sets mark = seq if seq > mark (initial 0) else emits 0; 'reset' clears only ch mark to 0 (other kinds raise ValueError)."
+  },
+  {
+    "entry_point": "nested_batch_max",
+    "family": "reset",
+    "id": "V04",
+    "initial_source": "def nested_batch_max(ops):\n    cur, peak, out = 0, None, []\n    for op_name, val in ops:\n        if op_name == \"add\":\n            cur += val\n            if peak is None or cur > peak:\n                peak = cur\n        elif op_name == \"soft\":\n            cur, peak = 0, None\n        elif op_name == \"hard\":\n            out.append(peak)\n            cur, peak = 0, None\n        else:\n            raise ValueError(\"op\")\n    return out\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          3
+        ]
+      },
+      "public_case_id": "P01"
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "add",
+              5
+            ],
+            [
+              "add",
+              -2
+            ],
+            [
+              "soft",
+              0
+            ],
+            [
+              "add",
+              3
+            ],
+            [
+              "hard",
+              0
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            5
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "soft",
+              0
+            ],
+            [
+              "hard",
+              0
+            ],
+            [
+              "add",
+              2
+            ],
+            [
+              "soft",
+              0
+            ],
+            [
+              "add",
+              6
+            ],
+            [
+              "hard",
+              0
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            null,
+            6
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def nested_batch_max(ops):\n    cur, peak, out = 0, None, []\n    for op_name, val in ops:\n        if op_name == \"add\":\n            cur += val\n            if peak is None or cur > peak:\n                peak = cur\n        elif op_name == \"soft\":\n            cur = 0\n        elif op_name == \"hard\":\n            out.append(peak)\n            cur, peak = 0, None\n        else:\n            raise ValueError(\"op\")\n    return out\n",
+    "spec": "Over [op, val] ops: 'add' adds val to cur and updates peak; 'soft' resets cur=0 keeping peak; 'hard' appends peak (None if no 'add' in batch) and resets cur=0, peak=None (else ValueError)."
+  },
+  {
+    "entry_point": "atomic_kit_builds",
+    "family": "multiplicity",
+    "id": "V05",
+    "initial_source": "def atomic_kit_builds(inventory, kits):\n    if any(qty < 0 for qty in inventory.values()):\n        raise ValueError(\"stock\")\n    stock, out = dict(inventory), []\n    for kit in kits:\n        ok = True\n        for part in kit:\n            if stock.get(part, 0) <= 0:\n                ok = False\n                break\n            stock[part] -= 1\n        out.append(ok)\n    return out\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          false,
+          false
+        ]
+      },
+      "public_case_id": "P01"
+    },
+    "public_cases": [
+      {
+        "args": [
+          {
+            "bolt": 1,
+            "nut": 1
+          },
+          [
+            [
+              "bolt",
+              "missing"
+            ],
+            [
+              "bolt",
+              "nut"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false,
+            true
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          {
+            "pin": 2
+          },
+          [
+            [
+              "pin"
+            ],
+            [
+              "pin"
+            ],
+            [
+              "pin"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            true,
+            false
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def atomic_kit_builds(inventory, kits):\n    if any(qty < 0 for qty in inventory.values()):\n        raise ValueError(\"stock\")\n    stock, out = dict(inventory), []\n    for kit in kits:\n        need = {}\n        for part in kit:\n            need[part] = need.get(part, 0) + 1\n        ok = all(stock.get(part, 0) >= cnt for part, cnt in need.items())\n        if ok:\n            for part, cnt in need.items():\n                stock[part] -= cnt\n        out.append(ok)\n    return out\n",
+    "spec": "With inventory {part: count} (counts >= 0, else ValueError) and sequential part-list kits, atomically deduct a kit iff all repeated part counts fit; return booleans."
+  },
+  {
+    "entry_point": "panel_consensus",
+    "family": "multiplicity",
+    "id": "V06",
+    "initial_source": "def panel_consensus(panels, threshold):\n    if threshold < 1:\n        raise ValueError(\"invalid threshold\")\n    counts = {}\n    for panel in panels:\n        for tag in panel:\n            if tag:\n                counts[tag] = counts.get(tag, 0) + 1\n    return sorted(tag for tag, num in counts.items() if num >= threshold)\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          "gamma"
+        ]
+      },
+      "public_case_id": "P02"
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "alpha",
+              "alpha"
+            ],
+            [
+              "beta",
+              "alpha"
+            ]
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "alpha"
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "gamma",
+              "gamma",
+              "gamma"
+            ],
+            [
+              "delta"
+            ]
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": []
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def panel_consensus(panels, threshold):\n    if threshold < 1:\n        raise ValueError(\"thr\")\n    counts = {}\n    for panel in panels:\n        for tag in {it for it in panel if it}:\n            counts[tag] = counts.get(tag, 0) + 1\n    return sorted(tag for tag, num in counts.items() if num >= threshold)\n",
+    "spec": "Count distinct panels containing each non-empty tag (threshold >= 1 else ValueError) and return sorted tags with count >= threshold."
+  },
+  {
+    "entry_point": "lru_pin_evictions",
+    "family": "order",
+    "id": "V07",
+    "initial_source": "def lru_pin_evictions(capacity, actions):\n    if capacity < 1:\n        raise ValueError(\"cap\")\n    order, pinned, out = [], set(), []\n    for op, key in actions:\n        if op == \"put\":\n            if key not in order:\n                if len(order) == capacity:\n                    vic = order.pop(0)\n                    pinned.discard(vic)\n                    out.append(vic)\n                order.append(key)\n        elif op == \"pin\" and key in order:\n            pinned.add(key)\n        elif op == \"unpin\":\n            pinned.discard(key)\n        elif op != \"pin\":\n            raise ValueError(\"op\")\n    return [out, order]\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          [
+            "k1"
+          ],
+          [
+            "k2",
+            "k3"
+          ]
+        ]
+      },
+      "public_case_id": "P01"
+    },
+    "public_cases": [
+      {
+        "args": [
+          2,
+          [
+            [
+              "put",
+              "k1"
+            ],
+            [
+              "put",
+              "k2"
+            ],
+            [
+              "put",
+              "k1"
+            ],
+            [
+              "put",
+              "k3"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "k2"
+            ],
+            [
+              "k1",
+              "k3"
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          2,
+          [
+            [
+              "put",
+              "k1"
+            ],
+            [
+              "pin",
+              "k1"
+            ],
+            [
+              "put",
+              "k2"
+            ],
+            [
+              "put",
+              "k3"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "k2"
+            ],
+            [
+              "k1",
+              "k3"
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def lru_pin_evictions(capacity, actions):\n    if capacity < 1:\n        raise ValueError(\"cap\")\n    order, pinned, out = [], set(), []\n    for op, key in actions:\n        if op == \"put\":\n            if key in order:\n                order.remove(key)\n            elif len(order) == capacity:\n                vic = next(( ky for ky in order if ky not in pinned ), None)\n                if vic is None:\n                    raise ValueError(\"pin\")\n                order.remove(vic)\n                out.append(vic)\n            order.append(key)\n        elif op == \"pin\" and key in order:\n            pinned.add(key)\n        elif op == \"unpin\":\n            pinned.discard(key)\n        elif op != \"pin\":\n            raise ValueError(\"op\")\n    return [out, order]\n",
+    "spec": "Cache (capacity >= 1 else ValueError) over [op, key]: 'put' moves resident key to newest (keeping pin) or evicts oldest unpinned if full (ValueError if all pinned); 'pin'/'unpin' set resident pin. Return [evictions, order]."
+  },
+  {
+    "entry_point": "tiered_seat_assign",
+    "family": "order",
+    "id": "V08",
+    "initial_source": "def tiered_seat_assign(candidates, group_caps):\n    if any(lim < 0 for lim in group_caps.values()):\n        raise ValueError(\"cap\")\n    caps, out = dict(group_caps), []\n    for name, grp, _sc in candidates:\n        if caps.get(grp, 0) > 0:\n            caps[grp] -= 1\n            out.append(name)\n    return out\n",
+    "initial_witness": {
+      "predicted_initial": {
+        "kind": "return",
+        "value": [
+          "ann",
+          "cal"
+        ]
+      },
+      "public_case_id": "P01"
+    },
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "ann",
+              "eng",
+              70
+            ],
+            [
+              "bob",
+              "eng",
+              95
+            ],
+            [
+              "cal",
+              "ops",
+              80
+            ]
+          ],
+          {
+            "eng": 1,
+            "ops": 1
+          }
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "bob",
+            "cal"
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "dan",
+              "ops",
+              60
+            ],
+            [
+              "eve",
+              "eng",
+              85
+            ],
+            [
+              "fay",
+              "ops",
+              95
+            ]
+          ],
+          {
+            "eng": 1,
+            "ops": 1
+          }
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "eve",
+            "fay"
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "reference_source": "def tiered_seat_assign(candidates, group_caps):\n    if any(lim < 0 for lim in group_caps.values()):\n        raise ValueError(\"cap\")\n    caps, chosen = dict(group_caps), set()\n    for idx in sorted(range(len(candidates)), key=lambda pos: (-candidates[pos][2], pos)):\n        grp = candidates[idx][1]\n        if caps.get(grp, 0) > 0:\n            caps[grp] -= 1\n            chosen.add(idx)\n    return [candidates[idx][0] for idx in range(len(candidates)) if idx in chosen]\n",
+    "spec": "Select [name, grp, score] candidates by descending score (tie: earlier index) while group_caps[grp] > 0 (caps >= 0 else ValueError; missing grp has cap 0), returning selected names in input index order."
+  }
+]

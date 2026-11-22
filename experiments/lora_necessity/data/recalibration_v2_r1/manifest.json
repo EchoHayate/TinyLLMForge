@@ -1,0 +1,130 @@
+{
+  "version": 2,
+  "revision": "r1",
+  "kind": "lora_recalibration_development_static_snapshot",
+  "date": "2026-11-19",
+  "materialization_status": "complete",
+  "static_status": "passed_static_only",
+  "metadata_status": "passed",
+  "semantic_review_status": "passed_static_only",
+  "structural_review_status": "completed_static_only",
+  "dynamic_status": "pending",
+  "tokenizer_length_status": "pending",
+  "run_authorized": false,
+  "benchmark_eligible": false,
+  "formal_evaluation_ready": false,
+  "net_benefit_established": false,
+  "isolated": false,
+  "files": {
+    "structure.json": {
+      "sha256": "b5ede6dd62e380530fb1ce158a0e2aefb2bb6690f0a2dcd3ee2b3d3bea729e6e",
+      "bytes": 37499
+    },
+    "prompts.json": {
+      "sha256": "0b8b037017edda84c28afdf0b7a6dd547d6bfd50582a60287c733f58f6ac1e38",
+      "bytes": 21608
+    },
+    "oracles.json": {
+      "sha256": "a07803a677db263e40e71423d0f1c423c093e7a26f99939274fdcd91ddef4be2",
+      "bytes": 74368
+    },
+    "review.md": {
+      "sha256": "012f49362d11547b7d4cf11baf3341210a8e9dc102a425b33f94a45b49a8b2fc",
+      "bytes": 7177
+    }
+  },
+  "inputs": {
+    "experiments/lora_necessity/data/recalibration_v2/manifest.json": "1e3e9564e3d0862e2263961289246545deb87a18d080ba67622c0bd7dadb8dfb",
+    "docs/superpowers/specs/2026-11-19-lora-recalibration-data-design.md": "9e80f6b516577a4b2b3d19e24b1cb08c846d67fa0b681459845e0ffaa9186f10",
+    "docs/superpowers/specs/2026-11-17-lora-development-recalibration-design.md": "8c665324c66723c379611f99a81f3fe7f08b71c0828b14680484254d6c26caf1",
+    "docs/superpowers/specs/2026-11-19-lora-recalibration-initial-defects-design.md": "68bf2f146d8d0d638df18062425ae0c7896b4e214cdf442d8675cf1ff0631c39",
+    "docs/superpowers/specs/2026-11-19-lora-recalibration-initial-defects-review.md": "15f3493a158391fdc3781f539e79327b7b7b420473a50a3eb8a63dbc40052abd",
+    "docs/superpowers/specs/2026-11-19-lora-recalibration-initial-defects-design-r3.md": "c6950e076df69eb33cd200f188f5c71a3e286206b3abd3b9fb80bcca90899102",
+    "docs/superpowers/specs/2026-11-19-lora-recalibration-initial-defects-review-r3.md": "ad3f4857002b6a4ea5f9e85b17a94c7db85ff5c00be9268d200618276bd4ac93",
+    "experiments/lora_necessity/data/supervision_v1.json": "4dafb0ac759697e9b80c5bf097b363082a17a34e6b78fb3d3b91d37a76beb78a"
+  },
+  "counts": {
+    "tasks": 12,
+    "public_cases": 24,
+    "private_cases": 72,
+    "all_cases": 96,
+    "references": 24,
+    "incorrect_programs": 36,
+    "source_functions": 60,
+    "bound_incorrect_witnesses": 36,
+    "structural_pairs": 210,
+    "future_dynamic_source_case_positions": 480
+  },
+  "observed_execution_counts": {
+    "task_source_calls": 0,
+    "model_generations": 0,
+    "tokenizer_loads": 0,
+    "training_steps": 0,
+    "remote_runs": 0
+  },
+  "source_changes": {
+    "changed_initial_ids": ["C01", "C04"],
+    "unchanged_source_functions": 58,
+    "unchanged_complete_cases": 96,
+    "author": "Feynman, agent 01a1f335-74a8-7de2-8f34-e9490707cd47",
+    "new_initial_sha256": {
+      "C01": "a3e35150a15d563c7b9443c4665a3b4428856d4ca150199b125c7b6921da7416",
+      "C04": "70f46359eab48970c718982d689d191f6c443b17bdd8e092ae6b6f05716f7a60"
+    },
+    "inherited_authorship": "Original manifest and structure.revision_provenance retain original A/B/variant and ten unchanged-initial authorship; those primary seals do not cover the two new initials.",
+    "human_signoff": false
+  },
+  "review_scope": {
+    "reviewer": "Franklin, agent 01a1f26c-ae6f-7e83-82bf-9ce2044047b7",
+    "newly_reviewed_initials": 2,
+    "newly_hand_traced_initial_case_predictions": 16,
+    "newly_reviewed_pairs": 45,
+    "inherited_pairs": 165,
+    "inherited_source_functions": 58,
+    "inherited_correct_cases": 96,
+    "reviewed_structure_snapshot_sha256": "bf5dfaacb534c7870e549f7c922b170a7ae220909941f40aca55ef22623974b3",
+    "reviewed_content_sha256": "96c6b714ff9410fd9b27f96acf48bba32283a91f8619a3a662ce809f4f9b710c",
+    "content_hash_algorithm": "SHA256 of UTF-8 json.dumps of tasks, supervision_pairs, development_pairs and internal_pairs, sort_keys=True, separators=(',', ':'), ensure_ascii=False.",
+    "post_review_changes": "Review status, report/reviewer hashes and explicit new-initial author metadata only; sources, tasks and relations unchanged."
+  },
+  "open_structural_blockers": [],
+  "historical_findings": {
+    "original_snapshot_status": "blocked_near_template",
+    "original_finding_ids": ["F01", "F02"],
+    "original_findings_modified": false,
+    "rejected_designs_preserved": ["R1 C04", "R2 C04"],
+    "scope": "No active confirmed structural blocker in this revision's bounded static review; the original v2 findings remain recorded on its unchanged sources."
+  },
+  "classification_counts": {
+    "near_template": 0,
+    "shared_mechanism": 62,
+    "different_structure": 148
+  },
+  "review_evidence": {
+    "/private/tmp/lora-recalibration-v2-r1-20261119/baseline-files.json": "db11cf806307e83c149c88d507f8076166cd8cccd4125e2e01d2a8477708ccfc",
+    "/private/tmp/lora-recalibration-v2-r1-20261119/implementation-report.md": "937500feb6b96ebc76764b78270df2ebc0959abac3e18ae834997e8926183a12",
+    "/private/tmp/lora-recalibration-v2-r1-20261119/independent-review.md": "8d0b00a600b3683adabadde5450eb04130e816416ef3b5a337d8612ba5737bf7",
+    "/private/tmp/lora-recalibration-v2-r1-20261119/audit_revision.py": "78ea98a8bcdf4735d36f0d0de22dff7ec47239ccc78aa7e960f3a5122c2e7bff"
+  },
+  "preservation": {
+    "file_list": "/private/tmp/lora-recalibration-v2-r1-20261119/baseline-files.json",
+    "file_list_sha256": "db11cf806307e83c149c88d507f8076166cd8cccd4125e2e01d2a8477708ccfc",
+    "explicit_file_count": 169,
+    "preexisting_lora_file_count": 160,
+    "preexisting_lora_aggregate_sha256": "c4103a653cc018f47423f56cd79483787bc15584eb7304596250cf449b26a7f7",
+    "old_lora_file_count": 154,
+    "old_lora_aggregate_sha256": "e9b4510aa7247fe926764d6ff43a4d1b046fd09fa8ad19c5680243ee1137792e",
+    "algorithm": "Use frozen explicit paths. For aggregates feed sorted repository-relative UTF-8 path, NUL, binary SHA256(file). Do not rediscover the baseline by excluding new paths.",
+    "tracked_changes": false,
+    "commit_or_push": false
+  },
+  "limits": [
+    "Static acceptance is bounded to preserved inherited evidence and the new actual-source review; it does not authorize experiments.",
+    "Hand-derived wrong returns and AST parsing are not dynamic execution receipts.",
+    "All 480 future source/case validation positions remain unrun.",
+    "Tokenizer lengths, runtime isolation, model difficulty and LoRA benefit remain unestablished.",
+    "Prompt/scoring file separation is not runtime isolation.",
+    "Development material is not a training corpus or independent transfer/retention evaluation.",
+    "Old F01/F02 and rejected R1/R2 evidence remain unchanged; no whole-set novelty or statistical independence is claimed."
+  ]
+}

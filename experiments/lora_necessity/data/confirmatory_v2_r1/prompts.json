@@ -1,0 +1,1621 @@
+[
+  {
+    "entry_point": "berth_allocations",
+    "family": "bounds",
+    "id": "WT01",
+    "initial_source": "def berth_allocations(tonnage_cap, vessels):\n    if tonnage_cap < 0:\n        raise ValueError(\"negative cap\")\n    docked = []\n    flags = []\n    peak = 0\n    for arrive, depart, tons in vessels:\n        if depart <= arrive or tons < 0:\n            raise ValueError(\"invalid vessel\")\n        cur_tons = sum(entry[2] for entry in docked)\n        docked = [entry for entry in docked if entry[1] > arrive]\n        if cur_tons + tons <= tonnage_cap:\n            docked.append([arrive, depart, tons])\n            if cur_tons + tons > peak:\n                peak = cur_tons + tons\n            flags.append(True)\n        else:\n            flags.append(False)\n    return [flags, peak]\n",
+    "public_cases": [
+      {
+        "args": [
+          10,
+          [
+            [
+              0,
+              4,
+              7
+            ],
+            [
+              5,
+              9,
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              true,
+              true
+            ],
+            7
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          10,
+          [
+            [
+              0,
+              6,
+              6
+            ],
+            [
+              2,
+              5,
+              6
+            ],
+            [
+              7,
+              9,
+              8
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              true,
+              false,
+              true
+            ],
+            8
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Schedule [arrive, depart, tons] vessels sequentially against tonnage_cap (>= 0, else ValueError; depart > arrive and tons >= 0, else ValueError). Release accepted vessels with prev_depart <= arrive before checking active_tons + tons <= tonnage_cap; return [accepted_booleans, peak_active_tons].",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "payload_slice_hits",
+    "family": "bounds",
+    "id": "WT02",
+    "initial_source": "def payload_slice_hits(segments, offset, span):\n    if offset < 0 or span < 0:\n        raise ValueError(\"invalid slice\")\n    cursor = 0\n    query_end = offset + span\n    overlaps = []\n    for kind, length in segments:\n        if length < 0 or kind not in (\"data\", \"meta\"):\n            raise ValueError(\"invalid segment\")\n        seg_end = cursor + length\n        if kind == \"data\":\n            lo_pos = max(offset, cursor)\n            hi_pos = min(query_end, seg_end)\n            overlaps.append(max(0, hi_pos - lo_pos))\n        cursor = seg_end\n    return overlaps\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "meta",
+              5
+            ],
+            [
+              "data",
+              4
+            ],
+            [
+              "data",
+              4
+            ]
+          ],
+          2,
+          4
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            2
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "data",
+              3
+            ],
+            [
+              "meta",
+              10
+            ],
+            [
+              "data",
+              5
+            ]
+          ],
+          1,
+          6
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            4
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given segments [kind, length] (kind in ('data', 'meta'), length >= 0, else ValueError) and query [offset, offset + span) (offset >= 0, span >= 0, else ValueError), advance logical payload offset only on 'data' segments and return overlap byte counts for each 'data' segment in order.",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "tariff_window_charge",
+    "family": "bounds",
+    "id": "WT03",
+    "initial_source": "def tariff_window_charge(open_hr, close_hr, bookings):\n    if close_hr <= open_hr:\n        raise ValueError(\"invalid window\")\n    loads = [0] * (close_hr - open_hr)\n    for start_hr, end_hr, rate in bookings:\n        if end_hr <= start_hr:\n            continue\n        if start_hr >= open_hr and end_hr <= close_hr:\n            for hr_val in range(start_hr, end_hr):\n                loads[hr_val - open_hr] += rate\n    return loads\n",
+    "public_cases": [
+      {
+        "args": [
+          2,
+          6,
+          [
+            [
+              0,
+              4,
+              5
+            ],
+            [
+              3,
+              5,
+              2
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            5,
+            7,
+            2,
+            0
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          1,
+          4,
+          [
+            [
+              2,
+              7,
+              3
+            ],
+            [
+              5,
+              8,
+              4
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            3,
+            3
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Over integer window [open_hr, close_hr) with close_hr > open_hr (else ValueError), clip each [start_hr, end_hr, rate] booking with end_hr > start_hr to [open_hr, close_hr) and add rate to each covered hour slot; return the per-hour load list of length close_hr - open_hr.",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "escrow_ledgers",
+    "family": "reset",
+    "id": "WT04",
+    "initial_source": "def escrow_ledgers(records):\n    open_snapshots = {}\n    shared_total = 0\n    released = []\n    for op_name, escrow_id, amount in records:\n        if op_name == \"open\":\n            if escrow_id in open_snapshots:\n                raise ValueError(\"already open\")\n            open_snapshots[escrow_id] = shared_total\n        elif op_name == \"credit\":\n            if escrow_id not in open_snapshots:\n                raise ValueError(\"not open\")\n            shared_total += amount\n        elif op_name == \"release\":\n            if escrow_id not in open_snapshots:\n                raise ValueError(\"not open\")\n            released.append([escrow_id, shared_total - open_snapshots.pop(escrow_id)])\n        elif op_name == \"void\":\n            if escrow_id not in open_snapshots:\n                raise ValueError(\"not open\")\n            open_snapshots.pop(escrow_id)\n        else:\n            raise ValueError(\"unknown op\")\n    return released\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "open",
+              "e1",
+              0
+            ],
+            [
+              "open",
+              "e2",
+              0
+            ],
+            [
+              "credit",
+              "e1",
+              10
+            ],
+            [
+              "credit",
+              "e2",
+              4
+            ],
+            [
+              "release",
+              "e1",
+              0
+            ],
+            [
+              "release",
+              "e2",
+              0
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "e1",
+              10
+            ],
+            [
+              "e2",
+              4
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "open",
+              "e1",
+              0
+            ],
+            [
+              "credit",
+              "e1",
+              7
+            ],
+            [
+              "open",
+              "e2",
+              0
+            ],
+            [
+              "credit",
+              "e2",
+              5
+            ],
+            [
+              "void",
+              "e2",
+              0
+            ],
+            [
+              "release",
+              "e1",
+              0
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "e1",
+              7
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Process [op, escrow_id, amount] records: 'open' opens inactive escrow_id at 0, 'credit' adds integer amount to open escrow_id, 'release' closes open escrow_id and appends [escrow_id, balance], 'void' closes open escrow_id without emitting (any invalid state transition or unknown op raises ValueError; closed IDs may reopen fresh).",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "sensor_epoch_deltas",
+    "family": "reset",
+    "id": "WT05",
+    "initial_source": "def sensor_epoch_deltas(readings):\n    highs = {}\n    deltas = []\n    for kind, sensor_id, value in readings:\n        if kind == \"sample\":\n            if sensor_id not in highs:\n                highs[sensor_id] = value\n                deltas.append(0)\n            elif value > highs[sensor_id]:\n                deltas.append(value - highs[sensor_id])\n                highs[sensor_id] = value\n            else:\n                deltas.append(0)\n        elif kind == \"recal\":\n            highs.clear()\n        else:\n            raise ValueError(\"unknown kind\")\n    return deltas\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "sample",
+              "s1",
+              10
+            ],
+            [
+              "sample",
+              "s2",
+              20
+            ],
+            [
+              "recal",
+              "s1",
+              0
+            ],
+            [
+              "sample",
+              "s2",
+              25
+            ],
+            [
+              "sample",
+              "s1",
+              8
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            0,
+            5,
+            0
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "sample",
+              "s1",
+              5
+            ],
+            [
+              "sample",
+              "s1",
+              9
+            ],
+            [
+              "sample",
+              "s1",
+              9
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            4,
+            0
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Process [kind, sensor_id, value] items: 'sample' emits 0 on first reading for sensor_id in its current epoch (setting high = value), otherwise if value > high emits value - high and updates high = value else emits 0 without lowering high; 'recal' resets only sensor_id so its next sample starts a fresh epoch (unknown kind raises ValueError).",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "stage_drawdowns",
+    "family": "reset",
+    "id": "WT06",
+    "initial_source": "def stage_drawdowns(steps):\n    level = 0\n    stage_min = None\n    closed = []\n    for tag, delta in steps:\n        if tag == \"step\":\n            level += delta\n            if stage_min is None or level < stage_min:\n                stage_min = level\n        elif tag == \"pause\":\n            level = 0\n            stage_min = None\n        elif tag == \"close\":\n            closed.append(stage_min)\n            level = 0\n            stage_min = None\n        else:\n            raise ValueError(\"unknown tag\")\n    return closed\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "step",
+              -6
+            ],
+            [
+              "step",
+              4
+            ],
+            [
+              "pause",
+              0
+            ],
+            [
+              "step",
+              -2
+            ],
+            [
+              "close",
+              0
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            -6
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "pause",
+              0
+            ],
+            [
+              "close",
+              0
+            ],
+            [
+              "step",
+              -1
+            ],
+            [
+              "pause",
+              0
+            ],
+            [
+              "step",
+              -5
+            ],
+            [
+              "close",
+              0
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            null,
+            -5
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Process [tag, delta] steps: 'step' adds delta to level and updates stage_min over post-step levels in the current stage; 'pause' resets level to 0 while keeping stage_min; 'close' appends stage_min (or None if no 'step' occurred in the stage) and resets both level and stage_min.",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "voucher_redemptions",
+    "family": "multiplicity",
+    "id": "WT07",
+    "initial_source": "def voucher_redemptions(stock, baskets):\n    pool = {}\n    for sku, count in stock.items():\n        if count < 0:\n            raise ValueError(\"negative stock\")\n        pool[sku] = count\n    reports = []\n    for basket in baskets:\n        ok_flag = True\n        for sku, qty in basket:\n            if qty < 1:\n                raise ValueError(\"invalid qty\")\n            if pool.get(sku, 0) < qty:\n                ok_flag = False\n                break\n            pool[sku] -= qty\n        reports.append(sum(pool.values()) if ok_flag else -1)\n    return reports\n",
+    "public_cases": [
+      {
+        "args": [
+          {
+            "mug": 2,
+            "tea": 3
+          },
+          [
+            [
+              [
+                "tea",
+                2
+              ],
+              [
+                "jam",
+                1
+              ]
+            ],
+            [
+              [
+                "tea",
+                2
+              ],
+              [
+                "mug",
+                1
+              ]
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            -1,
+            2
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          {
+            "pen": 4
+          },
+          [
+            [
+              [
+                "pen",
+                3
+              ]
+            ],
+            [
+              [
+                "pen",
+                2
+              ]
+            ],
+            [
+              [
+                "pen",
+                1
+              ]
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1,
+            -1,
+            0
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given stock dict {sku: count} (counts >= 0, else ValueError) and sequential baskets (each a list of [sku, qty] lines with qty >= 1, else ValueError, possibly repeating sku within a basket), atomically deduct a basket iff total per-sku demand fits remaining stock, returning total remaining stock across all skus after accepted baskets or -1 for rejected baskets.",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "ward_endorsements",
+    "family": "multiplicity",
+    "id": "WT08",
+    "initial_source": "def ward_endorsements(ballots, min_wards):\n    if min_wards < 1:\n        raise ValueError(\"invalid min_wards\")\n    counts = {}\n    for ward, candidate in ballots:\n        if ward and candidate:\n            counts[candidate] = counts.get(candidate, 0) + 1\n    qualified = [[cand, num] for cand, num in counts.items() if num >= min_wards]\n    qualified.sort(key=lambda item: (-item[1], item[0]))\n    return qualified\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "north",
+              "amy"
+            ],
+            [
+              "north",
+              "amy"
+            ],
+            [
+              "south",
+              "amy"
+            ]
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "amy",
+              2
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "east",
+              "ben"
+            ],
+            [
+              "east",
+              "ben"
+            ],
+            [
+              "west",
+              "cara"
+            ],
+            [
+              "south",
+              "cara"
+            ]
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "cara",
+              2
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given [ward, candidate] ballots and min_wards >= 1 (else ValueError), count distinct non-empty wards endorsing each non-empty candidate (ignoring rows with empty ward or candidate) and return [candidate, ward_count] sorted by descending ward_count then ascending candidate.",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "bipartite_pair_weights",
+    "family": "multiplicity",
+    "id": "WT09",
+    "initial_source": "def bipartite_pair_weights(left_rows, right_rows):\n    left_map = {key: (team, weight) for key, team, weight in left_rows}\n    right_map = {key: (team, weight) for key, team, weight in right_rows}\n    pair_count = 0\n    weight_sum = 0\n    for key, (left_team, left_w) in left_map.items():\n        if key in right_map:\n            right_team, right_w = right_map[key]\n            if left_team != right_team:\n                pair_count += 1\n                weight_sum += left_w + right_w\n    return [pair_count, weight_sum]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "k1",
+              "red",
+              2
+            ],
+            [
+              "k1",
+              "blue",
+              3
+            ]
+          ],
+          [
+            [
+              "k1",
+              "red",
+              5
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1,
+            8
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "k1",
+              "red",
+              4
+            ]
+          ],
+          [
+            [
+              "k1",
+              "blue",
+              1
+            ],
+            [
+              "k1",
+              "green",
+              6
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            15
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given left_rows and right_rows of [key, team, weight], return [pair_count, weight_sum] over all index pairs (left_idx, right_idx) with matching key and distinct team (left_team != right_team), summing left_weight + right_weight for each qualifying index pair.",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "workqueue_promotions",
+    "family": "order",
+    "id": "WT10",
+    "initial_source": "def workqueue_promotions(limit, commands):\n    if limit < 1:\n        raise ValueError(\"invalid limit\")\n    queue = []\n    dropped = []\n    for cmd, job in commands:\n        if cmd == \"push\":\n            if job not in queue:\n                if len(queue) == limit:\n                    dropped.append(queue.pop(0))\n                queue.append(job)\n        elif cmd == \"pop\":\n            if queue:\n                queue.pop(0)\n        else:\n            raise ValueError(\"unknown cmd\")\n    return [dropped, queue]\n",
+    "public_cases": [
+      {
+        "args": [
+          2,
+          [
+            [
+              "push",
+              "j1"
+            ],
+            [
+              "push",
+              "j2"
+            ],
+            [
+              "push",
+              "j1"
+            ],
+            [
+              "push",
+              "j3"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "j2"
+            ],
+            [
+              "j1",
+              "j3"
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          3,
+          [
+            [
+              "push",
+              "j1"
+            ],
+            [
+              "push",
+              "j2"
+            ],
+            [
+              "push",
+              "j1"
+            ],
+            [
+              "pop",
+              ""
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [],
+            [
+              "j1"
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Maintain a queue of capacity limit >= 1 (else ValueError) over [cmd, job] commands: 'push' moves job to newest if already queued (without dropping anything), else appends job after dropping and recording oldest if len == limit; 'pop' removes and ignores oldest if non-empty. Return [dropped_jobs, remaining_oldest_to_newest].",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "audit_first_ranks",
+    "family": "order",
+    "id": "WT11",
+    "initial_source": "def audit_first_ranks(logs):\n    totals = {}\n    first_seen = {}\n    has_valid = set()\n    for idx, (actor, valid_flag, points) in enumerate(logs):\n        if valid_flag not in (0, 1):\n            raise ValueError(\"invalid flag\")\n        if actor not in first_seen:\n            first_seen[actor] = idx\n        if valid_flag == 1:\n            has_valid.add(actor)\n            totals[actor] = totals.get(actor, 0) + points\n    ranked = sorted(\n        has_valid,\n        key=lambda actor: (-totals[actor], first_seen[actor]),\n    )\n    return [[actor, totals[actor]] for actor in ranked]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "leo",
+              0,
+              99
+            ],
+            [
+              "mia",
+              1,
+              10
+            ],
+            [
+              "leo",
+              1,
+              10
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "mia",
+              10
+            ],
+            [
+              "leo",
+              10
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "noa",
+              0,
+              5
+            ],
+            [
+              "eli",
+              1,
+              4
+            ],
+            [
+              "eli",
+              1,
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "eli",
+              7
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given [actor, valid_flag, points] logs (valid_flag in (0, 1), else ValueError), sum points across valid (valid_flag == 1) logs per actor; invalid logs neither contribute points nor establish first-valid index. Return [actor, total_points] for actors with >= 1 valid log sorted by descending total_points then earliest valid log index.",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "budgeted_grant_order",
+    "family": "order",
+    "id": "WT12",
+    "initial_source": "def budgeted_grant_order(proposals, dept_budgets):\n    budgets = {}\n    for dept, amt in dept_budgets.items():\n        if amt < 0:\n            raise ValueError(\"negative budget\")\n        budgets[dept] = amt\n    accepted = []\n    for title, dept, _prio, cost in proposals:\n        if cost < 0:\n            raise ValueError(\"negative cost\")\n        if dept in budgets and cost <= budgets[dept]:\n            budgets[dept] -= cost\n            accepted.append(title)\n    return accepted\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "g1",
+              "ai",
+              50,
+              8
+            ],
+            [
+              "g2",
+              "ai",
+              90,
+              8
+            ]
+          ],
+          {
+            "ai": 10
+          }
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "g2"
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "g1",
+              "bio",
+              40,
+              5
+            ],
+            [
+              "g2",
+              "ai",
+              95,
+              6
+            ],
+            [
+              "g3",
+              "bio",
+              80,
+              5
+            ]
+          ],
+          {
+            "ai": 6,
+            "bio": 5
+          }
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "g2",
+            "g3"
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given proposals [title, dept, priority, cost] (cost >= 0, else ValueError) and dept_budgets {dept: budget} (budgets >= 0, else ValueError), greedily accept proposals in descending priority order (ties by earlier index) whenever cost <= remaining dept budget (missing dept has budget 0), then return accepted titles in original input index order.",
+    "split": "transfer"
+  },
+  {
+    "entry_point": "fsm_door_cycles",
+    "family": "dispatch",
+    "id": "WR01",
+    "initial_source": "def fsm_door_cycles(commands):\n    state = \"closed\"\n    cycles = 0\n    for cmd in commands:\n        if cmd not in (\"open\", \"close\", \"lock\", \"unlock\"):\n            raise ValueError(\"unknown command\")\n        if cmd == \"open\" and state != \"locked\":\n            state = \"open\"\n        elif cmd == \"close\":\n            state = \"closed\"\n            cycles += 1\n        elif cmd == \"lock\":\n            state = \"locked\"\n        elif cmd == \"unlock\" and state == \"locked\":\n            state = \"closed\"\n    return [state, cycles]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            "close",
+            "open",
+            "close"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "closed",
+            1
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            "open",
+            "lock",
+            "close"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            "closed",
+            1
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Start door in 'closed' state over commands in ('open', 'close', 'lock', 'unlock') (else ValueError). Valid transitions: closed->open on 'open', open->closed on 'close' (incrementing cycles), closed->locked on 'lock', locked->closed on 'unlock'; other commands in valid set are ignored without changing state. Return [final_state, cycles].",
+    "split": "retention"
+  },
+  {
+    "entry_point": "frame_byte_decoder",
+    "family": "dispatch",
+    "id": "WR02",
+    "initial_source": "def frame_byte_decoder(stream):\n    mode = \"plain\"\n    first_half = 0\n    decoded = []\n    for byte_val in stream:\n        if byte_val < 0 or byte_val > 255:\n            raise ValueError(\"byte out of range\")\n        if byte_val == 254:\n            mode = \"esc\"\n        elif byte_val == 255:\n            mode = \"pair_one\"\n        elif mode == \"esc\":\n            decoded.append(byte_val ^ 32)\n            mode = \"plain\"\n        elif mode == \"pair_one\":\n            first_half = byte_val\n            mode = \"pair_two\"\n        elif mode == \"pair_two\":\n            decoded.append((first_half + byte_val) % 256)\n            mode = \"plain\"\n        else:\n            decoded.append(byte_val)\n    return decoded\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            254,
+            254,
+            10
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            222,
+            10
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            255,
+            100,
+            50,
+            7
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            150,
+            7
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Decode integer byte values (each 0..255, else ValueError): in normal mode 254 enters escape mode (next byte XOR 32 appended, returning to normal) and 255 enters pair-sum mode (next two bytes summed modulo 256 and appended, returning to normal); other bytes append directly. Dangling incomplete escape or pair-sum at end raises ValueError.",
+    "split": "retention"
+  },
+  {
+    "entry_point": "retry_backoff_sim",
+    "family": "dispatch",
+    "id": "WR03",
+    "initial_source": "def retry_backoff_sim(base_delay, max_delay, outcomes):\n    if base_delay < 1 or max_delay < base_delay:\n        raise ValueError(\"invalid delays\")\n    cur_delay = base_delay\n    ok_count = 0\n    total_wait = 0\n    for label in outcomes:\n        if label not in (\"ok\", \"temp\", \"fatal\"):\n            raise ValueError(\"unknown outcome\")\n        if label == \"ok\":\n            ok_count += 1\n        elif label == \"temp\":\n            cur_delay = min(max_delay, cur_delay * 2)\n            total_wait += cur_delay\n        else:\n            continue\n    return [ok_count, total_wait]\n",
+    "public_cases": [
+      {
+        "args": [
+          2,
+          10,
+          [
+            "temp",
+            "temp",
+            "ok",
+            "temp"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1,
+            8
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          3,
+          10,
+          [
+            "temp",
+            "fatal",
+            "ok",
+            "temp"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            3
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Simulate outcomes in ('ok', 'temp', 'fatal') with 1 <= base_delay <= max_delay (else ValueError), starting cur_delay = base_delay: 'ok' increments ok_count and resets cur_delay = base_delay (adding 0 wait); 'temp' adds cur_delay to total_wait and updates cur_delay = min(max_delay, cur_delay * 2); 'fatal' stops processing immediately without adding wait. Return [ok_count, total_wait].",
+    "split": "retention"
+  },
+  {
+    "entry_point": "sliding_singleton_counts",
+    "family": "window",
+    "id": "WR04",
+    "initial_source": "def sliding_singleton_counts(values, width):\n    if width < 1:\n        raise ValueError(\"invalid width\")\n    if len(values) < width:\n        return []\n    return [len(set(values[pos : pos + width])) for pos in range(len(values) - width + 1)]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            1,
+            2,
+            1,
+            3
+          ],
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1,
+            3
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            4,
+            4,
+            4
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            0,
+            0
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given integer list values and window width >= 1 (else ValueError), return for each contiguous window values[idx : idx + width] the count of elements whose frequency inside that window is strictly 1 (empty list if len(values) < width).",
+    "split": "retention"
+  },
+  {
+    "entry_point": "bounded_span_count",
+    "family": "window",
+    "id": "WR05",
+    "initial_source": "def bounded_span_count(nums, tolerance, max_len):\n    if tolerance < 0 or max_len < 1:\n        raise ValueError(\"invalid bounds\")\n    total = 0\n    for left in range(len(nums)):\n        for right in range(left, min(len(nums), left + max_len)):\n            if abs(nums[right] - nums[left]) <= tolerance:\n                total += 1\n    return total\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            1,
+            5,
+            1
+          ],
+          2,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 3
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            2,
+            3,
+            2
+          ],
+          1,
+          3
+        ],
+        "expected": {
+          "kind": "return",
+          "value": 6
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given integer list nums, tolerance >= 0, and max_len >= 1 (else ValueError), count contiguous nonempty subarrays nums[left : right + 1] with length <= max_len and max(subarray) - min(subarray) <= tolerance.",
+    "split": "retention"
+  },
+  {
+    "entry_point": "ema_breach_streaks",
+    "family": "window",
+    "id": "WR06",
+    "initial_source": "def ema_breach_streaks(samples, weight, hi_mark):\n    if weight < 1 or weight > 10:\n        raise ValueError(\"invalid weight\")\n    avg = 0\n    cur_streak = 0\n    max_streak = 0\n    total_breaches = 0\n    for val in samples:\n        avg = (weight * val + (10 - weight) * avg) // 10\n        if avg > hi_mark:\n            cur_streak += 1\n            total_breaches += 1\n            max_streak = max(max_streak, cur_streak)\n        else:\n            cur_streak = 0\n    return [max_streak, total_breaches]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            20,
+            20
+          ],
+          5,
+          15
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            2
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            20,
+            20,
+            0,
+            20
+          ],
+          10,
+          15
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            2,
+            3
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "With integer weight in 1..10 (else ValueError), initialize integer EMA avg = samples[0] on index 0 and update avg = (weight * sample + (10 - weight) * avg) // 10 for subsequent samples; a sample breaches when post-update avg > hi_mark. Return [max_consecutive_breaches, total_breaches].",
+    "split": "retention"
+  },
+  {
+    "entry_point": "scoped_tag_validator",
+    "family": "balance",
+    "id": "WR07",
+    "initial_source": "def scoped_tag_validator(max_depth, tokens):\n    if max_depth < 1:\n        raise ValueError(\"invalid max_depth\")\n    depth = 0\n    peak = 0\n    for kind, tag in tokens:\n        if kind not in (\"open\", \"close\", \"self\") or not tag:\n            raise ValueError(\"invalid token\")\n        if kind == \"open\":\n            depth += 1\n            if depth > max_depth:\n                return [False, peak]\n            peak = max(peak, depth)\n        elif kind == \"close\":\n            if depth == 0:\n                return [False, peak]\n            depth -= 1\n    return [depth == 0, peak]\n",
+    "public_cases": [
+      {
+        "args": [
+          3,
+          [
+            [
+              "open",
+              "div"
+            ],
+            [
+              "close",
+              "span"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            false,
+            1
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          3,
+          [
+            [
+              "open",
+              "div"
+            ],
+            [
+              "self",
+              "img"
+            ],
+            [
+              "close",
+              "div"
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            true,
+            2
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Validate [kind, tag] tokens (kind in ('open', 'close', 'self'), non-empty tag, max_depth >= 1, else ValueError): 'open' pushes tag (invalid if new depth > max_depth), 'self' requires len(stack) + 1 <= max_depth (recording transient depth len(stack) + 1 without staying open), 'close' requires non-empty stack with top == tag; stop immediately on first structural violation and return [is_valid, peak_valid_depth].",
+    "split": "retention"
+  },
+  {
+    "entry_point": "min_paren_repairs",
+    "family": "balance",
+    "id": "WR08",
+    "initial_source": "def min_paren_repairs(symbols):\n    pairs = {\")\": \"(\", \"]\": \"[\"}\n    allowed = {\"(\", \")\", \"[\", \"]\"}\n    for sym in symbols:\n        if sym not in allowed:\n            raise ValueError(\"invalid symbol\")\n    stack = []\n    closer_repairs = 0\n    for sym in symbols:\n        if sym in (\"(\", \"[\"):\n            stack.append(sym)\n        elif not stack:\n            closer_repairs += 1\n        else:\n            top = stack.pop()\n            if top != pairs[sym]:\n                closer_repairs += 1\n    return [closer_repairs, len(stack)]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            "(",
+            "]",
+            ")"
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1,
+            0
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            "]",
+            "("
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1,
+            1
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given list symbols with each item in ('(', ')', '[', ']') (else ValueError), process left-to-right maintaining an open-opener stack: an opener pushes onto the stack; a closer pops the top if non-empty and matching ('()' or '[]'), otherwise leaves the stack unchanged and increments closer_repairs (requiring one inserted matching opener immediately before it). At end, remaining unclosed openers on the stack add len(stack) to opener_repairs. Return [closer_repairs, opener_repairs].",
+    "split": "retention"
+  },
+  {
+    "entry_point": "callstack_exclusive_time",
+    "family": "balance",
+    "id": "WR09",
+    "initial_source": "def callstack_exclusive_time(trace):\n    entered_at = {}\n    exclusive = {}\n    prev_ts = 0\n    for idx, (kind, func_name, cur_ts) in enumerate(trace):\n        if kind not in (\"enter\", \"exit\") or not func_name or cur_ts < 0:\n            raise ValueError(\"invalid event\")\n        if idx > 0 and cur_ts < prev_ts:\n            raise ValueError(\"non-monotone timestamp\")\n        if kind == \"enter\":\n            entered_at[func_name] = cur_ts\n            exclusive.setdefault(func_name, 0)\n        else:\n            if func_name not in entered_at:\n                raise ValueError(\"mismatched exit\")\n            exclusive[func_name] += cur_ts - entered_at.pop(func_name)\n        prev_ts = cur_ts\n    if entered_at:\n        raise ValueError(\"unclosed call\")\n    return sorted([name, val] for name, val in exclusive.items())\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "enter",
+              "main",
+              0
+            ],
+            [
+              "enter",
+              "helper",
+              3
+            ],
+            [
+              "exit",
+              "helper",
+              8
+            ],
+            [
+              "exit",
+              "main",
+              10
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "helper",
+              5
+            ],
+            [
+              "main",
+              5
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "enter",
+              "rec",
+              1
+            ],
+            [
+              "enter",
+              "rec",
+              4
+            ],
+            [
+              "exit",
+              "rec",
+              7
+            ],
+            [
+              "exit",
+              "rec",
+              9
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "rec",
+              8
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given profiler trace [kind, func_name, timestamp] (kind in ('enter', 'exit'), non-empty func_name, non-decreasing non-negative timestamps, matching LIFO exits, and empty stack at end, else ValueError), compute exclusive execution time per function (pausing caller time while callee runs) and return [func_name, exclusive_time] sorted by func_name.",
+    "split": "retention"
+  },
+  {
+    "entry_point": "coalesce_signed_runs",
+    "family": "dedup",
+    "id": "WR10",
+    "initial_source": "def coalesce_signed_runs(runs):\n    merged = []\n    for label, delta in runs:\n        if not label:\n            raise ValueError(\"empty label\")\n        if merged and merged[-1][0] == label:\n            merged[-1][1] += delta\n        elif delta != 0:\n            merged.append([label, delta])\n    return [item for item in merged if item[1] != 0]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              "aa",
+              3
+            ],
+            [
+              "bb",
+              2
+            ],
+            [
+              "bb",
+              -2
+            ],
+            [
+              "aa",
+              4
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "aa",
+              7
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              "aa",
+              2
+            ],
+            [
+              "bb",
+              1
+            ],
+            [
+              "aa",
+              3
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "aa",
+              2
+            ],
+            [
+              "bb",
+              1
+            ],
+            [
+              "aa",
+              3
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given [label, delta] runs (non-empty label, integer delta, else ValueError), skip zero deltas and merge adjacent runs having the same label by summing delta; if a merged run reaches sum 0, remove it so newly adjacent runs can also merge! Return surviving [label, net_delta] runs.",
+    "split": "retention"
+  },
+  {
+    "entry_point": "ordered_union_versions",
+    "family": "dedup",
+    "id": "WR11",
+    "initial_source": "def ordered_union_versions(streams):\n    best_ver = {}\n    order = []\n    for stream in streams:\n        for pkg, ver in stream:\n            if not pkg:\n                raise ValueError(\"empty pkg\")\n            if pkg not in order:\n                order.append(pkg)\n            if ver >= 0:\n                best_ver[pkg] = ver\n    return [[pkg, best_ver[pkg]] for pkg in order if pkg in best_ver]\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              [
+                "liba",
+                -1
+              ],
+              [
+                "libb",
+                2
+              ]
+            ],
+            [
+              [
+                "liba",
+                5
+              ],
+              [
+                "libb",
+                1
+              ]
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "libb",
+              2
+            ],
+            [
+              "liba",
+              5
+            ]
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              [
+                "core",
+                4
+              ]
+            ],
+            [
+              [
+                "core",
+                2
+              ],
+              [
+                "net",
+                3
+              ]
+            ]
+          ]
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            [
+              "core",
+              4
+            ],
+            [
+              "net",
+              3
+            ]
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given streams (list of [pkg, version] lists, non-empty pkg, else ValueError), ignore entries with version < 0, establish each qualifying pkg position by its earliest non-negative appearance across streams in order, and retain the maximum non-negative version observed for that pkg.",
+    "split": "retention"
+  },
+  {
+    "entry_point": "k_way_quorum_merge",
+    "family": "dedup",
+    "id": "WR12",
+    "initial_source": "def k_way_quorum_merge(sorted_lists, min_lists):\n    if min_lists < 1:\n        raise ValueError(\"invalid min_lists\")\n    list_counts = {}\n    for seq in sorted_lists:\n        for idx in range(1, len(seq)):\n            if seq[idx] < seq[idx - 1]:\n                raise ValueError(\"unsorted input\")\n        for val in seq:\n            list_counts[val] = list_counts.get(val, 0) + 1\n    return sorted(val for val, num in list_counts.items() if num >= min_lists)\n",
+    "public_cases": [
+      {
+        "args": [
+          [
+            [
+              1,
+              1,
+              3
+            ],
+            [
+              2,
+              3
+            ]
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            3
+          ]
+        },
+        "id": "P01"
+      },
+      {
+        "args": [
+          [
+            [
+              1,
+              4,
+              4
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              1,
+              5
+            ]
+          ],
+          2
+        ],
+        "expected": {
+          "kind": "return",
+          "value": [
+            1,
+            4,
+            5
+          ]
+        },
+        "id": "P02"
+      }
+    ],
+    "spec": "Given sorted_lists (each a non-decreasing integer list, else ValueError) and min_lists >= 1 (else ValueError), return a strictly increasing list of integers that appear in at least min_lists distinct input lists (deduplicating repeats within the same input list).",
+    "split": "retention"
+  }
+]
