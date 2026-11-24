@@ -1,0 +1,16 @@
+{
+  "benchmark_eligible": false,
+  "date": "2026-11-24",
+  "files": {
+    "gate-g6a-router-probe-report.json": {
+      "bytes": 12177,
+      "sha256": "1bc248d18639ac2eee36e2b9e60ee3e743c6c0511fc6c8f3b8797a97c9485495"
+    },
+    "gate-g7-kl-anchored-ablation-report.json": {
+      "bytes": 57247,
+      "sha256": "99c79d9a49423ac85efe693b520199f55f55f558bf8bc9ac8ae13d2a46b886b7"
+    }
+  },
+  "formal_evaluation_ready": false,
+  "kind": "LORA_RESTRAINT_ABLATION_ARCHIVE_MANIFEST"
+}
