@@ -85,6 +85,13 @@ KL_ANCHORED_HYPERPARAMS = {
     "steps": 64,
 }
 
+KL_ANCHORED_96STEP_HYPERPARAMS = {
+    **KL_ANCHORED_HYPERPARAMS,
+    "lambda_kl": 1.0,
+    "epochs": 12,
+    "steps": 96,
+}
+
 G7_SOURCE_NAMES = frozenset(
     set(ABLATION_SOURCE_NAMES)
     | {
@@ -683,10 +690,16 @@ def build_gate_g7_ablation_package(
     expected_tokenizer_sha256,
     remote_parent,
     local_run_root,
+    hyperparams=None,
     work_timeout_seconds=5400,
 ):
     for forbidden in ("validation_remote", "validation_task_worker", "torch", "transformers"):
         require(forbidden not in sys.modules, "forbidden host import: " + forbidden)
+    chosen_hp = copy.deepcopy(KL_ANCHORED_HYPERPARAMS if hyperparams is None else hyperparams)
+    require(
+        int(chosen_hp["steps"]) == int(chosen_hp["epochs"]) * 8 and int(chosen_hp["steps"]) >= 16,
+        "steps must equal epochs * 8",
+    )
     load_confirmatory_dataset(raw_files)
     v1_sets = load_g6_calibration_outputs_only(
         raw_files["supervision.json"], v1_prompts_raw, v1_structure_raw
@@ -737,6 +750,7 @@ def build_gate_g7_ablation_package(
         "parent": remote_parent,
         "stage": str(Path(remote_parent) / ("g7-kl-abl-" + run_id)),
         "run_id": run_id,
+        "hyperparams": copy.deepcopy(chosen_hp),
         "sources_sha256": sources_sha,
         "prompts_sha256": CONFIRMATORY_FILE_PINS["prompts.json"],
         "supervision_sha256": CONFIRMATORY_FILE_PINS["supervision.json"],
@@ -792,7 +806,7 @@ def build_gate_g7_ablation_package(
         "data_version": "confirmatory_v2_r1",
         "run_id": run_id,
         "scoring_run_ids": list(scoring_run_ids),
-        "hyperparams": copy.deepcopy(KL_ANCHORED_HYPERPARAMS),
+        "hyperparams": copy.deepcopy(chosen_hp),
         "file_sha256": dict(CONFIRMATORY_FILE_PINS),
         "phase_one_config": p1_cfg,
         "phase_one_config_sha256": p1_cfg_sha,
@@ -871,23 +885,24 @@ def execute_remote_g7_ablation_body(config, stage, bundle):
     tensor_digest_fn = loaded["tensor_digest_fn"]
     obj_digest = loaded["obj_digest_fn"]
 
+    active_hp = copy.deepcopy(config.get("hyperparams") or KL_ANCHORED_HYPERPARAMS)
     anc_t0 = time.monotonic_ns()
     bg_trajs = prepare_kl_anchor_trajectories(
         model,
         tokenizer,
         anchor_sets["background"],
-        max_new_tokens=KL_ANCHORED_HYPERPARAMS["max_anchor_tokens"],
+        max_new_tokens=int(active_hp["max_anchor_tokens"]),
     )
     dev_neg_trajs = prepare_kl_anchor_trajectories(
         model,
         tokenizer,
         anchor_sets["dev_negative"],
-        max_new_tokens=KL_ANCHORED_HYPERPARAMS["max_anchor_tokens"],
+        max_new_tokens=int(active_hp["max_anchor_tokens"]),
     )
     shared_costs["anchor_trajectory_prep_ns"] = time.monotonic_ns() - anc_t0
 
     train_ds = prepare_confirmatory_training(tokenizer, supervision_raw)
-    train_out = train_kl_anchored_adapter(model, train_ds, bg_trajs)
+    train_out = train_kl_anchored_adapter(model, train_ds, bg_trajs, hyperparams=active_hp)
     del bg_trajs
 
     buf_io = io.BytesIO()

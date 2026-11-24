@@ -1,0 +1,2455 @@
+{
+  "benchmark_eligible": false,
+  "canary_bit_exact_with_g4b_base": {
+    "WR01": true,
+    "WT01": true
+  },
+  "changed_round1_vs_base": {
+    "retention": 10,
+    "total": 20,
+    "transfer": 10
+  },
+  "comparisons_feedback": {
+    "retention": {
+      "lora_kl_vs_base": {
+        "baseline_arm": "base",
+        "both_right": 2,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 2,
+        "target_arm": "lora_kl",
+        "wrong_to_right": 1
+      },
+      "lora_kl_vs_lora_16step": {
+        "baseline_arm": "lora",
+        "both_right": 2,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 2,
+        "target_arm": "lora_kl",
+        "wrong_to_right": 1
+      },
+      "lora_kl_vs_lora_conv": {
+        "baseline_arm": "lora_conv",
+        "both_right": 2,
+        "both_wrong": 9,
+        "missing_or_unknown": 0,
+        "net_gain": 1,
+        "observed_subset_net": 1,
+        "right_to_wrong": 0,
+        "target_arm": "lora_kl",
+        "wrong_to_right": 1
+      },
+      "lora_kl_vs_text": {
+        "baseline_arm": "text",
+        "both_right": 2,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 2,
+        "target_arm": "lora_kl",
+        "wrong_to_right": 1
+      }
+    },
+    "transfer": {
+      "lora_kl_vs_base": {
+        "baseline_arm": "base",
+        "both_right": 2,
+        "both_wrong": 8,
+        "missing_or_unknown": 0,
+        "net_gain": 0,
+        "observed_subset_net": 0,
+        "right_to_wrong": 1,
+        "target_arm": "lora_kl",
+        "wrong_to_right": 1
+      },
+      "lora_kl_vs_lora_16step": {
+        "baseline_arm": "lora",
+        "both_right": 2,
+        "both_wrong": 9,
+        "missing_or_unknown": 0,
+        "net_gain": 1,
+        "observed_subset_net": 1,
+        "right_to_wrong": 0,
+        "target_arm": "lora_kl",
+        "wrong_to_right": 1
+      },
+      "lora_kl_vs_lora_conv": {
+        "baseline_arm": "lora_conv",
+        "both_right": 3,
+        "both_wrong": 8,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 1,
+        "target_arm": "lora_kl",
+        "wrong_to_right": 0
+      },
+      "lora_kl_vs_text": {
+        "baseline_arm": "text",
+        "both_right": 2,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 2,
+        "target_arm": "lora_kl",
+        "wrong_to_right": 1
+      }
+    }
+  },
+  "complete_and_verified": true,
+  "costs": {
+    "adapter_bytes": 15335424,
+    "breakeven_tasks_vs_text": 0.9065302243782773,
+    "fixed_training_and_anchor_ns": 224741799341,
+    "lora_kl_generation_wall_ns": 736377441237,
+    "shared": {
+      "anchor_trajectory_prep_ns": 80778347796,
+      "checkpoint_verify_ns": 17591905296,
+      "episodes_wall_ns": 881684165375,
+      "final_integrity_ns": 31357304389,
+      "heldout_dev_audit_ns": 394780270,
+      "model_and_tokenizer_load_ns": 23345587193,
+      "model_load_peak_allocated_bytes": 16383586816,
+      "model_load_peak_reserved_bytes": 16536043520
+    },
+    "speedup_vs_text": 9.080018059166802,
+    "text_reference_generation_wall_ns": 6686320464795
+  },
+  "diagnostic_dispatch_authorized": false,
+  "episodes": [
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT01"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT02"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT03"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT04"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT05"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT06"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT07"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT08"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT09"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT10"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT11"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT12"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR01"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR02"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR03"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR04"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR05"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR06"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR07"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR08"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR09"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR10"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR11"
+    },
+    {
+      "arm": "lora_kl",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR12"
+    }
+  ],
+  "formal_evaluation_ready": false,
+  "heldout_dev_restraint_audit": {
+    "mean_token_kl": 0.04150254422033174,
+    "per_task": {
+      "D01": {
+        "answer_tokens": 37,
+        "mean_token_kl": 0.08603153377771378,
+        "top1_agreement_rate": 0.972972972972973,
+        "top1_matched_tokens": 36
+      },
+      "D02": {
+        "answer_tokens": 40,
+        "mean_token_kl": 0.03217978775501251,
+        "top1_agreement_rate": 0.975,
+        "top1_matched_tokens": 39
+      },
+      "D03": {
+        "answer_tokens": 21,
+        "mean_token_kl": 0.0010841356124728918,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 21
+      },
+      "D04": {
+        "answer_tokens": 20,
+        "mean_token_kl": 0.020208755508065224,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 20
+      }
+    },
+    "top1_agreement_rate": 0.9830508474576272,
+    "total_answer_tokens": 118
+  },
+  "incomplete_reasons": [],
+  "isolated": false,
+  "kind": "LORA_CONFIRMATORY_V2_KL_ANCHORED_ABLATION_REPORT",
+  "lora_kl_by_split": {
+    "retention": {
+      "feedback": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 3,
+        "SEMANTIC_FAIL": 9,
+        "UNKNOWN": 0
+      },
+      "initial": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 3,
+        "SEMANTIC_FAIL": 9,
+        "UNKNOWN": 0
+      }
+    },
+    "transfer": {
+      "feedback": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 3,
+        "SEMANTIC_FAIL": 9,
+        "UNKNOWN": 0
+      },
+      "initial": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 3,
+        "SEMANTIC_FAIL": 9,
+        "UNKNOWN": 0
+      }
+    }
+  },
+  "net_benefit_established": false,
+  "protocol_contradictions": [],
+  "run_authorized": false,
+  "run_id": "1f8b91a4edbb743b66d6771090bfb4a4",
+  "total_eval_tasks": 24,
+  "total_pass_feedback": 6,
+  "total_pass_initial": 6,
+  "training": {
+    "adapter_bytes": 15335424,
+    "adapter_load_ns": 14186779,
+    "adapter_save_ns": 32234447,
+    "adapter_sha256": "dc4720fc10f802ab8d83db59cfc65cd315215e484c249edaf220df3320b206cf",
+    "artifact_bytes": 15380946,
+    "artifact_sha256": "44631b5775f0dfd9b69da0649e2b085cb7caf33a700dcec4bd238203b1567d5a",
+    "core_wall_ns": 143917030319,
+    "dataset_sha256": "5d7903944505304dc169a3ad87e2f56ae0126f65c5e8bfb7d822139df9d410bf",
+    "epoch_mean_bg_kl_losses": [
+      0.0027595313126322907,
+      0.017221236521436367,
+      0.04076229681959376,
+      0.03621474851388484,
+      0.019219280569814146,
+      0.011349438711476978,
+      0.007881254567109863,
+      0.006064558923753793,
+      0.0045336518978729146,
+      0.003741986053682922,
+      0.0031367548763228115,
+      0.002688854209281999
+    ],
+    "epoch_mean_sup_losses": [
+      0.7557106036692858,
+      0.3856907747685909,
+      0.20053311582887545,
+      0.1521391172427684,
+      0.11939073097892106,
+      0.0894999535230454,
+      0.06877008879382629,
+      0.05237347252841573,
+      0.03883824592776364,
+      0.028816285557695664,
+      0.02190125089691719,
+      0.01756645549539826
+    ],
+    "hyperparams": {
+      "alpha": 16,
+      "background_anchors_per_step": 2,
+      "epochs": 12,
+      "gradient_clip": 1.0,
+      "lambda_kl": 1.0,
+      "learning_rate": 0.0002,
+      "lr_schedule": "linear_decay_to_10pct",
+      "max_anchor_tokens": 128,
+      "optimizer": "AdamW",
+      "rank": 8,
+      "seed": 42,
+      "steps": 96,
+      "targets": [
+        "q_proj",
+        "v_proj"
+      ],
+      "weight_decay": 0.01
+    },
+    "initial_adapter_sha256": "c290a8da6eafd9ac2672c9228ee73068343f316da7aabd243eb41fc115d65f9c",
+    "peak_allocated_bytes": 22862804992,
+    "peak_reserved_bytes": 23540531200,
+    "preparation_ns": 31206242497,
+    "steps": [
+      {
+        "bg_kl_loss": 0.0,
+        "elapsed_ns": 1076898362,
+        "epoch": 1,
+        "gradient_norm": 0.2261401116847992,
+        "lr": 0.0002,
+        "step": 1,
+        "sup_loss": 0.20511381328105927,
+        "task_id": "V01",
+        "total_objective": 0.20511381328105927
+      },
+      {
+        "bg_kl_loss": 0.00010640745631462778,
+        "elapsed_ns": 843909720,
+        "epoch": 1,
+        "gradient_norm": 1.645829200744629,
+        "lr": 0.00019810526315789474,
+        "step": 2,
+        "sup_loss": 1.656360149383545,
+        "task_id": "V02",
+        "total_objective": 1.6564665568398595
+      },
+      {
+        "bg_kl_loss": 0.002004291251068935,
+        "elapsed_ns": 829621713,
+        "epoch": 1,
+        "gradient_norm": 0.6070623993873596,
+        "lr": 0.0001962105263157895,
+        "step": 3,
+        "sup_loss": 0.4007006287574768,
+        "task_id": "V03",
+        "total_objective": 0.40270492000854574
+      },
+      {
+        "bg_kl_loss": 0.0011891454150116942,
+        "elapsed_ns": 834621233,
+        "epoch": 1,
+        "gradient_norm": 1.087464690208435,
+        "lr": 0.00019431578947368423,
+        "step": 4,
+        "sup_loss": 0.34018009901046753,
+        "task_id": "V04",
+        "total_objective": 0.3413692444254792
+      },
+      {
+        "bg_kl_loss": 0.00020233224256571702,
+        "elapsed_ns": 907526378,
+        "epoch": 1,
+        "gradient_norm": 0.8555462956428528,
+        "lr": 0.00019242105263157894,
+        "step": 5,
+        "sup_loss": 0.4605695307254791,
+        "task_id": "V05",
+        "total_objective": 0.46077186296804484
+      },
+      {
+        "bg_kl_loss": 0.002145649857823173,
+        "elapsed_ns": 858851543,
+        "epoch": 1,
+        "gradient_norm": 1.577117919921875,
+        "lr": 0.0001905263157894737,
+        "step": 6,
+        "sup_loss": 1.3376617431640625,
+        "task_id": "V06",
+        "total_objective": 1.3398073930218857
+      },
+      {
+        "bg_kl_loss": 0.010618092259392142,
+        "elapsed_ns": 882042277,
+        "epoch": 1,
+        "gradient_norm": 1.3236472606658936,
+        "lr": 0.00018863157894736843,
+        "step": 7,
+        "sup_loss": 0.6937756538391113,
+        "task_id": "V07",
+        "total_objective": 0.7043937460985035
+      },
+      {
+        "bg_kl_loss": 0.005810332018882036,
+        "elapsed_ns": 848706328,
+        "epoch": 1,
+        "gradient_norm": 1.5910407304763794,
+        "lr": 0.00018673684210526316,
+        "step": 8,
+        "sup_loss": 0.9513232111930847,
+        "task_id": "V08",
+        "total_objective": 0.9571335432119668
+      },
+      {
+        "bg_kl_loss": 0.004995100782252848,
+        "elapsed_ns": 833882414,
+        "epoch": 2,
+        "gradient_norm": 0.34403958916664124,
+        "lr": 0.0001848421052631579,
+        "step": 9,
+        "sup_loss": 0.12281058728694916,
+        "task_id": "V01",
+        "total_objective": 0.127805688069202
+      },
+      {
+        "bg_kl_loss": 0.026872448506765068,
+        "elapsed_ns": 840264587,
+        "epoch": 2,
+        "gradient_norm": 1.4917868375778198,
+        "lr": 0.00018294736842105265,
+        "step": 10,
+        "sup_loss": 0.7919096946716309,
+        "task_id": "V02",
+        "total_objective": 0.8187821431783959
+      },
+      {
+        "bg_kl_loss": 0.012369126081466675,
+        "elapsed_ns": 840942608,
+        "epoch": 2,
+        "gradient_norm": 0.8083525896072388,
+        "lr": 0.00018105263157894739,
+        "step": 11,
+        "sup_loss": 0.19114138185977936,
+        "task_id": "V03",
+        "total_objective": 0.20351050794124603
+      },
+      {
+        "bg_kl_loss": 0.02527095703408122,
+        "elapsed_ns": 854246952,
+        "epoch": 2,
+        "gradient_norm": 0.8213261365890503,
+        "lr": 0.0001791578947368421,
+        "step": 12,
+        "sup_loss": 0.10851147770881653,
+        "task_id": "V04",
+        "total_objective": 0.13378243474289775
+      },
+      {
+        "bg_kl_loss": 0.005115344421938062,
+        "elapsed_ns": 901948325,
+        "epoch": 2,
+        "gradient_norm": 0.5234892964363098,
+        "lr": 0.00017726315789473685,
+        "step": 13,
+        "sup_loss": 0.1852932870388031,
+        "task_id": "V05",
+        "total_objective": 0.19040863146074116
+      },
+      {
+        "bg_kl_loss": 0.021263618080411106,
+        "elapsed_ns": 856411327,
+        "epoch": 2,
+        "gradient_norm": 1.2000277042388916,
+        "lr": 0.00017536842105263158,
+        "step": 14,
+        "sup_loss": 0.7636247873306274,
+        "task_id": "V06",
+        "total_objective": 0.7848884054110385
+      },
+      {
+        "bg_kl_loss": 0.028535526245832443,
+        "elapsed_ns": 880619081,
+        "epoch": 2,
+        "gradient_norm": 0.7857112884521484,
+        "lr": 0.00017347368421052631,
+        "step": 15,
+        "sup_loss": 0.36680588126182556,
+        "task_id": "V07",
+        "total_objective": 0.395341407507658
+      },
+      {
+        "bg_kl_loss": 0.013347771018743515,
+        "elapsed_ns": 847900397,
+        "epoch": 2,
+        "gradient_norm": 1.0047781467437744,
+        "lr": 0.00017157894736842107,
+        "step": 16,
+        "sup_loss": 0.5554291009902954,
+        "task_id": "V08",
+        "total_objective": 0.5687768720090389
+      },
+      {
+        "bg_kl_loss": 0.028943018056452274,
+        "elapsed_ns": 832443262,
+        "epoch": 3,
+        "gradient_norm": 0.33783116936683655,
+        "lr": 0.0001696842105263158,
+        "step": 17,
+        "sup_loss": 0.007714193779975176,
+        "task_id": "V01",
+        "total_objective": 0.03665721183642745
+      },
+      {
+        "bg_kl_loss": 0.05593009619042277,
+        "elapsed_ns": 825481421,
+        "epoch": 3,
+        "gradient_norm": 0.9659134149551392,
+        "lr": 0.00016778947368421054,
+        "step": 18,
+        "sup_loss": 0.33747217059135437,
+        "task_id": "V02",
+        "total_objective": 0.39340226678177714
+      },
+      {
+        "bg_kl_loss": 0.02444442268460989,
+        "elapsed_ns": 843740144,
+        "epoch": 3,
+        "gradient_norm": 0.377040833234787,
+        "lr": 0.00016589473684210527,
+        "step": 19,
+        "sup_loss": 0.047120336443185806,
+        "task_id": "V03",
+        "total_objective": 0.0715647591277957
+      },
+      {
+        "bg_kl_loss": 0.042523715645074844,
+        "elapsed_ns": 823247173,
+        "epoch": 3,
+        "gradient_norm": 0.4616812467575073,
+        "lr": 0.000164,
+        "step": 20,
+        "sup_loss": 0.030829790979623795,
+        "task_id": "V04",
+        "total_objective": 0.07335350662469864
+      },
+      {
+        "bg_kl_loss": 0.029320157133042812,
+        "elapsed_ns": 880730064,
+        "epoch": 3,
+        "gradient_norm": 0.543367862701416,
+        "lr": 0.00016210526315789473,
+        "step": 21,
+        "sup_loss": 0.09505290538072586,
+        "task_id": "V05",
+        "total_objective": 0.12437306251376867
+      },
+      {
+        "bg_kl_loss": 0.042715324088931084,
+        "elapsed_ns": 838960152,
+        "epoch": 3,
+        "gradient_norm": 0.802293598651886,
+        "lr": 0.00016021052631578947,
+        "step": 22,
+        "sup_loss": 0.47837239503860474,
+        "task_id": "V06",
+        "total_objective": 0.5210877191275358
+      },
+      {
+        "bg_kl_loss": 0.05530025623738766,
+        "elapsed_ns": 871291487,
+        "epoch": 3,
+        "gradient_norm": 0.735622227191925,
+        "lr": 0.00015831578947368423,
+        "step": 23,
+        "sup_loss": 0.23901666700839996,
+        "task_id": "V07",
+        "total_objective": 0.2943169232457876
+      },
+      {
+        "bg_kl_loss": 0.046921384520828724,
+        "elapsed_ns": 838588878,
+        "epoch": 3,
+        "gradient_norm": 0.8738320469856262,
+        "lr": 0.00015642105263157896,
+        "step": 24,
+        "sup_loss": 0.3686864674091339,
+        "task_id": "V08",
+        "total_objective": 0.41560785192996264
+      },
+      {
+        "bg_kl_loss": 0.06623049266636372,
+        "elapsed_ns": 834806877,
+        "epoch": 4,
+        "gradient_norm": 1.1286656856536865,
+        "lr": 0.0001545263157894737,
+        "step": 25,
+        "sup_loss": 0.0056427232921123505,
+        "task_id": "V01",
+        "total_objective": 0.07187321595847607
+      },
+      {
+        "bg_kl_loss": 0.07077394425868988,
+        "elapsed_ns": 849546542,
+        "epoch": 4,
+        "gradient_norm": 0.7395180463790894,
+        "lr": 0.00015263157894736845,
+        "step": 26,
+        "sup_loss": 0.18715374171733856,
+        "task_id": "V02",
+        "total_objective": 0.25792768597602844
+      },
+      {
+        "bg_kl_loss": 0.02553585357964039,
+        "elapsed_ns": 838528500,
+        "epoch": 4,
+        "gradient_norm": 0.3767603635787964,
+        "lr": 0.00015073684210526315,
+        "step": 27,
+        "sup_loss": 0.03636038675904274,
+        "task_id": "V03",
+        "total_objective": 0.06189624033868313
+      },
+      {
+        "bg_kl_loss": 0.03532127197831869,
+        "elapsed_ns": 848538049,
+        "epoch": 4,
+        "gradient_norm": 0.44315671920776367,
+        "lr": 0.00014884210526315789,
+        "step": 28,
+        "sup_loss": 0.02506411261856556,
+        "task_id": "V04",
+        "total_objective": 0.06038538459688425
+      },
+      {
+        "bg_kl_loss": 0.013402055948972702,
+        "elapsed_ns": 900406925,
+        "epoch": 4,
+        "gradient_norm": 0.38172799348831177,
+        "lr": 0.00014694736842105265,
+        "step": 29,
+        "sup_loss": 0.0769508108496666,
+        "task_id": "V05",
+        "total_objective": 0.0903528667986393
+      },
+      {
+        "bg_kl_loss": 0.02268009353429079,
+        "elapsed_ns": 837972213,
+        "epoch": 4,
+        "gradient_norm": 0.6894025206565857,
+        "lr": 0.00014505263157894738,
+        "step": 30,
+        "sup_loss": 0.3925575017929077,
+        "task_id": "V06",
+        "total_objective": 0.4152375953271985
+      },
+      {
+        "bg_kl_loss": 0.029872777871787548,
+        "elapsed_ns": 860795602,
+        "epoch": 4,
+        "gradient_norm": 0.524974524974823,
+        "lr": 0.0001431578947368421,
+        "step": 31,
+        "sup_loss": 0.19070161879062653,
+        "task_id": "V07",
+        "total_objective": 0.22057439666241407
+      },
+      {
+        "bg_kl_loss": 0.025901498273015022,
+        "elapsed_ns": 838791439,
+        "epoch": 4,
+        "gradient_norm": 0.7385435104370117,
+        "lr": 0.00014126315789473684,
+        "step": 32,
+        "sup_loss": 0.3026820421218872,
+        "task_id": "V08",
+        "total_objective": 0.32858354039490223
+      },
+      {
+        "bg_kl_loss": 0.02436612918972969,
+        "elapsed_ns": 835688362,
+        "epoch": 5,
+        "gradient_norm": 0.2928205728530884,
+        "lr": 0.0001393684210526316,
+        "step": 33,
+        "sup_loss": 0.005539240315556526,
+        "task_id": "V01",
+        "total_objective": 0.029905369505286217
+      },
+      {
+        "bg_kl_loss": 0.0413923766463995,
+        "elapsed_ns": 833260004,
+        "epoch": 5,
+        "gradient_norm": 0.608719527721405,
+        "lr": 0.00013747368421052633,
+        "step": 34,
+        "sup_loss": 0.13586494326591492,
+        "task_id": "V02",
+        "total_objective": 0.17725731991231441
+      },
+      {
+        "bg_kl_loss": 0.01611834019422531,
+        "elapsed_ns": 829387848,
+        "epoch": 5,
+        "gradient_norm": 0.3116258680820465,
+        "lr": 0.00013557894736842107,
+        "step": 35,
+        "sup_loss": 0.0267348550260067,
+        "task_id": "V03",
+        "total_objective": 0.04285319522023201
+      },
+      {
+        "bg_kl_loss": 0.015868982998654246,
+        "elapsed_ns": 823329524,
+        "epoch": 5,
+        "gradient_norm": 0.2894722819328308,
+        "lr": 0.00013368421052631582,
+        "step": 36,
+        "sup_loss": 0.020326539874076843,
+        "task_id": "V04",
+        "total_objective": 0.03619552287273109
+      },
+      {
+        "bg_kl_loss": 0.007188913063146174,
+        "elapsed_ns": 898945805,
+        "epoch": 5,
+        "gradient_norm": 0.3410758674144745,
+        "lr": 0.00013178947368421053,
+        "step": 37,
+        "sup_loss": 0.056579094380140305,
+        "task_id": "V05",
+        "total_objective": 0.06376800744328648
+      },
+      {
+        "bg_kl_loss": 0.016741797444410622,
+        "elapsed_ns": 852818922,
+        "epoch": 5,
+        "gradient_norm": 0.6161968111991882,
+        "lr": 0.00012989473684210526,
+        "step": 38,
+        "sup_loss": 0.32725387811660767,
+        "task_id": "V06",
+        "total_objective": 0.3439956755610183
+      },
+      {
+        "bg_kl_loss": 0.01782401092350483,
+        "elapsed_ns": 871780618,
+        "epoch": 5,
+        "gradient_norm": 0.45324257016181946,
+        "lr": 0.000128,
+        "step": 39,
+        "sup_loss": 0.1530756652355194,
+        "task_id": "V07",
+        "total_objective": 0.17089967615902424
+      },
+      {
+        "bg_kl_loss": 0.014253694098442793,
+        "elapsed_ns": 829784825,
+        "epoch": 5,
+        "gradient_norm": 0.7206947207450867,
+        "lr": 0.00012610526315789473,
+        "step": 40,
+        "sup_loss": 0.22975163161754608,
+        "task_id": "V08",
+        "total_objective": 0.24400532571598887
+      },
+      {
+        "bg_kl_loss": 0.011481430847197771,
+        "elapsed_ns": 815669226,
+        "epoch": 6,
+        "gradient_norm": 0.17163501679897308,
+        "lr": 0.00012421052631578946,
+        "step": 41,
+        "sup_loss": 0.0034788677003234625,
+        "task_id": "V01",
+        "total_objective": 0.014960298547521234
+      },
+      {
+        "bg_kl_loss": 0.024816134944558144,
+        "elapsed_ns": 827222245,
+        "epoch": 6,
+        "gradient_norm": 0.5019031763076782,
+        "lr": 0.00012231578947368422,
+        "step": 42,
+        "sup_loss": 0.09029430150985718,
+        "task_id": "V02",
+        "total_objective": 0.11511043645441532
+      },
+      {
+        "bg_kl_loss": 0.010911534540355206,
+        "elapsed_ns": 827997017,
+        "epoch": 6,
+        "gradient_norm": 0.24394866824150085,
+        "lr": 0.00012042105263157895,
+        "step": 43,
+        "sup_loss": 0.015902748331427574,
+        "task_id": "V03",
+        "total_objective": 0.02681428287178278
+      },
+      {
+        "bg_kl_loss": 0.00769901426974684,
+        "elapsed_ns": 838730426,
+        "epoch": 6,
+        "gradient_norm": 0.2628389298915863,
+        "lr": 0.00011852631578947368,
+        "step": 44,
+        "sup_loss": 0.012444148771464825,
+        "task_id": "V04",
+        "total_objective": 0.020143163041211665
+      },
+      {
+        "bg_kl_loss": 0.003947717894334346,
+        "elapsed_ns": 896530121,
+        "epoch": 6,
+        "gradient_norm": 0.268909752368927,
+        "lr": 0.00011663157894736843,
+        "step": 45,
+        "sup_loss": 0.03835798427462578,
+        "task_id": "V05",
+        "total_objective": 0.042305702168960124
+      },
+      {
+        "bg_kl_loss": 0.011436237255111337,
+        "elapsed_ns": 847328838,
+        "epoch": 6,
+        "gradient_norm": 0.6278588771820068,
+        "lr": 0.00011473684210526316,
+        "step": 46,
+        "sup_loss": 0.26922863721847534,
+        "task_id": "V06",
+        "total_objective": 0.2806648744735867
+      },
+      {
+        "bg_kl_loss": 0.010040233377367258,
+        "elapsed_ns": 871613817,
+        "epoch": 6,
+        "gradient_norm": 0.42071732878685,
+        "lr": 0.0001128421052631579,
+        "step": 47,
+        "sup_loss": 0.1232721358537674,
+        "task_id": "V07",
+        "total_objective": 0.13331236923113465
+      },
+      {
+        "bg_kl_loss": 0.010463206563144922,
+        "elapsed_ns": 837441072,
+        "epoch": 6,
+        "gradient_norm": 0.5674591064453125,
+        "lr": 0.00011094736842105264,
+        "step": 48,
+        "sup_loss": 0.1630208045244217,
+        "task_id": "V08",
+        "total_objective": 0.17348401108756661
+      },
+      {
+        "bg_kl_loss": 0.007742532296106219,
+        "elapsed_ns": 833283976,
+        "epoch": 7,
+        "gradient_norm": 0.18846794962882996,
+        "lr": 0.00010905263157894738,
+        "step": 49,
+        "sup_loss": 0.0018789382884278893,
+        "task_id": "V01",
+        "total_objective": 0.009621470584534109
+      },
+      {
+        "bg_kl_loss": 0.015251514501869678,
+        "elapsed_ns": 836171813,
+        "epoch": 7,
+        "gradient_norm": 0.47451314330101013,
+        "lr": 0.0001071578947368421,
+        "step": 50,
+        "sup_loss": 0.06766629219055176,
+        "task_id": "V02",
+        "total_objective": 0.08291780669242144
+      },
+      {
+        "bg_kl_loss": 0.008632681565359235,
+        "elapsed_ns": 835153276,
+        "epoch": 7,
+        "gradient_norm": 0.23230336606502533,
+        "lr": 0.00010526315789473686,
+        "step": 51,
+        "sup_loss": 0.009874887764453888,
+        "task_id": "V03",
+        "total_objective": 0.018507569329813123
+      },
+      {
+        "bg_kl_loss": 0.004250418103765696,
+        "elapsed_ns": 844510829,
+        "epoch": 7,
+        "gradient_norm": 0.14363962411880493,
+        "lr": 0.00010336842105263158,
+        "step": 52,
+        "sup_loss": 0.008160999044775963,
+        "task_id": "V04",
+        "total_objective": 0.012411417148541659
+      },
+      {
+        "bg_kl_loss": 0.0024627570528537035,
+        "elapsed_ns": 903703194,
+        "epoch": 7,
+        "gradient_norm": 0.2065604329109192,
+        "lr": 0.0001014736842105263,
+        "step": 53,
+        "sup_loss": 0.026855073869228363,
+        "task_id": "V05",
+        "total_objective": 0.029317830922082067
+      },
+      {
+        "bg_kl_loss": 0.009884854356641881,
+        "elapsed_ns": 853767187,
+        "epoch": 7,
+        "gradient_norm": 0.6419900059700012,
+        "lr": 9.957894736842106e-05,
+        "step": 54,
+        "sup_loss": 0.21494224667549133,
+        "task_id": "V06",
+        "total_objective": 0.22482710103213321
+      },
+      {
+        "bg_kl_loss": 0.006840589921921492,
+        "elapsed_ns": 871972079,
+        "epoch": 7,
+        "gradient_norm": 0.33614131808280945,
+        "lr": 9.76842105263158e-05,
+        "step": 55,
+        "sup_loss": 0.0980687364935875,
+        "task_id": "V07",
+        "total_objective": 0.10490932641550899
+      },
+      {
+        "bg_kl_loss": 0.007984688738361001,
+        "elapsed_ns": 836280556,
+        "epoch": 7,
+        "gradient_norm": 0.5111337304115295,
+        "lr": 9.578947368421052e-05,
+        "step": 56,
+        "sup_loss": 0.12271353602409363,
+        "task_id": "V08",
+        "total_objective": 0.13069822476245463
+      },
+      {
+        "bg_kl_loss": 0.008511265041306615,
+        "elapsed_ns": 829939987,
+        "epoch": 8,
+        "gradient_norm": 0.2915937006473541,
+        "lr": 9.389473684210528e-05,
+        "step": 57,
+        "sup_loss": 0.0010389763629063964,
+        "task_id": "V01",
+        "total_objective": 0.009550241404213011
+      },
+      {
+        "bg_kl_loss": 0.008883779402822256,
+        "elapsed_ns": 828317172,
+        "epoch": 8,
+        "gradient_norm": 0.4098203182220459,
+        "lr": 9.2e-05,
+        "step": 58,
+        "sup_loss": 0.046942852437496185,
+        "task_id": "V02",
+        "total_objective": 0.05582663184031844
+      },
+      {
+        "bg_kl_loss": 0.007495553232729435,
+        "elapsed_ns": 848981942,
+        "epoch": 8,
+        "gradient_norm": 0.2231224924325943,
+        "lr": 9.010526315789473e-05,
+        "step": 59,
+        "sup_loss": 0.007172048557549715,
+        "task_id": "V03",
+        "total_objective": 0.01466760179027915
+      },
+      {
+        "bg_kl_loss": 0.004063133092131466,
+        "elapsed_ns": 832321621,
+        "epoch": 8,
+        "gradient_norm": 0.14951904118061066,
+        "lr": 8.821052631578948e-05,
+        "step": 60,
+        "sup_loss": 0.005592506844550371,
+        "task_id": "V04",
+        "total_objective": 0.009655639936681837
+      },
+      {
+        "bg_kl_loss": 0.001842197380028665,
+        "elapsed_ns": 902051423,
+        "epoch": 8,
+        "gradient_norm": 0.17321431636810303,
+        "lr": 8.631578947368421e-05,
+        "step": 61,
+        "sup_loss": 0.01977498270571232,
+        "task_id": "V05",
+        "total_objective": 0.021617180085740983
+      },
+      {
+        "bg_kl_loss": 0.006852260485175066,
+        "elapsed_ns": 846668337,
+        "epoch": 8,
+        "gradient_norm": 0.5880865454673767,
+        "lr": 8.442105263157896e-05,
+        "step": 62,
+        "sup_loss": 0.1624087691307068,
+        "task_id": "V06",
+        "total_objective": 0.16926102961588185
+      },
+      {
+        "bg_kl_loss": 0.0053021665662527084,
+        "elapsed_ns": 885498611,
+        "epoch": 8,
+        "gradient_norm": 0.2844122350215912,
+        "lr": 8.252631578947367e-05,
+        "step": 63,
+        "sup_loss": 0.07960370928049088,
+        "task_id": "V07",
+        "total_objective": 0.08490587584674358
+      },
+      {
+        "bg_kl_loss": 0.005566116189584136,
+        "elapsed_ns": 841654995,
+        "epoch": 8,
+        "gradient_norm": 0.4570683240890503,
+        "lr": 8.063157894736843e-05,
+        "step": 64,
+        "sup_loss": 0.09645393490791321,
+        "task_id": "V08",
+        "total_objective": 0.10202005109749734
+      },
+      {
+        "bg_kl_loss": 0.004498271853663027,
+        "elapsed_ns": 847197583,
+        "epoch": 9,
+        "gradient_norm": 0.2371566891670227,
+        "lr": 7.873684210526315e-05,
+        "step": 65,
+        "sup_loss": 0.0007610420580022037,
+        "task_id": "V01",
+        "total_objective": 0.005259313911665231
+      },
+      {
+        "bg_kl_loss": 0.006225981516763568,
+        "elapsed_ns": 840247392,
+        "epoch": 9,
+        "gradient_norm": 0.3102016746997833,
+        "lr": 7.68421052631579e-05,
+        "step": 66,
+        "sup_loss": 0.03004075400531292,
+        "task_id": "V02",
+        "total_objective": 0.03626673552207649
+      },
+      {
+        "bg_kl_loss": 0.005449564661830664,
+        "elapsed_ns": 822396252,
+        "epoch": 9,
+        "gradient_norm": 0.18372096121311188,
+        "lr": 7.494736842105263e-05,
+        "step": 67,
+        "sup_loss": 0.0050723496824502945,
+        "task_id": "V03",
+        "total_objective": 0.010521914344280958
+      },
+      {
+        "bg_kl_loss": 0.004369112590211444,
+        "elapsed_ns": 835551367,
+        "epoch": 9,
+        "gradient_norm": 0.17793501913547516,
+        "lr": 7.305263157894738e-05,
+        "step": 68,
+        "sup_loss": 0.004365087021142244,
+        "task_id": "V04",
+        "total_objective": 0.008734199611353688
+      },
+      {
+        "bg_kl_loss": 0.0014363374357344583,
+        "elapsed_ns": 899487126,
+        "epoch": 9,
+        "gradient_norm": 0.15261775255203247,
+        "lr": 7.115789473684211e-05,
+        "step": 69,
+        "sup_loss": 0.014225599355995655,
+        "task_id": "V05",
+        "total_objective": 0.015661936791730113
+      },
+      {
+        "bg_kl_loss": 0.005223005442530848,
+        "elapsed_ns": 849399496,
+        "epoch": 9,
+        "gradient_norm": 0.5713656544685364,
+        "lr": 6.926315789473683e-05,
+        "step": 70,
+        "sup_loss": 0.11787686496973038,
+        "task_id": "V06",
+        "total_objective": 0.12309987041226123
+      },
+      {
+        "bg_kl_loss": 0.004830310121178627,
+        "elapsed_ns": 884132811,
+        "epoch": 9,
+        "gradient_norm": 0.2693876028060913,
+        "lr": 6.736842105263159e-05,
+        "step": 71,
+        "sup_loss": 0.06642286479473114,
+        "task_id": "V07",
+        "total_objective": 0.07125317491590977
+      },
+      {
+        "bg_kl_loss": 0.004236631561070681,
+        "elapsed_ns": 843284164,
+        "epoch": 9,
+        "gradient_norm": 0.4225834608078003,
+        "lr": 6.54736842105263e-05,
+        "step": 72,
+        "sup_loss": 0.07194140553474426,
+        "task_id": "V08",
+        "total_objective": 0.07617803709581494
+      },
+      {
+        "bg_kl_loss": 0.0018114150734618306,
+        "elapsed_ns": 825285409,
+        "epoch": 10,
+        "gradient_norm": 0.11931383609771729,
+        "lr": 6.357894736842105e-05,
+        "step": 73,
+        "sup_loss": 0.0005318779731169343,
+        "task_id": "V01",
+        "total_objective": 0.002343293046578765
+      },
+      {
+        "bg_kl_loss": 0.005409490200690925,
+        "elapsed_ns": 844739198,
+        "epoch": 10,
+        "gradient_norm": 0.2525254786014557,
+        "lr": 6.168421052631578e-05,
+        "step": 74,
+        "sup_loss": 0.021149341017007828,
+        "task_id": "V02",
+        "total_objective": 0.026558831217698753
+      },
+      {
+        "bg_kl_loss": 0.004445421393029392,
+        "elapsed_ns": 840637656,
+        "epoch": 10,
+        "gradient_norm": 0.16074587404727936,
+        "lr": 5.978947368421053e-05,
+        "step": 75,
+        "sup_loss": 0.0037616852205246687,
+        "task_id": "V03",
+        "total_objective": 0.00820710661355406
+      },
+      {
+        "bg_kl_loss": 0.005228360132605303,
+        "elapsed_ns": 842360911,
+        "epoch": 10,
+        "gradient_norm": 0.40895745158195496,
+        "lr": 5.789473684210527e-05,
+        "step": 76,
+        "sup_loss": 0.003268120577558875,
+        "task_id": "V04",
+        "total_objective": 0.008496480710164178
+      },
+      {
+        "bg_kl_loss": 0.0011341797653585672,
+        "elapsed_ns": 896334418,
+        "epoch": 10,
+        "gradient_norm": 0.13449229300022125,
+        "lr": 5.5999999999999986e-05,
+        "step": 77,
+        "sup_loss": 0.01131974533200264,
+        "task_id": "V05",
+        "total_objective": 0.012453925097361207
+      },
+      {
+        "bg_kl_loss": 0.004129034699872136,
+        "elapsed_ns": 839103273,
+        "epoch": 10,
+        "gradient_norm": 0.5612620115280151,
+        "lr": 5.4105263157894745e-05,
+        "step": 78,
+        "sup_loss": 0.07946489751338959,
+        "task_id": "V06",
+        "total_objective": 0.08359393221326172
+      },
+      {
+        "bg_kl_loss": 0.004933563526719809,
+        "elapsed_ns": 872499073,
+        "epoch": 10,
+        "gradient_norm": 0.2641266882419586,
+        "lr": 5.2210526315789463e-05,
+        "step": 79,
+        "sup_loss": 0.056180424988269806,
+        "task_id": "V07",
+        "total_objective": 0.061113988514989614
+      },
+      {
+        "bg_kl_loss": 0.002844423637725413,
+        "elapsed_ns": 841121252,
+        "epoch": 10,
+        "gradient_norm": 0.40207597613334656,
+        "lr": 5.03157894736842e-05,
+        "step": 80,
+        "sup_loss": 0.05485419183969498,
+        "task_id": "V08",
+        "total_objective": 0.05769861547742039
+      },
+      {
+        "bg_kl_loss": 0.0011033496994059533,
+        "elapsed_ns": 822514176,
+        "epoch": 11,
+        "gradient_norm": 0.0623004287481308,
+        "lr": 4.842105263157895e-05,
+        "step": 81,
+        "sup_loss": 0.0003762493724934757,
+        "task_id": "V01",
+        "total_objective": 0.001479599071899429
+      },
+      {
+        "bg_kl_loss": 0.004183294833637774,
+        "elapsed_ns": 820886319,
+        "epoch": 11,
+        "gradient_norm": 0.21070511639118195,
+        "lr": 4.652631578947369e-05,
+        "step": 82,
+        "sup_loss": 0.015248985029757023,
+        "task_id": "V02",
+        "total_objective": 0.019432279863394797
+      },
+      {
+        "bg_kl_loss": 0.0033940132707357407,
+        "elapsed_ns": 827234327,
+        "epoch": 11,
+        "gradient_norm": 0.15623557567596436,
+        "lr": 4.4631578947368426e-05,
+        "step": 83,
+        "sup_loss": 0.0030929085332900286,
+        "task_id": "V03",
+        "total_objective": 0.006486921804025769
+      },
+      {
+        "bg_kl_loss": 0.005375289310904918,
+        "elapsed_ns": 825927637,
+        "epoch": 11,
+        "gradient_norm": 0.3851068317890167,
+        "lr": 4.2736842105263145e-05,
+        "step": 84,
+        "sup_loss": 0.0023055810015648603,
+        "task_id": "V04",
+        "total_objective": 0.007680870312469779
+      },
+      {
+        "bg_kl_loss": 0.0010810394014697522,
+        "elapsed_ns": 894139678,
+        "epoch": 11,
+        "gradient_norm": 0.12443123012781143,
+        "lr": 4.0842105263157904e-05,
+        "step": 85,
+        "sup_loss": 0.009120629169046879,
+        "task_id": "V05",
+        "total_objective": 0.010201668570516631
+      },
+      {
+        "bg_kl_loss": 0.003916281060810434,
+        "elapsed_ns": 853685003,
+        "epoch": 11,
+        "gradient_norm": 0.5407314896583557,
+        "lr": 3.894736842105262e-05,
+        "step": 86,
+        "sup_loss": 0.05304224044084549,
+        "task_id": "V06",
+        "total_objective": 0.05695852150165592
+      },
+      {
+        "bg_kl_loss": 0.004314746940508485,
+        "elapsed_ns": 881595427,
+        "epoch": 11,
+        "gradient_norm": 0.25990256667137146,
+        "lr": 3.705263157894736e-05,
+        "step": 87,
+        "sup_loss": 0.04909671097993851,
+        "task_id": "V07",
+        "total_objective": 0.05341145792044699
+      },
+      {
+        "bg_kl_loss": 0.0017260244931094348,
+        "elapsed_ns": 839694926,
+        "epoch": 11,
+        "gradient_norm": 0.3892659544944763,
+        "lr": 3.51578947368421e-05,
+        "step": 88,
+        "sup_loss": 0.04292670264840126,
+        "task_id": "V08",
+        "total_objective": 0.044652727141510695
+      },
+      {
+        "bg_kl_loss": 0.0008161562436725944,
+        "elapsed_ns": 829356029,
+        "epoch": 12,
+        "gradient_norm": 0.0581841804087162,
+        "lr": 3.326315789473684e-05,
+        "step": 89,
+        "sup_loss": 0.0002978525299113244,
+        "task_id": "V01",
+        "total_objective": 0.0011140087735839188
+      },
+      {
+        "bg_kl_loss": 0.003844616934657097,
+        "elapsed_ns": 834019041,
+        "epoch": 12,
+        "gradient_norm": 0.19723980128765106,
+        "lr": 3.136842105263158e-05,
+        "step": 90,
+        "sup_loss": 0.012475010938942432,
+        "task_id": "V02",
+        "total_objective": 0.01631962787359953
+      },
+      {
+        "bg_kl_loss": 0.0024960790760815144,
+        "elapsed_ns": 836708729,
+        "epoch": 12,
+        "gradient_norm": 0.12320584803819656,
+        "lr": 2.947368421052632e-05,
+        "step": 91,
+        "sup_loss": 0.0023400348145514727,
+        "task_id": "V03",
+        "total_objective": 0.004836113890632987
+      },
+      {
+        "bg_kl_loss": 0.004982094091246836,
+        "elapsed_ns": 852814778,
+        "epoch": 12,
+        "gradient_norm": 0.20205152034759521,
+        "lr": 2.757894736842106e-05,
+        "step": 92,
+        "sup_loss": 0.0018105462659150362,
+        "task_id": "V04",
+        "total_objective": 0.006792640357161872
+      },
+      {
+        "bg_kl_loss": 0.0009112866173381917,
+        "elapsed_ns": 893600341,
+        "epoch": 12,
+        "gradient_norm": 0.11555082350969315,
+        "lr": 2.5684210526315778e-05,
+        "step": 93,
+        "sup_loss": 0.007563525345176458,
+        "task_id": "V05",
+        "total_objective": 0.00847481196251465
+      },
+      {
+        "bg_kl_loss": 0.0032659742537362035,
+        "elapsed_ns": 840659884,
+        "epoch": 12,
+        "gradient_norm": 0.5763000845909119,
+        "lr": 2.3789473684210517e-05,
+        "step": 94,
+        "sup_loss": 0.03640081733465195,
+        "task_id": "V06",
+        "total_objective": 0.03966679158838815
+      },
+      {
+        "bg_kl_loss": 0.0037504477659240365,
+        "elapsed_ns": 860640617,
+        "epoch": 12,
+        "gradient_norm": 0.2579328119754791,
+        "lr": 2.1894736842105256e-05,
+        "step": 95,
+        "sup_loss": 0.04452496021986008,
+        "task_id": "V07",
+        "total_objective": 0.04827540798578411
+      },
+      {
+        "bg_kl_loss": 0.001444178691599518,
+        "elapsed_ns": 827315759,
+        "epoch": 12,
+        "gradient_norm": 0.380888432264328,
+        "lr": 1.9999999999999995e-05,
+        "step": 96,
+        "sup_loss": 0.03511889651417732,
+        "task_id": "V08",
+        "total_objective": 0.03656307520577684
+      }
+    ],
+    "training_ns": 81835471768,
+    "verification_ns": 30852972279
+  },
+  "trusted_collection_accepted": false,
+  "version": 1
+}

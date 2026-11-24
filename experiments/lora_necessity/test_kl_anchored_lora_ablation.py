@@ -131,7 +131,11 @@ class KLAnchoredLoRAAblationTests(unittest.TestCase):
             expected_tokenizer_sha256="7" * 64,
             remote_parent="/tmp/g7-remote",
             local_run_root="/tmp/g7-local/" + run_id,
+            hyperparams=kl_mod.KL_ANCHORED_96STEP_HYPERPARAMS,
         )
+        self.assertEqual(pkg["public"]["hyperparams"]["steps"], 96)
+        self.assertEqual(pkg["public"]["phase_one_config"]["hyperparams"]["steps"], 96)
+        self.assertEqual(pkg["public"]["hyperparams"]["lambda_kl"], 1.0)
         bundle = json.loads(bytes.fromhex(pkg["private"]["phase_one_payload_hex"]).decode("ascii"))
         for key_name, val_b64 in bundle.items():
             if key_name == "sources":
