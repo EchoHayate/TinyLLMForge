@@ -13,6 +13,10 @@
     "gate-g7-r2-kl-anchored-96step-report.json": {
       "bytes": 68185,
       "sha256": "b9663c920755e7d1b7e494f9b51b814fe5372688dc1e24dbafe4c4017fe872e6"
+    },
+    "gate-g8-diff-focused-kl-ablation-report.json": {
+      "bytes": 59442,
+      "sha256": "6c960eca576d3297e9d0862e2a1cc875e8e218653098085eb5a8d6f6dc35bc14"
     }
   },
   "formal_evaluation_ready": false,
