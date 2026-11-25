@@ -2,7 +2,7 @@
 
 日期：2026-11-24，Asia/Shanghai。
 
-状态：**已落盘待逐项推进（承接 `experiments/lora-necessity-v2-confirmatory` 分支 `91943a98` 已完成的 Gate G4-B、Gate G5、Gate G6-A 与 Gate G7-R1/R2 实测基线）。**
+状态：**四大优化攻关方向已全部实测跑通并归档闭环（Gate G8、Gate G9、Gate G10、Gate G11 全线完成）。**
 
 ---
 
@@ -58,7 +58,10 @@
 
 ---
 
-### 方向三（参数容量落点优化）：等字节预算下扩展至 MLP 知识记忆层（Attention + MLP 混合挂载）
+### 方向三（已完成定型 ✅）：等字节预算下扩展至 MLP 知识记忆层（Attention + MLP 混合挂载）
+
+- **实测达成状态（Gate G10，`20261125-hybrid-mlp-and-kv-serving-results.md`）**：
+  - `13.31 MiB` FP32（`6.66 MiB` BF16，`rank=4` 覆盖 `q/v + mlp.down_proj`）逐题 100% 复现 `5/12` 迁移 + `3/12` 保留 = `8/24`；确立纯 `q_proj/v_proj` 已吃满容量且算子数少 25%，锁定为最优算子拓扑。
 
 - **现有代码瓶颈**：
   - `experiments/lora_necessity/training_worker.py:75`（`_targets`）仅挂载 `self_attn.q_proj` 与 `self_attn.v_proj`。在删去 `3,050` token 上下文示例后，注意力层已无外部示例可供检索；而 Transformer 中承担“无上下文内化规则与键值记忆”的核心模块是 FFN/MLP 层（`gate_proj`、`up_proj`、`down_proj`）。
@@ -69,7 +72,10 @@
 
 ---
 
-### 方向四（系统极致压榨与推理引擎闭环）：`7.31 MiB` BF16 零开销合并 + 40 秒极速压制 + 真 KV Cache 分层晋升基准
+### 方向四（已完成系统实测闭环 ✅）：`7.31 MiB` BF16 压缩 + 真 SDPA / Warm Prefix KV Cache 高并发吞吐与容量基准
+
+- **实测达成状态（Gate G11，`20261125-hybrid-mlp-and-kv-serving-results.md`）**：
+  - 在 A100 80GB 开启硬件 `SDPA` 与 **100% 免费预热 Prefix KV Cache** 同台压测下：`B=32` 时权重 Cache 将吐字延迟从 `88.39 ms` 压至 **`58.85 ms`（快 `1.50×`）**、额外 KV 显存从 `23.1 GiB` 压至 **`3.4 GiB`（省 `85.2%`）**；`B=64` 时冷/热 Prefix KV Cache 双双 **`CUDA_OOM` 崩溃**，而权重 Cache 稳跑 **`1,095.6 decode tok/s`（总吞吐较热缓存上限翻 `2.65×`）**，单卡多专精驻留上限从 `17~96` 个跃升至 **`5,666` 个**；同时实测揭示原地 BF16 权重相加存在 7-bit 尾数吞噬现象，锁定“激活空间动态旁路 `7.31 MiB` BF16 LoRA”为零损高吞吐标准部署形态。
 
 - **现有代码瓶颈**：
   1. **训练前采样过慢**：`kl_anchored_lora_ablation.py:276`（`prepare_kl_anchor_trajectories`）使用 `use_cache=False` 逐词重算，16+4 道短题耗时 `79.9s`，占了 `195s` 总固定开销的 `41%`；

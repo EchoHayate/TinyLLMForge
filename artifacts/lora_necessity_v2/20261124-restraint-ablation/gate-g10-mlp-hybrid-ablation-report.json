@@ -1,0 +1,2113 @@
+{
+  "benchmark_eligible": false,
+  "canary_bit_exact_with_g4b_base": {
+    "WR01": true,
+    "WT01": true
+  },
+  "changed_round1_vs_base": {
+    "retention": 9,
+    "total": 20,
+    "transfer": 11
+  },
+  "comparisons_feedback": {
+    "retention": {
+      "lora_mlp_hyb_vs_base": {
+        "baseline_arm": "base",
+        "both_right": 2,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 2,
+        "target_arm": "lora_mlp_hyb",
+        "wrong_to_right": 1
+      },
+      "lora_mlp_hyb_vs_lora_csd": {
+        "baseline_arm": "lora_csd",
+        "both_right": 2,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 2,
+        "target_arm": "lora_mlp_hyb",
+        "wrong_to_right": 1
+      },
+      "lora_mlp_hyb_vs_lora_diff_kl": {
+        "baseline_arm": "lora_diff_kl",
+        "both_right": 3,
+        "both_wrong": 9,
+        "missing_or_unknown": 0,
+        "net_gain": 0,
+        "observed_subset_net": 0,
+        "right_to_wrong": 0,
+        "target_arm": "lora_mlp_hyb",
+        "wrong_to_right": 0
+      },
+      "lora_mlp_hyb_vs_text": {
+        "baseline_arm": "text",
+        "both_right": 1,
+        "both_wrong": 6,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 3,
+        "target_arm": "lora_mlp_hyb",
+        "wrong_to_right": 2
+      }
+    },
+    "transfer": {
+      "lora_mlp_hyb_vs_base": {
+        "baseline_arm": "base",
+        "both_right": 2,
+        "both_wrong": 6,
+        "missing_or_unknown": 0,
+        "net_gain": 2,
+        "observed_subset_net": 2,
+        "right_to_wrong": 1,
+        "target_arm": "lora_mlp_hyb",
+        "wrong_to_right": 3
+      },
+      "lora_mlp_hyb_vs_lora_csd": {
+        "baseline_arm": "lora_csd",
+        "both_right": 3,
+        "both_wrong": 6,
+        "missing_or_unknown": 0,
+        "net_gain": 1,
+        "observed_subset_net": 1,
+        "right_to_wrong": 1,
+        "target_arm": "lora_mlp_hyb",
+        "wrong_to_right": 2
+      },
+      "lora_mlp_hyb_vs_lora_diff_kl": {
+        "baseline_arm": "lora_diff_kl",
+        "both_right": 5,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": 0,
+        "observed_subset_net": 0,
+        "right_to_wrong": 0,
+        "target_arm": "lora_mlp_hyb",
+        "wrong_to_right": 0
+      },
+      "lora_mlp_hyb_vs_text": {
+        "baseline_arm": "text",
+        "both_right": 4,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": 1,
+        "observed_subset_net": 1,
+        "right_to_wrong": 0,
+        "target_arm": "lora_mlp_hyb",
+        "wrong_to_right": 1
+      }
+    }
+  },
+  "complete_and_verified": true,
+  "costs": {
+    "adapter_bytes": 13959168,
+    "bf16_equivalent_bytes": 6979584,
+    "breakeven_tasks_vs_text": 0.8319876235504877,
+    "fixed_training_and_anchor_ns": 203287641598,
+    "lora_mlp_hyb_generation_wall_ns": 822166647781,
+    "shared": {
+      "checkpoint_verify_ns": 17638793254,
+      "episodes_wall_ns": 970793228663,
+      "fast_anchor_trajectory_prep_ns": 81014594116,
+      "final_integrity_ns": 30944031896,
+      "heldout_dev_audit_ns": 442474107,
+      "model_and_tokenizer_load_ns": 22627480262,
+      "model_load_peak_allocated_bytes": 16383586816,
+      "model_load_peak_reserved_bytes": 16536043520
+    },
+    "speedup_vs_text": 8.132561060268198,
+    "text_reference_generation_wall_ns": 6686320464795
+  },
+  "diagnostic_dispatch_authorized": false,
+  "episodes": [
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT01"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT02"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT03"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT04"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT05"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT06"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT07"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT08"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT09"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT10"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT11"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT12"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR01"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR02"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR03"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR04"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "program_error",
+            "program_error",
+            "program_error",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "program_error"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": false,
+          "state": "EXECUTION_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "program_error",
+            "program_error",
+            "program_error",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "program_error"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 3,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": false,
+          "state": "EXECUTION_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR05"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR06"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR07"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR08"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR09"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR10"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR11"
+    },
+    {
+      "arm": "lora_mlp_hyb",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR12"
+    }
+  ],
+  "formal_evaluation_ready": false,
+  "heldout_dev_restraint_audit": {
+    "mean_token_kl": 0.031435135799318045,
+    "per_task": {
+      "D01": {
+        "answer_tokens": 37,
+        "mean_token_kl": 0.03386501222848892,
+        "top1_agreement_rate": 0.972972972972973,
+        "top1_matched_tokens": 36
+      },
+      "D02": {
+        "answer_tokens": 40,
+        "mean_token_kl": 0.032044559717178345,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 40
+      },
+      "D03": {
+        "answer_tokens": 21,
+        "mean_token_kl": 0.011559320613741875,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 21
+      },
+      "D04": {
+        "answer_tokens": 20,
+        "mean_token_kl": 0.04659062251448631,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 20
+      }
+    },
+    "top1_agreement_rate": 0.9915254237288136,
+    "total_answer_tokens": 118
+  },
+  "incomplete_reasons": [],
+  "isolated": false,
+  "kind": "LORA_CONFIRMATORY_V2_MLP_HYBRID_ABLATION_REPORT",
+  "lora_mlp_hyb_by_split": {
+    "retention": {
+      "feedback": {
+        "EXECUTION_FAIL": 1,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 3,
+        "SEMANTIC_FAIL": 8,
+        "UNKNOWN": 0
+      },
+      "initial": {
+        "EXECUTION_FAIL": 1,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 3,
+        "SEMANTIC_FAIL": 8,
+        "UNKNOWN": 0
+      }
+    },
+    "transfer": {
+      "feedback": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 5,
+        "SEMANTIC_FAIL": 7,
+        "UNKNOWN": 0
+      },
+      "initial": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 5,
+        "SEMANTIC_FAIL": 7,
+        "UNKNOWN": 0
+      }
+    }
+  },
+  "net_benefit_established": false,
+  "protocol_contradictions": [],
+  "run_authorized": false,
+  "run_id": "d9c98aa09823669e9562e51b2278033b",
+  "total_eval_tasks": 24,
+  "total_pass_feedback": 8,
+  "total_pass_initial": 8,
+  "training": {
+    "adapter_bytes": 13959168,
+    "adapter_load_ns": 17328214,
+    "adapter_save_ns": 34571260,
+    "adapter_sha256": "d37ea48b0fc36d90cbf6fcc6022a4068d2107a3056feed88eafd173c390fc4a5",
+    "artifact_bytes": 14019954,
+    "artifact_sha256": "4ddf585a9cb01e5596668e9fc59246ff96009726fb57e298da288134dc4d45e4",
+    "bf16_equivalent_bytes": 6979584,
+    "core_wall_ns": 122221148008,
+    "dataset_sha256": "4558f98f317938606398ae070c5ccbfafd017b17d75689ae2d9211cfb48b0f7b",
+    "epoch_mean_bg_kl_losses": [
+      0.0019599658919027263,
+      0.014899406160111539,
+      0.03126223775325343,
+      0.03188955795485526,
+      0.02192894033214543,
+      0.012286653247429058,
+      0.010421427155961283,
+      0.00809118239703821
+    ],
+    "epoch_mean_unweighted_sup_losses": [
+      0.8052177801728249,
+      0.46336556039750576,
+      0.28199675120413303,
+      0.19484703801572323,
+      0.16396961733698845,
+      0.14175272721331567,
+      0.12135121028404683,
+      0.11210214614402503
+    ],
+    "epoch_mean_weighted_sup_losses": [
+      0.9753523822873831,
+      0.5292768208310008,
+      0.3213783768005669,
+      0.2256736154668033,
+      0.1774939704919234,
+      0.14175949606578797,
+      0.11439878860255703,
+      0.09907170874066651
+    ],
+    "hyperparams": {
+      "align_first_round_prompt": true,
+      "alpha": 8,
+      "background_anchors_per_step": 2,
+      "cosmetic_valueerror_weight": 0.25,
+      "diff_token_weight": 4.0,
+      "epochs": 8,
+      "gradient_clip": 1.0,
+      "lambda_kl": 2.0,
+      "learning_rate": 0.0002,
+      "lr_schedule": "linear_decay_to_10pct",
+      "max_anchor_tokens": 128,
+      "optimizer": "AdamW",
+      "rank": 4,
+      "scaffold_token_weight": 1.0,
+      "seed": 42,
+      "steps": 64,
+      "targets": [
+        "self_attn.q_proj",
+        "self_attn.v_proj",
+        "mlp.down_proj(layers>=1/3)"
+      ],
+      "weight_decay": 0.01
+    },
+    "initial_adapter_sha256": "c3bff3921d36521ca923537edb9cc576756420114164bb97e67343e3c6337a62",
+    "peak_allocated_bytes": 23186648064,
+    "peak_reserved_bytes": 23938990080,
+    "preparation_ns": 30568817220,
+    "steps": [
+      {
+        "bg_kl_loss": 0.0,
+        "elapsed_ns": 1134309498,
+        "epoch": 1,
+        "gradient_norm": 0.11201006919145584,
+        "lr": 0.0002,
+        "step": 1,
+        "task_id": "V01",
+        "unweighted_sup_loss": 0.20480096340179443,
+        "weighted_sup_loss": 0.1323152333498001
+      },
+      {
+        "bg_kl_loss": 0.00038730030610167887,
+        "elapsed_ns": 923383695,
+        "epoch": 1,
+        "gradient_norm": 1.667933702468872,
+        "lr": 0.00019714285714285716,
+        "step": 2,
+        "task_id": "V02",
+        "unweighted_sup_loss": 1.7336533069610596,
+        "weighted_sup_loss": 1.7288998365402222
+      },
+      {
+        "bg_kl_loss": 0.0015038606361486018,
+        "elapsed_ns": 919845075,
+        "epoch": 1,
+        "gradient_norm": 1.775943398475647,
+        "lr": 0.0001942857142857143,
+        "step": 3,
+        "task_id": "V03",
+        "unweighted_sup_loss": 0.4216315448284149,
+        "weighted_sup_loss": 0.8938131928443909
+      },
+      {
+        "bg_kl_loss": 0.0010749408316996778,
+        "elapsed_ns": 924762228,
+        "epoch": 1,
+        "gradient_norm": 1.8812137842178345,
+        "lr": 0.00019142857142857145,
+        "step": 4,
+        "task_id": "V04",
+        "unweighted_sup_loss": 0.43544211983680725,
+        "weighted_sup_loss": 0.46864286065101624
+      },
+      {
+        "bg_kl_loss": 0.0004695308841178303,
+        "elapsed_ns": 976213784,
+        "epoch": 1,
+        "gradient_norm": 1.104591965675354,
+        "lr": 0.00018857142857142857,
+        "step": 5,
+        "task_id": "V05",
+        "unweighted_sup_loss": 0.5121471881866455,
+        "weighted_sup_loss": 0.6165193319320679
+      },
+      {
+        "bg_kl_loss": 0.0018505095151510886,
+        "elapsed_ns": 914555548,
+        "epoch": 1,
+        "gradient_norm": 1.8051425218582153,
+        "lr": 0.00018571428571428572,
+        "step": 6,
+        "task_id": "V06",
+        "unweighted_sup_loss": 1.3845024108886719,
+        "weighted_sup_loss": 1.2918442487716675
+      },
+      {
+        "bg_kl_loss": 0.006676837336272001,
+        "elapsed_ns": 960139518,
+        "epoch": 1,
+        "gradient_norm": 1.6416579484939575,
+        "lr": 0.00018285714285714286,
+        "step": 7,
+        "task_id": "V07",
+        "unweighted_sup_loss": 0.7068894505500793,
+        "weighted_sup_loss": 1.0923577547073364
+      },
+      {
+        "bg_kl_loss": 0.0037167476257309318,
+        "elapsed_ns": 928679917,
+        "epoch": 1,
+        "gradient_norm": 2.239657163619995,
+        "lr": 0.00018,
+        "step": 8,
+        "task_id": "V08",
+        "unweighted_sup_loss": 1.042675256729126,
+        "weighted_sup_loss": 1.5784265995025635
+      },
+      {
+        "bg_kl_loss": 0.007370602805167437,
+        "elapsed_ns": 917951562,
+        "epoch": 2,
+        "gradient_norm": 0.4686727523803711,
+        "lr": 0.00017714285714285713,
+        "step": 9,
+        "task_id": "V01",
+        "unweighted_sup_loss": 0.1536182463169098,
+        "weighted_sup_loss": 0.09930887073278427
+      },
+      {
+        "bg_kl_loss": 0.016709546907804906,
+        "elapsed_ns": 927764874,
+        "epoch": 2,
+        "gradient_norm": 1.7029184103012085,
+        "lr": 0.0001742857142857143,
+        "step": 10,
+        "task_id": "V02",
+        "unweighted_sup_loss": 0.9526631832122803,
+        "weighted_sup_loss": 0.8387020230293274
+      },
+      {
+        "bg_kl_loss": 0.007753896526992321,
+        "elapsed_ns": 915360895,
+        "epoch": 2,
+        "gradient_norm": 5.378364086151123,
+        "lr": 0.00017142857142857145,
+        "step": 11,
+        "task_id": "V03",
+        "unweighted_sup_loss": 0.2509457468986511,
+        "weighted_sup_loss": 0.46247366070747375
+      },
+      {
+        "bg_kl_loss": 0.01884009561035782,
+        "elapsed_ns": 905966282,
+        "epoch": 2,
+        "gradient_norm": 1.5216810703277588,
+        "lr": 0.00016857142857142857,
+        "step": 12,
+        "task_id": "V04",
+        "unweighted_sup_loss": 0.19559217989444733,
+        "weighted_sup_loss": 0.19889438152313232
+      },
+      {
+        "bg_kl_loss": 0.004449639352969825,
+        "elapsed_ns": 965820333,
+        "epoch": 2,
+        "gradient_norm": 0.6707298755645752,
+        "lr": 0.00016571428571428572,
+        "step": 13,
+        "task_id": "V05",
+        "unweighted_sup_loss": 0.2667596936225891,
+        "weighted_sup_loss": 0.2948686182498932
+      },
+      {
+        "bg_kl_loss": 0.019311094656586647,
+        "elapsed_ns": 907303867,
+        "epoch": 2,
+        "gradient_norm": 1.1076700687408447,
+        "lr": 0.00016285714285714287,
+        "step": 14,
+        "task_id": "V06",
+        "unweighted_sup_loss": 0.8427510261535645,
+        "weighted_sup_loss": 0.7709594964981079
+      },
+      {
+        "bg_kl_loss": 0.030430659651756287,
+        "elapsed_ns": 971374162,
+        "epoch": 2,
+        "gradient_norm": 1.0477185249328613,
+        "lr": 0.00016,
+        "step": 15,
+        "task_id": "V07",
+        "unweighted_sup_loss": 0.4091619849205017,
+        "weighted_sup_loss": 0.6137483716011047
+      },
+      {
+        "bg_kl_loss": 0.014329713769257069,
+        "elapsed_ns": 917111865,
+        "epoch": 2,
+        "gradient_norm": 1.3668965101242065,
+        "lr": 0.00015714285714285716,
+        "step": 16,
+        "task_id": "V08",
+        "unweighted_sup_loss": 0.6354324221611023,
+        "weighted_sup_loss": 0.9552591443061829
+      },
+      {
+        "bg_kl_loss": 0.02828730596229434,
+        "elapsed_ns": 909629756,
+        "epoch": 3,
+        "gradient_norm": 0.5750612616539001,
+        "lr": 0.0001542857142857143,
+        "step": 17,
+        "task_id": "V01",
+        "unweighted_sup_loss": 0.08041492104530334,
+        "weighted_sup_loss": 0.05293411388993263
+      },
+      {
+        "bg_kl_loss": 0.04435309208929539,
+        "elapsed_ns": 920818727,
+        "epoch": 3,
+        "gradient_norm": 1.2175272703170776,
+        "lr": 0.00015142857142857143,
+        "step": 18,
+        "task_id": "V02",
+        "unweighted_sup_loss": 0.4826202392578125,
+        "weighted_sup_loss": 0.38164886832237244
+      },
+      {
+        "bg_kl_loss": 0.018508289474993944,
+        "elapsed_ns": 929354030,
+        "epoch": 3,
+        "gradient_norm": 0.945382833480835,
+        "lr": 0.00014857142857142857,
+        "step": 19,
+        "task_id": "V03",
+        "unweighted_sup_loss": 0.12173432856798172,
+        "weighted_sup_loss": 0.20225059986114502
+      },
+      {
+        "bg_kl_loss": 0.050204748287796974,
+        "elapsed_ns": 906044209,
+        "epoch": 3,
+        "gradient_norm": 1.4423882961273193,
+        "lr": 0.00014571428571428575,
+        "step": 20,
+        "task_id": "V04",
+        "unweighted_sup_loss": 0.10782472044229507,
+        "weighted_sup_loss": 0.11385329067707062
+      },
+      {
+        "bg_kl_loss": 0.010656673461198807,
+        "elapsed_ns": 984006225,
+        "epoch": 3,
+        "gradient_norm": 0.5576300621032715,
+        "lr": 0.00014285714285714287,
+        "step": 21,
+        "task_id": "V05",
+        "unweighted_sup_loss": 0.14625424146652222,
+        "weighted_sup_loss": 0.17279233038425446
+      },
+      {
+        "bg_kl_loss": 0.026993336621671915,
+        "elapsed_ns": 930514819,
+        "epoch": 3,
+        "gradient_norm": 0.9314661622047424,
+        "lr": 0.00014,
+        "step": 22,
+        "task_id": "V06",
+        "unweighted_sup_loss": 0.5773881673812866,
+        "weighted_sup_loss": 0.5333390235900879
+      },
+      {
+        "bg_kl_loss": 0.036860356107354164,
+        "elapsed_ns": 956123675,
+        "epoch": 3,
+        "gradient_norm": 0.8898388743400574,
+        "lr": 0.00013714285714285716,
+        "step": 23,
+        "task_id": "V07",
+        "unweighted_sup_loss": 0.29021430015563965,
+        "weighted_sup_loss": 0.44520220160484314
+      },
+      {
+        "bg_kl_loss": 0.03423410002142191,
+        "elapsed_ns": 919270346,
+        "epoch": 3,
+        "gradient_norm": 1.2308770418167114,
+        "lr": 0.0001342857142857143,
+        "step": 24,
+        "task_id": "V08",
+        "unweighted_sup_loss": 0.44952309131622314,
+        "weighted_sup_loss": 0.6690065860748291
+      },
+      {
+        "bg_kl_loss": 0.038337391801178455,
+        "elapsed_ns": 911087873,
+        "epoch": 4,
+        "gradient_norm": 0.6648727655410767,
+        "lr": 0.00013142857142857143,
+        "step": 25,
+        "task_id": "V01",
+        "unweighted_sup_loss": 0.0286480113863945,
+        "weighted_sup_loss": 0.020922143012285233
+      },
+      {
+        "bg_kl_loss": 0.055267524905502796,
+        "elapsed_ns": 917854135,
+        "epoch": 4,
+        "gradient_norm": 0.8849005103111267,
+        "lr": 0.00012857142857142858,
+        "step": 26,
+        "task_id": "V02",
+        "unweighted_sup_loss": 0.31191328167915344,
+        "weighted_sup_loss": 0.22556281089782715
+      },
+      {
+        "bg_kl_loss": 0.02381711546331644,
+        "elapsed_ns": 927041152,
+        "epoch": 4,
+        "gradient_norm": 0.7869678139686584,
+        "lr": 0.00012571428571428572,
+        "step": 27,
+        "task_id": "V03",
+        "unweighted_sup_loss": 0.04663490876555443,
+        "weighted_sup_loss": 0.07446788251399994
+      },
+      {
+        "bg_kl_loss": 0.02583048678934574,
+        "elapsed_ns": 912097296,
+        "epoch": 4,
+        "gradient_norm": 0.8618031740188599,
+        "lr": 0.00012285714285714287,
+        "step": 28,
+        "task_id": "V04",
+        "unweighted_sup_loss": 0.05346560850739479,
+        "weighted_sup_loss": 0.07295716553926468
+      },
+      {
+        "bg_kl_loss": 0.014730075374245644,
+        "elapsed_ns": 980653848,
+        "epoch": 4,
+        "gradient_norm": 0.6618605852127075,
+        "lr": 0.00012000000000000003,
+        "step": 29,
+        "task_id": "V05",
+        "unweighted_sup_loss": 0.08815058320760727,
+        "weighted_sup_loss": 0.12629090249538422
+      },
+      {
+        "bg_kl_loss": 0.03298582509160042,
+        "elapsed_ns": 926340264,
+        "epoch": 4,
+        "gradient_norm": 0.9713369607925415,
+        "lr": 0.00011714285714285715,
+        "step": 30,
+        "task_id": "V06",
+        "unweighted_sup_loss": 0.4615425169467926,
+        "weighted_sup_loss": 0.4116763174533844
+      },
+      {
+        "bg_kl_loss": 0.031447507441043854,
+        "elapsed_ns": 939534347,
+        "epoch": 4,
+        "gradient_norm": 0.994436502456665,
+        "lr": 0.00011428571428571428,
+        "step": 31,
+        "task_id": "V07",
+        "unweighted_sup_loss": 0.2191864252090454,
+        "weighted_sup_loss": 0.35388657450675964
+      },
+      {
+        "bg_kl_loss": 0.03270053677260876,
+        "elapsed_ns": 935084532,
+        "epoch": 4,
+        "gradient_norm": 1.2315056324005127,
+        "lr": 0.00011142857142857144,
+        "step": 32,
+        "task_id": "V08",
+        "unweighted_sup_loss": 0.3492349684238434,
+        "weighted_sup_loss": 0.5196251273155212
+      },
+      {
+        "bg_kl_loss": 0.038066258653998375,
+        "elapsed_ns": 943410362,
+        "epoch": 5,
+        "gradient_norm": 1.3604429960250854,
+        "lr": 0.00010857142857142859,
+        "step": 33,
+        "task_id": "V01",
+        "unweighted_sup_loss": 0.009411150589585304,
+        "weighted_sup_loss": 0.00874324981123209
+      },
+      {
+        "bg_kl_loss": 0.0442299316637218,
+        "elapsed_ns": 994630293,
+        "epoch": 5,
+        "gradient_norm": 0.8331993222236633,
+        "lr": 0.0001057142857142857,
+        "step": 34,
+        "task_id": "V02",
+        "unweighted_sup_loss": 0.25736096501350403,
+        "weighted_sup_loss": 0.17204761505126953
+      },
+      {
+        "bg_kl_loss": 0.018404620699584484,
+        "elapsed_ns": 942805907,
+        "epoch": 5,
+        "gradient_norm": 0.5978900194168091,
+        "lr": 0.00010285714285714286,
+        "step": 35,
+        "task_id": "V03",
+        "unweighted_sup_loss": 0.028009722009301186,
+        "weighted_sup_loss": 0.033784087747335434
+      },
+      {
+        "bg_kl_loss": 0.010190141154453158,
+        "elapsed_ns": 942481408,
+        "epoch": 5,
+        "gradient_norm": 0.5404541492462158,
+        "lr": 0.0001,
+        "step": 36,
+        "task_id": "V04",
+        "unweighted_sup_loss": 0.04217388853430748,
+        "weighted_sup_loss": 0.05131431668996811
+      },
+      {
+        "bg_kl_loss": 0.008127146633341908,
+        "elapsed_ns": 999672266,
+        "epoch": 5,
+        "gradient_norm": 0.515273928642273,
+        "lr": 9.714285714285715e-05,
+        "step": 37,
+        "task_id": "V05",
+        "unweighted_sup_loss": 0.07177001237869263,
+        "weighted_sup_loss": 0.0962647944688797
+      },
+      {
+        "bg_kl_loss": 0.020497053512372077,
+        "elapsed_ns": 937706189,
+        "epoch": 5,
+        "gradient_norm": 0.9771000146865845,
+        "lr": 9.428571428571429e-05,
+        "step": 38,
+        "task_id": "V06",
+        "unweighted_sup_loss": 0.4349902272224426,
+        "weighted_sup_loss": 0.34421002864837646
+      },
+      {
+        "bg_kl_loss": 0.01885114423930645,
+        "elapsed_ns": 975680975,
+        "epoch": 5,
+        "gradient_norm": 0.7642427086830139,
+        "lr": 9.142857142857145e-05,
+        "step": 39,
+        "task_id": "V07",
+        "unweighted_sup_loss": 0.18032968044281006,
+        "weighted_sup_loss": 0.284136563539505
+      },
+      {
+        "bg_kl_loss": 0.01706522610038519,
+        "elapsed_ns": 974346700,
+        "epoch": 5,
+        "gradient_norm": 1.284681797027588,
+        "lr": 8.857142857142857e-05,
+        "step": 40,
+        "task_id": "V08",
+        "unweighted_sup_loss": 0.2877112925052643,
+        "weighted_sup_loss": 0.4294511079788208
+      },
+      {
+        "bg_kl_loss": 0.011848756577819586,
+        "elapsed_ns": 925860176,
+        "epoch": 6,
+        "gradient_norm": 0.27420574426651,
+        "lr": 8.571428571428573e-05,
+        "step": 41,
+        "task_id": "V01",
+        "unweighted_sup_loss": 0.014948884956538677,
+        "weighted_sup_loss": 0.011280338279902935
+      },
+      {
+        "bg_kl_loss": 0.02391355810686946,
+        "elapsed_ns": 928701997,
+        "epoch": 6,
+        "gradient_norm": 0.7130457758903503,
+        "lr": 8.285714285714286e-05,
+        "step": 42,
+        "task_id": "V02",
+        "unweighted_sup_loss": 0.2412596046924591,
+        "weighted_sup_loss": 0.14401814341545105
+      },
+      {
+        "bg_kl_loss": 0.009927364997565746,
+        "elapsed_ns": 936397972,
+        "epoch": 6,
+        "gradient_norm": 0.41939398646354675,
+        "lr": 8e-05,
+        "step": 43,
+        "task_id": "V03",
+        "unweighted_sup_loss": 0.027188416570425034,
+        "weighted_sup_loss": 0.02647056058049202
+      },
+      {
+        "bg_kl_loss": 0.0052358172833919525,
+        "elapsed_ns": 932946748,
+        "epoch": 6,
+        "gradient_norm": 0.44998297095298767,
+        "lr": 7.714285714285714e-05,
+        "step": 44,
+        "task_id": "V04",
+        "unweighted_sup_loss": 0.03498010337352753,
+        "weighted_sup_loss": 0.03552091866731644
+      },
+      {
+        "bg_kl_loss": 0.006973670097067952,
+        "elapsed_ns": 1013702336,
+        "epoch": 6,
+        "gradient_norm": 0.48811617493629456,
+        "lr": 7.428571428571429e-05,
+        "step": 45,
+        "task_id": "V05",
+        "unweighted_sup_loss": 0.05376610904932022,
+        "weighted_sup_loss": 0.07128206640481949
+      },
+      {
+        "bg_kl_loss": 0.013468536082655191,
+        "elapsed_ns": 1013662668,
+        "epoch": 6,
+        "gradient_norm": 0.9592459201812744,
+        "lr": 7.142857142857142e-05,
+        "step": 46,
+        "task_id": "V06",
+        "unweighted_sup_loss": 0.39240169525146484,
+        "weighted_sup_loss": 0.27655547857284546
+      },
+      {
+        "bg_kl_loss": 0.012741824612021446,
+        "elapsed_ns": 980530761,
+        "epoch": 6,
+        "gradient_norm": 0.7263979911804199,
+        "lr": 6.857142857142858e-05,
+        "step": 47,
+        "task_id": "V07",
+        "unweighted_sup_loss": 0.14707286655902863,
+        "weighted_sup_loss": 0.23597343266010284
+      },
+      {
+        "bg_kl_loss": 0.01418369822204113,
+        "elapsed_ns": 947633952,
+        "epoch": 6,
+        "gradient_norm": 1.1756161451339722,
+        "lr": 6.57142857142857e-05,
+        "step": 48,
+        "task_id": "V08",
+        "unweighted_sup_loss": 0.2224041372537613,
+        "weighted_sup_loss": 0.33297502994537354
+      },
+      {
+        "bg_kl_loss": 0.011450730264186859,
+        "elapsed_ns": 950725428,
+        "epoch": 7,
+        "gradient_norm": 0.4327333867549896,
+        "lr": 6.285714285714286e-05,
+        "step": 49,
+        "task_id": "V01",
+        "unweighted_sup_loss": 0.0071083540096879005,
+        "weighted_sup_loss": 0.005737972911447287
+      },
+      {
+        "bg_kl_loss": 0.016205904772505164,
+        "elapsed_ns": 959688900,
+        "epoch": 7,
+        "gradient_norm": 0.6626171469688416,
+        "lr": 5.999999999999999e-05,
+        "step": 50,
+        "task_id": "V02",
+        "unweighted_sup_loss": 0.212003692984581,
+        "weighted_sup_loss": 0.11704001575708389
+      },
+      {
+        "bg_kl_loss": 0.008385601919144392,
+        "elapsed_ns": 949564014,
+        "epoch": 7,
+        "gradient_norm": 0.35589274764060974,
+        "lr": 5.714285714285714e-05,
+        "step": 51,
+        "task_id": "V03",
+        "unweighted_sup_loss": 0.020473813638091087,
+        "weighted_sup_loss": 0.019319768995046616
+      },
+      {
+        "bg_kl_loss": 0.003976111998781562,
+        "elapsed_ns": 962534854,
+        "epoch": 7,
+        "gradient_norm": 0.3408425748348236,
+        "lr": 5.4285714285714275e-05,
+        "step": 52,
+        "task_id": "V04",
+        "unweighted_sup_loss": 0.026126865297555923,
+        "weighted_sup_loss": 0.025936191901564598
+      },
+      {
+        "bg_kl_loss": 0.009648157749325037,
+        "elapsed_ns": 1018388151,
+        "epoch": 7,
+        "gradient_norm": 0.6927170753479004,
+        "lr": 5.142857142857143e-05,
+        "step": 53,
+        "task_id": "V05",
+        "unweighted_sup_loss": 0.042963068932294846,
+        "weighted_sup_loss": 0.057888276875019073
+      },
+      {
+        "bg_kl_loss": 0.011864943779073656,
+        "elapsed_ns": 950377087,
+        "epoch": 7,
+        "gradient_norm": 0.9426770210266113,
+        "lr": 4.8571428571428576e-05,
+        "step": 54,
+        "task_id": "V06",
+        "unweighted_sup_loss": 0.35517746210098267,
+        "weighted_sup_loss": 0.21634207665920258
+      },
+      {
+        "bg_kl_loss": 0.010002408875152469,
+        "elapsed_ns": 979835856,
+        "epoch": 7,
+        "gradient_norm": 0.729209303855896,
+        "lr": 4.571428571428573e-05,
+        "step": 55,
+        "task_id": "V07",
+        "unweighted_sup_loss": 0.12666261196136475,
+        "weighted_sup_loss": 0.20235417783260345
+      },
+      {
+        "bg_kl_loss": 0.011837557889521122,
+        "elapsed_ns": 956766703,
+        "epoch": 7,
+        "gradient_norm": 1.1249537467956543,
+        "lr": 4.285714285714286e-05,
+        "step": 56,
+        "task_id": "V08",
+        "unweighted_sup_loss": 0.18029381334781647,
+        "weighted_sup_loss": 0.27057182788848877
+      },
+      {
+        "bg_kl_loss": 0.008157488889992237,
+        "elapsed_ns": 945780382,
+        "epoch": 8,
+        "gradient_norm": 0.4060779809951782,
+        "lr": 4.000000000000002e-05,
+        "step": 57,
+        "task_id": "V01",
+        "unweighted_sup_loss": 0.006512987427413464,
+        "weighted_sup_loss": 0.005083803087472916
+      },
+      {
+        "bg_kl_loss": 0.011144713498651981,
+        "elapsed_ns": 952622641,
+        "epoch": 8,
+        "gradient_norm": 0.6230379343032837,
+        "lr": 3.7142857142857143e-05,
+        "step": 58,
+        "task_id": "V02",
+        "unweighted_sup_loss": 0.19776169955730438,
+        "weighted_sup_loss": 0.10232323408126831
+      },
+      {
+        "bg_kl_loss": 0.008504091762006283,
+        "elapsed_ns": 939215089,
+        "epoch": 8,
+        "gradient_norm": 0.4186456799507141,
+        "lr": 3.42857142857143e-05,
+        "step": 59,
+        "task_id": "V03",
+        "unweighted_sup_loss": 0.020800694823265076,
+        "weighted_sup_loss": 0.01906181126832962
+      },
+      {
+        "bg_kl_loss": 0.0029860020731575787,
+        "elapsed_ns": 943616621,
+        "epoch": 8,
+        "gradient_norm": 0.3984189033508301,
+        "lr": 3.142857142857143e-05,
+        "step": 60,
+        "task_id": "V04",
+        "unweighted_sup_loss": 0.023067854344844818,
+        "weighted_sup_loss": 0.02227105386555195
+      },
+      {
+        "bg_kl_loss": 0.006598990876227617,
+        "elapsed_ns": 1022280653,
+        "epoch": 8,
+        "gradient_norm": 0.5412180423736572,
+        "lr": 2.857142857142858e-05,
+        "step": 61,
+        "task_id": "V05",
+        "unweighted_sup_loss": 0.038084860891103745,
+        "weighted_sup_loss": 0.05022561177611351
+      },
+      {
+        "bg_kl_loss": 0.009654955705627799,
+        "elapsed_ns": 969995227,
+        "epoch": 8,
+        "gradient_norm": 0.8696000576019287,
+        "lr": 2.5714285714285714e-05,
+        "step": 62,
+        "task_id": "V06",
+        "unweighted_sup_loss": 0.33663350343704224,
+        "weighted_sup_loss": 0.1730552315711975
+      },
+      {
+        "bg_kl_loss": 0.008140628691762686,
+        "elapsed_ns": 990052527,
+        "epoch": 8,
+        "gradient_norm": 0.7188943028450012,
+        "lr": 2.2857142857142865e-05,
+        "step": 63,
+        "task_id": "V07",
+        "unweighted_sup_loss": 0.11297902464866638,
+        "weighted_sup_loss": 0.17839334905147552
+      },
+      {
+        "bg_kl_loss": 0.0095425876788795,
+        "elapsed_ns": 968625390,
+        "epoch": 8,
+        "gradient_norm": 0.9551080465316772,
+        "lr": 1.9999999999999995e-05,
+        "step": 64,
+        "task_id": "V08",
+        "unweighted_sup_loss": 0.16097654402256012,
+        "weighted_sup_loss": 0.24215957522392273
+      }
+    ],
+    "target_module_count": 96,
+    "training_ns": 60866768103,
+    "verification_ns": 30757021830
+  },
+  "trusted_collection_accepted": false,
+  "version": 1
+}

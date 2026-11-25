@@ -2,6 +2,14 @@
   "benchmark_eligible": false,
   "date": "2026-11-25",
   "files": {
+    "gate-g10-mlp-hybrid-ablation-report.json": {
+      "bytes": 58850,
+      "sha256": "a4f26c9b748da76a66b2b6b4fc7e6d1821abb12fd5bdc8e897b64c93af52bb4f"
+    },
+    "gate-g11-bf16-merge-and-kv-benchmark-report.json": {
+      "bytes": 12887,
+      "sha256": "a7996d0ccd650d06467841e39e3c43efaa835404805ac06cfab4e35255e426fa"
+    },
     "gate-g6a-router-probe-report.json": {
       "bytes": 12177,
       "sha256": "1bc248d18639ac2eee36e2b9e60ee3e743c6c0511fc6c8f3b8797a97c9485495"
