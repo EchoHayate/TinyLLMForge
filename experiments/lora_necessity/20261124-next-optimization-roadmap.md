@@ -24,7 +24,12 @@
 
 ## 1. 待逐项攻克的四大优化方向
 
-### 方向一（算法提分头号突破）：长提示词 Teacher → 短提示词 Student 真·上下文自蒸馏（Context Self-Distillation）与无标注扩增
+### 方向一（已完成突破 ✅）：长提示词 Teacher → 短提示词 Student 真·上下文自蒸馏（Context Self-Distillation）与无标注扩增
+
+- **实测达成状态（Gate G9，`20261125-context-self-distillation-results.md`）**：
+  - 已实现 `experiments/lora_necessity/context_self_distillation_ablation.py`（正反双路 100% 全词表 KL 自蒸馏 + 28 道无答案题干 `use_cache=True` 自动生成并经沙箱筛出 `17` 条双公开用例全过真经验 + 差异行 `4×` 权重）；
+  - 未见异类 `D01..D04` 选词一致率达 **`100.00%`（`118 / 118` token，KL 低至 `0.00057`）**；
+  - 24 题评估实现 **`transfer = 4/12`、`retention = 4/12`、总分 `8/24`（在全部两个子集上 1:1 打平长提示词 `text`）**，且在全部 24 道题上相对裸底座实现 **`right_to_wrong = 0`（零改坏严格帕累托改进）**，推理快 **`8.87×`**。
 
 - **现有代码瓶颈**：
   - `experiments/lora_necessity/confirmatory_v2_training.py` 与 `confirmatory_v2_contract.py:263`（`confirmatory_training_jobs`）目前对人工编写的 `reference_source` 做硬标签 `0/1` Cross-Entropy，强迫 `rank-8` 权重去拟合特定临时变量名（如 `live, st, en`），且训练提示词含 `Failure: [...]` 见证行而首轮测试提示词不含该行（存在训练—测试输入微小错位）。

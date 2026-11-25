@@ -1,6 +1,6 @@
 {
   "benchmark_eligible": false,
-  "date": "2026-11-24",
+  "date": "2026-11-25",
   "files": {
     "gate-g6a-router-probe-report.json": {
       "bytes": 12177,
@@ -17,6 +17,10 @@
     "gate-g8-diff-focused-kl-ablation-report.json": {
       "bytes": 59442,
       "sha256": "6c960eca576d3297e9d0862e2a1cc875e8e218653098085eb5a8d6f6dc35bc14"
+    },
+    "gate-g9-context-self-distillation-report.json": {
+      "bytes": 61561,
+      "sha256": "4c994cda6b0317742f0032ffd9c51be549d47ead1d008e68d10c3b6e06542204"
     }
   },
   "formal_evaluation_ready": false,
