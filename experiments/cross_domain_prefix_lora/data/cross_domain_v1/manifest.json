@@ -1,0 +1,16 @@
+{
+  "blind_oracles_sha256": "719ba9a5e185a52f26a2d7a63a9101c305498e13f5c20c461d721f2974992e41",
+  "counts": {
+    "background_anchors": 16,
+    "general_blind_test": 16,
+    "legal_blind_test": 16,
+    "legal_seeds": 8,
+    "legal_unlabeled": 20,
+    "med_blind_test": 16,
+    "med_seeds": 8,
+    "med_unlabeled": 20
+  },
+  "public_bundle_sha256": "f1343d0698eefd74aa3768a5ee26f6545deaf2614cab02cc3a449c982bbe79c4",
+  "version": "cross_domain_v1",
+  "zero_blind_oracle_in_public_bundle": true
+}

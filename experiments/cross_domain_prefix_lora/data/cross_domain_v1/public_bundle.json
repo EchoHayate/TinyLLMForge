@@ -1,0 +1,1663 @@
+{
+  "background_anchors": [
+    {
+      "id": "BG_NL01",
+      "modality": "nl",
+      "prompt": "Explain in three concise bullet points how TCP three-way handshake establishes a reliable connection."
+    },
+    {
+      "id": "BG_NL02",
+      "modality": "nl",
+      "prompt": "A bakery packs 9 muffins per box. How many full boxes can be made from 140 muffins, and how many muffins are left over?"
+    },
+    {
+      "id": "BG_NL03",
+      "modality": "nl",
+      "prompt": "\u8bf7\u7528\u7b80\u660e\u4e2d\u6587\u603b\u7ed3\u6570\u636e\u5e93\u7d22\u5f15\uff08B+\u6811\u7d22\u5f15\uff09\u52a0\u5feb\u67e5\u8be2\u4f46\u4f1a\u7565\u5fae\u964d\u4f4e\u5199\u5165\u901f\u5ea6\u7684\u539f\u56e0\uff08\u4e0d\u8d85\u8fc7120\u5b57\uff09\u3002"
+    },
+    {
+      "id": "BG_NL04",
+      "modality": "nl",
+      "prompt": "Convert the following meeting note into 3 action items with owners: 'Alice will finalize API schema Tuesday; Bob updates unit tests Wednesday; Carol deploys staging Thursday.'"
+    },
+    {
+      "id": "BG_NL05",
+      "modality": "nl",
+      "prompt": "If 5 identical machines produce 300 widgets in 4 hours, how many widgets will 8 machines produce in 3 hours at the same rate?"
+    },
+    {
+      "id": "BG_NL06",
+      "modality": "nl",
+      "prompt": "\u8bf7\u7b80\u8ff0\u64cd\u4f5c\u7cfb\u7edf\u4e2d\u8fdb\u7a0b\uff08Process\uff09\u4e0e\u7ebf\u7a0b\uff08Thread\uff09\u5728\u5730\u5740\u7a7a\u95f4\u548c\u4e0a\u4e0b\u6587\u5207\u6362\u5f00\u9500\u4e0a\u7684\u6838\u5fc3\u533a\u522b\u3002"
+    },
+    {
+      "id": "BG_NL07",
+      "modality": "nl",
+      "prompt": "Sort the following historical milestones chronologically from earliest to latest: World Wide Web proposal, transistor invention, ARPANET first message, Linux kernel 0.01."
+    },
+    {
+      "id": "BG_NL08",
+      "modality": "nl",
+      "prompt": "A rectangular garden measures 18 meters by 12 meters. A 1-meter-wide gravel path runs around the outside perimeter. What is the area of the gravel path alone?"
+    },
+    {
+      "id": "BG_CD01",
+      "modality": "code",
+      "prompt": "Fix the Python function `rolling_sum_pairs(nums)` so it returns a list of sums of adjacent pairs `[nums[i] + nums[i+1]]` without raising IndexError on empty or single-element lists. Output only the Python `def` function.\n```python\ndef rolling_sum_pairs(nums):\n    return [nums[i] + nums[i + 1] for i in range(len(nums))]\n```"
+    },
+    {
+      "id": "BG_CD02",
+      "modality": "code",
+      "prompt": "Write only the Python function `invert_unique_map(mapping)` that swaps keys and values of a dict, raising `ValueError('duplicate')` if two keys share the same value."
+    },
+    {
+      "id": "BG_CD03",
+      "modality": "code",
+      "prompt": "Write only the Python function `clamp_scores(values, low, high)` that raises `ValueError('bounds')` if `low > high` and otherwise returns a list of values clamped into `[low, high]`."
+    },
+    {
+      "id": "BG_CD04",
+      "modality": "code",
+      "prompt": "Write only the Python function `first_non_repeating_char(text)` that returns the index of the first character appearing exactly once in `text`, or `-1` if none exists."
+    },
+    {
+      "id": "BG_CD05",
+      "modality": "code",
+      "prompt": "Write only the Python function `merge_intervals_sorted(intervals)` that merges overlapping `[start, end]` closed intervals and returns them sorted by `start`."
+    },
+    {
+      "id": "BG_CD06",
+      "modality": "code",
+      "prompt": "Write only the Python function `count_vowel_runs(word)` that counts how many contiguous substrings of vowels (`aeiouAEIOU`) appear in `word`."
+    },
+    {
+      "id": "BG_CD07",
+      "modality": "code",
+      "prompt": "Write only the Python function `balanced_brackets(expr)` that returns `True` if `()`, `[]`, and `{}` are properly nested and matched in `expr`, else `False`."
+    },
+    {
+      "id": "BG_CD08",
+      "modality": "code",
+      "prompt": "Write only the Python function `chunk_list(items, size)` that raises `ValueError('size')` if `size < 1` and otherwise splits `items` into consecutive sublists of length up to `size`."
+    }
+  ],
+  "general_retention": {
+    "blind_test_inputs": [
+      {
+        "category": "math",
+        "id": "G_R01",
+        "prompt": "A warehouse has 14 pallets with 18 cartons each. After shipping out 67 cartons and receiving 25 new cartons, how many cartons remain in the warehouse? End your response with `FINAL_ANSWER: <integer>`."
+      },
+      {
+        "category": "math",
+        "id": "G_R02",
+        "prompt": "A train travels 135 km in 1.5 hours and then 180 km in 2.5 hours. What is its average speed in km/h over the entire 4-hour trip? Express as a decimal with two digits if needed, ending with `FINAL_ANSWER: <number>`."
+      },
+      {
+        "category": "math",
+        "id": "G_R03",
+        "prompt": "Three servers process 45, 60, and 75 requests per minute respectively. Working together at constant rates, how many minutes does it take them to process 2,700 requests? End your response with `FINAL_ANSWER: <integer>`."
+      },
+      {
+        "category": "math",
+        "id": "G_R04",
+        "prompt": "A jacket priced at 320 yuan is discounted by 25%, and then an additional 15 yuan coupon is applied. What is the final price in yuan? End your response with `FINAL_ANSWER: <integer>`."
+      },
+      {
+        "category": "logic",
+        "id": "G_R05",
+        "prompt": "Four tasks (Alpha, Beta, Gamma, Delta) run sequentially without overlap. Beta runs immediately before Gamma. Alpha runs after Gamma. Delta runs first. Which task runs third? End your response with `FINAL_ANSWER: <TaskName>`."
+      },
+      {
+        "category": "logic",
+        "id": "G_R06",
+        "prompt": "Every encrypted backup is compressed. Archive-7 is not compressed. Can Archive-7 be an encrypted backup? Answer strictly YES or NO at the end as `FINAL_ANSWER: <YES|NO>`."
+      },
+      {
+        "category": "logic",
+        "id": "G_R07",
+        "prompt": "Among Mia, Noah, and Liam, each specializes in exactly one database: Redis, Postgres, or ClickHouse. Mia does not use Redis or ClickHouse. Liam does not use Redis. Which database does Noah use? End with `FINAL_ANSWER: <Database>`."
+      },
+      {
+        "category": "logic",
+        "id": "G_R08",
+        "prompt": "A conference room booking rule states: meetings over 8 people require Room-B, unless the projector is needed, which always requires Room-C. A 10-person design review needs the projector. Which room is required? End with `FINAL_ANSWER: <Room>`."
+      },
+      {
+        "category": "extract",
+        "id": "G_R09",
+        "prompt": "Extract the exact invoice code from the following memo: 'Per Q3 reconciliation, disregard draft INV-2025-8810 and settle superseded voucher under final invoice INV-2026-4092 by Friday.' End with `FINAL_ANSWER: <Code>`."
+      },
+      {
+        "category": "extract",
+        "id": "G_R10",
+        "prompt": "Given the quarterly latency table: [Jan: 42ms, Feb: 39ms, Mar: 51ms, Apr: 36ms, May: 44ms], which 3-letter month had the lowest latency? End with `FINAL_ANSWER: <Month>`."
+      },
+      {
+        "category": "extract",
+        "id": "G_R11",
+        "prompt": "Count how many items in the list `[17, 24, 31, 42, 55, 68, 73, 80]` are strictly greater than 30 AND divisible by 2. End with `FINAL_ANSWER: <integer>`."
+      },
+      {
+        "category": "extract",
+        "id": "G_R12",
+        "prompt": "From the release log: 'v1.4.2 (rolled back), v1.4.3 (canary only), v1.4.5 (production active), v1.5.0-rc1 (staging)', which version string is currently active in production? End with `FINAL_ANSWER: <version>`."
+      },
+      {
+        "category": "cn_qa",
+        "id": "G_R13",
+        "prompt": "\u67d0\u56fe\u4e66\u9986\u5468\u4e00\u501f\u51fa\u56fe\u4e66 85 \u672c\uff0c\u5468\u4e8c\u6bd4\u5468\u4e00\u591a\u501f\u51fa 19 \u672c\uff0c\u5468\u4e09\u501f\u51fa\u7684\u56fe\u4e66\u6570\u91cf\u6070\u597d\u662f\u5468\u4e8c\u7684\u4e00\u534a\u3002\u8bf7\u95ee\u8fd9\u4e09\u5929\u4e00\u5171\u501f\u51fa\u591a\u5c11\u672c\u56fe\u4e66\uff1f\u6700\u540e\u4e00\u884c\u8bf7\u4e25\u683c\u8f93\u51fa `FINAL_ANSWER: <\u6574\u6570>`\u3002"
+      },
+      {
+        "category": "cn_qa",
+        "id": "G_R14",
+        "prompt": "\u7532\u3001\u4e59\u3001\u4e19\u4e09\u4eba\u6392\u6210\u4e00\u5217\uff0c\u5df2\u77e5\u7532\u4e0d\u5728\u7b2c\u4e00\u4f4d\uff0c\u4e59\u5728\u4e19\u7684\u524d\u9762\uff0c\u4e14\u4e19\u4e0d\u5728\u6700\u540e\u4e00\u4f4d\u3002\u8bf7\u95ee\u6392\u5728\u7b2c\u4e00\u4f4d\u7684\u662f\u8c01\uff1f\uff08\u4ec5\u586b\u201c\u7532\u201d\u3001\u201c\u4e59\u201d\u6216\u201c\u4e19\u201d\uff09\uff0c\u6700\u540e\u4e00\u884c\u4e25\u683c\u8f93\u51fa `FINAL_ANSWER: <\u59d3\u540d>`\u3002"
+      },
+      {
+        "category": "cn_qa",
+        "id": "G_R15",
+        "prompt": "\u8bf7\u4ece\u4ee5\u4e0b\u901a\u77e5\u4e2d\u63d0\u53d6\u6b63\u5f0f\u5207\u6362\u7684\u5317\u4eac\u65f6\u95f4\uff08\u4ec5\u8f93\u51fa HH:MM \u683c\u5f0f\uff09\uff1a\u2018\u539f\u5b9a\u4e8e 01:30 \u7684\u7f51\u5173\u5272\u63a5\u56e0\u6f14\u7ec3\u987a\u5ef6\uff0c02:15 \u5b8c\u6210\u9884\u68c0\uff0c\u5e76\u4e8e 03:40 \u6b63\u5f0f\u5207\u6362\u6d41\u91cf\uff0c04:10 \u7ed3\u675f\u89c2\u5bdf\u3002\u2019\u6700\u540e\u4e00\u884c\u4e25\u683c\u8f93\u51fa `FINAL_ANSWER: <HH:MM>`\u3002"
+      },
+      {
+        "category": "cn_qa",
+        "id": "G_R16",
+        "prompt": "\u4e00\u7bb1\u96f6\u4ef6\u5171 96 \u4e2a\uff0c\u8d28\u68c0\u62bd\u67e5\u53d1\u73b0\u6b21\u54c1\u7387\u4e3a 12.5%\u3002\u8bf7\u95ee\u8fd9\u7bb1\u96f6\u4ef6\u4e2d\u5408\u683c\u54c1\u6709\u591a\u5c11\u4e2a\uff1f\u6700\u540e\u4e00\u884c\u4e25\u683c\u8f93\u51fa `FINAL_ANSWER: <\u6574\u6570>`\u3002"
+      }
+    ]
+  },
+  "legal_compliance": {
+    "blind_test_inputs": [
+      {
+        "id": "L_T01",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "SG_SINGAPORE",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_T01\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: SG_SINGAPORE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      },
+      {
+        "id": "L_T02",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_T02\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      },
+      {
+        "id": "L_T03",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "EU_FRANKFURT",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_T03\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: EU_FRANKFURT | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      },
+      {
+        "id": "L_T04",
+        "input": {
+          "auto_renew_months": 24,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "FOREIGN_LITIGATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_T04\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: FOREIGN_LITIGATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 24 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_T05",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_T05\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      },
+      {
+        "id": "L_T06",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "EU_DUBLIN",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_T06\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: EU_DUBLIN | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_T07",
+        "input": {
+          "auto_renew_months": 36,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_T07\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 36 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 3x annual fees"
+      },
+      {
+        "id": "L_T08",
+        "input": {
+          "auto_renew_months": 36,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_T08\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 36 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_T09",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 4,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_T09\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 4x annual fees"
+      },
+      {
+        "id": "L_T10",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_T10\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 3x annual fees"
+      },
+      {
+        "id": "L_T11",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_T11\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_T12",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "JP_TOKYO",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 4,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_T12\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: JP_TOKYO | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 4x annual fees"
+      },
+      {
+        "id": "L_T13",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_T13\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_T14",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "SG_SINGAPORE",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_T14\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: SG_SINGAPORE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_T15",
+        "input": {
+          "auto_renew_months": 24,
+          "cross_border": "EU_FRANKFURT",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "FOREIGN_LITIGATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_T15\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: EU_FRANKFURT | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: FOREIGN_LITIGATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 24 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_T16",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "EU_FRANKFURT",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_T16\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: EU_FRANKFURT | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      }
+    ],
+    "seeds": [
+      {
+        "expected": {
+          "cure_days": 0,
+          "min_cap_x": 5,
+          "primary_rule": "LEG-R01",
+          "risk_grade": "CRITICAL",
+          "routing": "GC_BOARD_REJECT"
+        },
+        "id": "L_S01",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "EU_FRANKFURT",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_S01\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: EU_FRANKFURT | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      },
+      {
+        "expected": {
+          "cure_days": 15,
+          "min_cap_x": 3,
+          "primary_rule": "LEG-R02",
+          "risk_grade": "CRITICAL",
+          "routing": "GC_BOARD_REJECT"
+        },
+        "id": "L_S02",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "FOREIGN_LITIGATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_S02\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: FOREIGN_LITIGATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 3x annual fees"
+      },
+      {
+        "expected": {
+          "cure_days": 15,
+          "min_cap_x": 3,
+          "primary_rule": "LEG-R03",
+          "risk_grade": "HIGH",
+          "routing": "VP_LEGAL_CISO"
+        },
+        "id": "L_S03",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_S03\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 3x annual fees"
+      },
+      {
+        "expected": {
+          "cure_days": 30,
+          "min_cap_x": 2,
+          "primary_rule": "LEG-R04",
+          "risk_grade": "HIGH",
+          "routing": "VP_LEGAL_CISO"
+        },
+        "id": "L_S04",
+        "input": {
+          "auto_renew_months": 24,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_S04\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 24 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "expected": {
+          "cure_days": 30,
+          "min_cap_x": 5,
+          "primary_rule": "LEG-R05",
+          "risk_grade": "ELEVATED",
+          "routing": "SENIOR_COUNSEL"
+        },
+        "id": "L_S05",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "SG_SINGAPORE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_S05\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: SG_SINGAPORE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 3x annual fees"
+      },
+      {
+        "expected": {
+          "cure_days": 45,
+          "min_cap_x": 1,
+          "primary_rule": "LEG-R06",
+          "risk_grade": "LOW",
+          "routing": "AUTO_APPROVE"
+        },
+        "id": "L_S06",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_S06\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "expected": {
+          "cure_days": 30,
+          "min_cap_x": 3,
+          "primary_rule": "LEG-R05",
+          "risk_grade": "ELEVATED",
+          "routing": "SENIOR_COUNSEL"
+        },
+        "id": "L_S07",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_S07\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "expected": {
+          "cure_days": 45,
+          "min_cap_x": 5,
+          "primary_rule": "LEG-R06",
+          "risk_grade": "LOW",
+          "routing": "AUTO_APPROVE"
+        },
+        "id": "L_S08",
+        "input": {
+          "auto_renew_months": 24,
+          "cross_border": "SG_SINGAPORE",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_S08\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: SG_SINGAPORE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 24 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      }
+    ],
+    "sop_manual_text": "================================================================================\nENTERPRISE PROCUREMENT & DATA CROSS-BORDER POLICY (LEGAL-SOP-2026-V3)\nEffective Scope: Commercial Vendor Agreements, SaaS Subscriptions & Data Addenda\n================================================================================\n\nSECTION 1. MINIMUM LIABILITY CAP MULTIPLIER MATRIX (`min_cap_x`)\nFor every vendor agreement, first determine the mandatory minimum limitation-of-liability\ncap (`min_cap_x`, expressed as an integer multiple of annual contract fees) from the\nintersection of `vendor_tier` and `data_class`:\n\n  Vendor Tier      | D0_BIO_PII | D1_CUST_PII | D2_CONFID | D3_PUBLIC\n  -----------------|------------|-------------|-----------|----------\n  TIER_STRATEGIC   |     5x     |      5x     |     3x    |     2x\n  TIER_CORE        |     5x     |      3x     |     2x    |     1x\n  TIER_STD         |     5x     |      3x     |     2x    |     1x\n\n  Important: `min_cap_x` is ALWAYS reported in the output JSON according to this matrix,\n  even when a higher-priority rejection or escalation rule is triggered!\n\n--------------------------------------------------------------------------------\nSECTION 2. MANDATORY ESCALATION & REDLINE PRIORITY HIERARCHY\nEvaluate contract redlines strictly in order from Priority 1 (`LEG-R01`) down to\nPriority 6 (`LEG-R06`). The FIRST triggered rule determines `risk_grade`, `routing`,\n`cure_days`, and `primary_rule`:\n\n  Priority 1 \u2014 Rule `LEG-R01` (Unassessed Biometric / Core PII Cross-Border Transfer):\n    - Trigger: `cross_border != \"NONE\"` AND `data_class == \"D0_BIO_PII\"` AND `has_sec_assessment == false`.\n    - Decision:\n      * `risk_grade = \"CRITICAL\"`\n      * `routing = \"GC_BOARD_REJECT\"`\n      * `cure_days = 0`\n      * `primary_rule = \"LEG-R01\"`\n\n  Priority 2 \u2014 Rule `LEG-R02` (Prohibited Exclusive Foreign Court Litigation):\n    - Trigger: `governing_law == \"FOREIGN_LITIGATION\"`\n      (Note: `\"DOMESTIC_COURT\"` and `\"NEUTRAL_ARBITRATION\"` are permitted and do NOT trigger `LEG-R02`.)\n    - Decision:\n      * `risk_grade = \"CRITICAL\"`\n      * `routing = \"GC_BOARD_REJECT\"`\n      * `cure_days = 15`\n      * `primary_rule = \"LEG-R02\"`\n\n  Priority 3 \u2014 Rule `LEG-R03` (Missing Uncapped Third-Party IP Indemnity Carve-Out):\n    - Trigger: `ip_indemnity_uncapped == false` AND `data_class` is in `{\"D0_BIO_PII\", \"D1_CUST_PII\", \"D2_CONFID\"}`.\n      (Note: Pure `D3_PUBLIC` agreements are exempt from mandatory uncapped IP indemnity.)\n    - Decision:\n      * `risk_grade = \"HIGH\"`\n      * `routing = \"VP_LEGAL_CISO\"`\n      * `cure_days = 15`\n      * `primary_rule = \"LEG-R03\"`\n\n  Priority 4 \u2014 Rule `LEG-R04` (Multi-Year Evergreen Lock-In Without Convenience Termination):\n    - Trigger: `auto_renew_months > 12` AND `terminate_for_conv == false`.\n      (Note: `auto_renew_months <= 12` OR `terminate_for_conv == true` passes this check.)\n    - Decision:\n      * `risk_grade = \"HIGH\"`\n      * `routing = \"VP_LEGAL_CISO\"`\n      * `cure_days = 30`\n      * `primary_rule = \"LEG-R04\"`\n\n  Priority 5 \u2014 Rule `LEG-R05` (Proposed Liability Cap Below Mandatory Matrix Floor):\n    - Trigger: `proposed_cap_x < min_cap_x` (where `min_cap_x` comes from Section 1).\n    - Decision:\n      * `risk_grade = \"ELEVATED\"`\n      * `routing = \"SENIOR_COUNSEL\"`\n      * `cure_days = 30`\n      * `primary_rule = \"LEG-R05\"`\n\n  Priority 6 \u2014 Rule `LEG-R06` (Fully Compliant Agreement Clear for Automated Execution):\n    - Trigger: None of `LEG-R01`..`LEG-R05` fired (`proposed_cap_x >= min_cap_x` and all redlines satisfied).\n    - Decision:\n      * `risk_grade = \"LOW\"`\n      * `routing = \"AUTO_APPROVE\"`\n      * `cure_days = 45`\n      * `primary_rule = \"LEG-R06\"`\n================================================================================\n\nSECTION 3B. CORPORATE COUNSEL VERIFICATION NOTES & DEFINITIONS\n- Always compute `min_cap_x` from Section 1 (`vendor_tier` x `data_class`) first and include that exact integer (`1`, `2`, `3`, or `5`) in every JSON output, even when `GC_BOARD_REJECT` or `VP_LEGAL_CISO` is triggered.\n- Biometric and high-sensitivity personal identifiers (`D0_BIO_PII`) transferred to any non-domestic region (`cross_border != \"NONE\"`) without a completed regulatory security assessment (`has_sec_assessment == false`) constitute a statutory blocker (`LEG-R01`, `cure_days = 0`). Domestic storage (`cross_border == \"NONE\"`) or non-D0 tiers (`D1_CUST_PII`, `D2_CONFID`, `D3_PUBLIC`) do NOT trigger `LEG-R01`.\n- `FOREIGN_LITIGATION` exposes the enterprise to foreign discovery and injunctive orders (`LEG-R02`, `cure_days = 15`); `NEUTRAL_ARBITRATION` (e.g., HKIAC / SIAC) and `DOMESTIC_COURT` are pre-cleared venues.\n- Third-party intellectual property infringement indemnity must be uncapped (`ip_indemnity_uncapped == true`) whenever confidential, customer, or biometric data (`D0_BIO_PII`, `D1_CUST_PII`, `D2_CONFID`) is in scope (`LEG-R03`, `cure_days = 15`); pure `D3_PUBLIC` commodity tools are exempt.\n- Multi-year evergreen auto-renewal (`auto_renew_months > 12`) is only permissible when paired with an explicit termination-for-convenience clause (`terminate_for_conv == true`); otherwise escalate under `LEG-R04` (`cure_days = 30`).\n- When all four structural redlines (`LEG-R01`..`LEG-R04`) pass, compare `proposed_cap_x` against `min_cap_x`: a shortfall (`proposed_cap_x < min_cap_x`) routes to `SENIOR_COUNSEL` (`LEG-R05`, `ELEVATED`, `cure_days = 30`), whereas meeting or exceeding `min_cap_x` clears `AUTO_APPROVE` (`LEG-R06`, `LOW`, `cure_days = 45`).\n",
+    "unlabeled": [
+      {
+        "id": "L_U01",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "US_VIRGINIA",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_U01\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: US_VIRGINIA | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      },
+      {
+        "id": "L_U02",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_U02\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 5x annual fees"
+      },
+      {
+        "id": "L_U03",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "FOREIGN_LITIGATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_U03\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: FOREIGN_LITIGATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_U04",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "JP_TOKYO",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_U04\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: JP_TOKYO | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 3x annual fees"
+      },
+      {
+        "id": "L_U05",
+        "input": {
+          "auto_renew_months": 36,
+          "cross_border": "EU_DUBLIN",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_U05\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: EU_DUBLIN | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 36 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_U06",
+        "input": {
+          "auto_renew_months": 24,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_U06\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 24 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_U07",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_U07\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_U08",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D2_CONFID",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_U08\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_U09",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_U09\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_U10",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_U10\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_U11",
+        "input": {
+          "auto_renew_months": 18,
+          "cross_border": "SG_SINGAPORE",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 5,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_U11\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: SG_SINGAPORE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 18 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 5x annual fees"
+      },
+      {
+        "id": "L_U12",
+        "input": {
+          "auto_renew_months": 24,
+          "cross_border": "EU_FRANKFURT",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "FOREIGN_LITIGATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_U12\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: EU_FRANKFURT | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: FOREIGN_LITIGATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 24 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_U13",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 4,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_U13\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 4x annual fees"
+      },
+      {
+        "id": "L_U14",
+        "input": {
+          "auto_renew_months": 24,
+          "cross_border": "NONE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_U14\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 24 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_U15",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "NONE",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_U15\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 3x annual fees"
+      },
+      {
+        "id": "L_U16",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "SG_SINGAPORE",
+          "data_class": "D2_CONFID",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 2,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_U16\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: SG_SINGAPORE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 2x annual fees"
+      },
+      {
+        "id": "L_U17",
+        "input": {
+          "auto_renew_months": 36,
+          "cross_border": "JP_TOKYO",
+          "data_class": "D0_BIO_PII",
+          "governing_law": "FOREIGN_LITIGATION",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": false,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_U17\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D0_BIO_PII\n- Cross-Border Transfer Destination: JP_TOKYO | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: FOREIGN_LITIGATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 36 months | Termination for Convenience Right: false\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_U18",
+        "input": {
+          "auto_renew_months": 24,
+          "cross_border": "NONE",
+          "data_class": "D3_PUBLIC",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": false,
+          "proposed_cap_x": 1,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STD"
+        },
+        "vignette": "Contract Review ID: L_U18\n- Vendor Classification: TIER_STD | Data Sensitivity Tier: D3_PUBLIC\n- Cross-Border Transfer Destination: NONE | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: false\n- Auto-Renewal Term: 24 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 1x annual fees"
+      },
+      {
+        "id": "L_U19",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "SG_SINGAPORE",
+          "data_class": "D1_CUST_PII",
+          "governing_law": "DOMESTIC_COURT",
+          "has_sec_assessment": false,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_CORE"
+        },
+        "vignette": "Contract Review ID: L_U19\n- Vendor Classification: TIER_CORE | Data Sensitivity Tier: D1_CUST_PII\n- Cross-Border Transfer Destination: SG_SINGAPORE | Regulatory Security Assessment Passed: false\n- Dispute Governing Venue: DOMESTIC_COURT | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 3x annual fees"
+      },
+      {
+        "id": "L_U20",
+        "input": {
+          "auto_renew_months": 12,
+          "cross_border": "EU_FRANKFURT",
+          "data_class": "D2_CONFID",
+          "governing_law": "NEUTRAL_ARBITRATION",
+          "has_sec_assessment": true,
+          "ip_indemnity_uncapped": true,
+          "proposed_cap_x": 3,
+          "terminate_for_conv": true,
+          "vendor_tier": "TIER_STRATEGIC"
+        },
+        "vignette": "Contract Review ID: L_U20\n- Vendor Classification: TIER_STRATEGIC | Data Sensitivity Tier: D2_CONFID\n- Cross-Border Transfer Destination: EU_FRANKFURT | Regulatory Security Assessment Passed: true\n- Dispute Governing Venue: NEUTRAL_ARBITRATION | Uncapped 3rd-Party IP Indemnity: true\n- Auto-Renewal Term: 12 months | Termination for Convenience Right: true\n- Vendor Proposed Liability Cap: 3x annual fees"
+      }
+    ]
+  },
+  "med_triage": {
+    "blind_test_inputs": [
+      {
+        "id": "M_T01",
+        "input": {
+          "active_bleed": false,
+          "age": 76,
+          "aki_stage": 0,
+          "albumin_g_dl": 2.9,
+          "egfr": 68,
+          "on_maoi": false,
+          "platelets_k": 204,
+          "potassium_mmol": 4.1,
+          "qtc_ms": 442,
+          "requested_regimen": "CEFEPIME_IV"
+        },
+        "vignette": "Patient Order ID: M_T01\n- Age: 76 years | Serum Albumin: 2.9 g/dL\n- Baseline eGFR: 68 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 442 ms | Serum Potassium: 4.1 mmol/L | Platelets: 204 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: CEFEPIME_IV"
+      },
+      {
+        "id": "M_T02",
+        "input": {
+          "active_bleed": false,
+          "age": 78,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.4,
+          "egfr": 63,
+          "on_maoi": false,
+          "platelets_k": 218,
+          "potassium_mmol": 4.2,
+          "qtc_ms": 438,
+          "requested_regimen": "CEFEPIME_IV"
+        },
+        "vignette": "Patient Order ID: M_T02\n- Age: 78 years | Serum Albumin: 3.4 g/dL\n- Baseline eGFR: 63 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 438 ms | Serum Potassium: 4.2 mmol/L | Platelets: 218 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: CEFEPIME_IV"
+      },
+      {
+        "id": "M_T03",
+        "input": {
+          "active_bleed": false,
+          "age": 82,
+          "aki_stage": 0,
+          "albumin_g_dl": 2.8,
+          "egfr": 39,
+          "on_maoi": false,
+          "platelets_k": 192,
+          "potassium_mmol": 4.4,
+          "qtc_ms": 451,
+          "requested_regimen": "MEROPENEM_IV"
+        },
+        "vignette": "Patient Order ID: M_T03\n- Age: 82 years | Serum Albumin: 2.8 g/dL\n- Baseline eGFR: 39 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 451 ms | Serum Potassium: 4.4 mmol/L | Platelets: 192 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: MEROPENEM_IV"
+      },
+      {
+        "id": "M_T04",
+        "input": {
+          "active_bleed": false,
+          "age": 84,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.0,
+          "egfr": 25,
+          "on_maoi": false,
+          "platelets_k": 176,
+          "potassium_mmol": 4.6,
+          "qtc_ms": 449,
+          "requested_regimen": "VANCO_IV"
+        },
+        "vignette": "Patient Order ID: M_T04\n- Age: 84 years | Serum Albumin: 3.0 g/dL\n- Baseline eGFR: 25 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 449 ms | Serum Potassium: 4.6 mmol/L | Platelets: 176 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: VANCO_IV"
+      },
+      {
+        "id": "M_T05",
+        "input": {
+          "active_bleed": false,
+          "age": 53,
+          "aki_stage": 2,
+          "albumin_g_dl": 3.9,
+          "egfr": 79,
+          "on_maoi": false,
+          "platelets_k": 188,
+          "potassium_mmol": 4.5,
+          "qtc_ms": 456,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_T05\n- Age: 53 years | Serum Albumin: 3.9 g/dL\n- Baseline eGFR: 79 mL/min/1.73m2 | KDIGO AKI Stage: 2\n- ECG QTc: 456 ms | Serum Potassium: 4.5 mmol/L | Platelets: 188 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "id": "M_T06",
+        "input": {
+          "active_bleed": false,
+          "age": 61,
+          "aki_stage": 1,
+          "albumin_g_dl": 3.7,
+          "egfr": 46,
+          "on_maoi": false,
+          "platelets_k": 225,
+          "potassium_mmol": 4.3,
+          "qtc_ms": 440,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_T06\n- Age: 61 years | Serum Albumin: 3.7 g/dL\n- Baseline eGFR: 46 mL/min/1.73m2 | KDIGO AKI Stage: 1\n- ECG QTc: 440 ms | Serum Potassium: 4.3 mmol/L | Platelets: 225 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "id": "M_T07",
+        "input": {
+          "active_bleed": false,
+          "age": 59,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.6,
+          "egfr": 84,
+          "on_maoi": true,
+          "platelets_k": 210,
+          "potassium_mmol": 5.9,
+          "qtc_ms": 516,
+          "requested_regimen": "LINEZOLID_PO"
+        },
+        "vignette": "Patient Order ID: M_T07\n- Age: 59 years | Serum Albumin: 3.6 g/dL\n- Baseline eGFR: 84 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 516 ms | Serum Potassium: 5.9 mmol/L | Platelets: 210 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: true\n- Requested Inpatient Regimen: LINEZOLID_PO"
+      },
+      {
+        "id": "M_T08",
+        "input": {
+          "active_bleed": false,
+          "age": 65,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.5,
+          "egfr": 35,
+          "on_maoi": false,
+          "platelets_k": 39,
+          "potassium_mmol": 4.1,
+          "qtc_ms": 445,
+          "requested_regimen": "APIXABAN_PO"
+        },
+        "vignette": "Patient Order ID: M_T08\n- Age: 65 years | Serum Albumin: 3.5 g/dL\n- Baseline eGFR: 35 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 445 ms | Serum Potassium: 4.1 mmol/L | Platelets: 39 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: APIXABAN_PO"
+      },
+      {
+        "id": "M_T09",
+        "input": {
+          "active_bleed": true,
+          "age": 67,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.5,
+          "egfr": 35,
+          "on_maoi": false,
+          "platelets_k": 36,
+          "potassium_mmol": 4.1,
+          "qtc_ms": 445,
+          "requested_regimen": "VANCO_IV"
+        },
+        "vignette": "Patient Order ID: M_T09\n- Age: 67 years | Serum Albumin: 3.5 g/dL\n- Baseline eGFR: 35 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 445 ms | Serum Potassium: 4.1 mmol/L | Platelets: 36 K/uL\n- Active Bleeding: true | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: VANCO_IV"
+      },
+      {
+        "id": "M_T10",
+        "input": {
+          "active_bleed": false,
+          "age": 79,
+          "aki_stage": 0,
+          "albumin_g_dl": 2.9,
+          "egfr": 36,
+          "on_maoi": true,
+          "platelets_k": 195,
+          "potassium_mmol": 4.3,
+          "qtc_ms": 447,
+          "requested_regimen": "LINEZOLID_PO"
+        },
+        "vignette": "Patient Order ID: M_T10\n- Age: 79 years | Serum Albumin: 2.9 g/dL\n- Baseline eGFR: 36 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 447 ms | Serum Potassium: 4.3 mmol/L | Platelets: 195 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: true\n- Requested Inpatient Regimen: LINEZOLID_PO"
+      },
+      {
+        "id": "M_T11",
+        "input": {
+          "active_bleed": false,
+          "age": 48,
+          "aki_stage": 0,
+          "albumin_g_dl": 4.1,
+          "egfr": 72,
+          "on_maoi": true,
+          "platelets_k": 250,
+          "potassium_mmol": 4.0,
+          "qtc_ms": 432,
+          "requested_regimen": "VANCO_IV"
+        },
+        "vignette": "Patient Order ID: M_T11\n- Age: 48 years | Serum Albumin: 4.1 g/dL\n- Baseline eGFR: 72 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 432 ms | Serum Potassium: 4.0 mmol/L | Platelets: 250 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: true\n- Requested Inpatient Regimen: VANCO_IV"
+      },
+      {
+        "id": "M_T12",
+        "input": {
+          "active_bleed": false,
+          "age": 56,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.8,
+          "egfr": 24,
+          "on_maoi": false,
+          "platelets_k": 190,
+          "potassium_mmol": 5.9,
+          "qtc_ms": 454,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_T12\n- Age: 56 years | Serum Albumin: 3.8 g/dL\n- Baseline eGFR: 24 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 454 ms | Serum Potassium: 5.9 mmol/L | Platelets: 190 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "id": "M_T13",
+        "input": {
+          "active_bleed": false,
+          "age": 50,
+          "aki_stage": 2,
+          "albumin_g_dl": 3.9,
+          "egfr": 65,
+          "on_maoi": false,
+          "platelets_k": 172,
+          "potassium_mmol": 5.8,
+          "qtc_ms": 459,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_T13\n- Age: 50 years | Serum Albumin: 3.9 g/dL\n- Baseline eGFR: 65 mL/min/1.73m2 | KDIGO AKI Stage: 2\n- ECG QTc: 459 ms | Serum Potassium: 5.8 mmol/L | Platelets: 172 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "id": "M_T14",
+        "input": {
+          "active_bleed": false,
+          "age": 64,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.7,
+          "egfr": 44,
+          "on_maoi": false,
+          "platelets_k": 215,
+          "potassium_mmol": 4.2,
+          "qtc_ms": 439,
+          "requested_regimen": "APIXABAN_PO"
+        },
+        "vignette": "Patient Order ID: M_T14\n- Age: 64 years | Serum Albumin: 3.7 g/dL\n- Baseline eGFR: 44 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 439 ms | Serum Potassium: 4.2 mmol/L | Platelets: 215 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: APIXABAN_PO"
+      },
+      {
+        "id": "M_T15",
+        "input": {
+          "active_bleed": false,
+          "age": 70,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.6,
+          "egfr": 21,
+          "on_maoi": false,
+          "platelets_k": 182,
+          "potassium_mmol": 4.4,
+          "qtc_ms": 448,
+          "requested_regimen": "LINEZOLID_PO"
+        },
+        "vignette": "Patient Order ID: M_T15\n- Age: 70 years | Serum Albumin: 3.6 g/dL\n- Baseline eGFR: 21 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 448 ms | Serum Potassium: 4.4 mmol/L | Platelets: 182 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: LINEZOLID_PO"
+      },
+      {
+        "id": "M_T16",
+        "input": {
+          "active_bleed": false,
+          "age": 73,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.5,
+          "egfr": 12,
+          "on_maoi": false,
+          "platelets_k": 168,
+          "potassium_mmol": 4.7,
+          "qtc_ms": 452,
+          "requested_regimen": "APIXABAN_PO"
+        },
+        "vignette": "Patient Order ID: M_T16\n- Age: 73 years | Serum Albumin: 3.5 g/dL\n- Baseline eGFR: 12 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 452 ms | Serum Potassium: 4.7 mmol/L | Platelets: 168 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: APIXABAN_PO"
+      }
+    ],
+    "seeds": [
+      {
+        "expected": {
+          "action": "HOLD_STAT",
+          "dose_mg": 0,
+          "regimen": "NONE",
+          "renal_tier": "R1_NORMAL",
+          "rule_id": "MED-R01"
+        },
+        "id": "M_S01",
+        "input": {
+          "active_bleed": false,
+          "age": 62,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.8,
+          "egfr": 74,
+          "on_maoi": false,
+          "platelets_k": 210,
+          "potassium_mmol": 4.3,
+          "qtc_ms": 524,
+          "requested_regimen": "VANCO_IV"
+        },
+        "vignette": "Patient Order ID: M_S01\n- Age: 62 years | Serum Albumin: 3.8 g/dL\n- Baseline eGFR: 74 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 524 ms | Serum Potassium: 4.3 mmol/L | Platelets: 210 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: VANCO_IV"
+      },
+      {
+        "expected": {
+          "action": "SWITCH_ALT",
+          "dose_mg": 350,
+          "regimen": "DAPTO_IV",
+          "renal_tier": "R3_MOD",
+          "rule_id": "MED-R02"
+        },
+        "id": "M_S02",
+        "input": {
+          "active_bleed": false,
+          "age": 79,
+          "aki_stage": 0,
+          "albumin_g_dl": 2.9,
+          "egfr": 38,
+          "on_maoi": true,
+          "platelets_k": 185,
+          "potassium_mmol": 4.5,
+          "qtc_ms": 442,
+          "requested_regimen": "LINEZOLID_PO"
+        },
+        "vignette": "Patient Order ID: M_S02\n- Age: 79 years | Serum Albumin: 2.9 g/dL\n- Baseline eGFR: 38 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 442 ms | Serum Potassium: 4.5 mmol/L | Platelets: 185 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: true\n- Requested Inpatient Regimen: LINEZOLID_PO"
+      },
+      {
+        "expected": {
+          "action": "SWITCH_ALT",
+          "dose_mg": 1000,
+          "regimen": "MEROPENEM_IV",
+          "renal_tier": "R2_MILD",
+          "rule_id": "MED-R03"
+        },
+        "id": "M_S03",
+        "input": {
+          "active_bleed": false,
+          "age": 54,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.6,
+          "egfr": 48,
+          "on_maoi": false,
+          "platelets_k": 240,
+          "potassium_mmol": 5.9,
+          "qtc_ms": 455,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_S03\n- Age: 54 years | Serum Albumin: 3.6 g/dL\n- Baseline eGFR: 48 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 455 ms | Serum Potassium: 5.9 mmol/L | Platelets: 240 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "expected": {
+          "action": "HOLD_STAT",
+          "dose_mg": 0,
+          "regimen": "NONE",
+          "renal_tier": "R2_MILD",
+          "rule_id": "MED-R04"
+        },
+        "id": "M_S04",
+        "input": {
+          "active_bleed": false,
+          "age": 68,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.5,
+          "egfr": 52,
+          "on_maoi": false,
+          "platelets_k": 34,
+          "potassium_mmol": 4.1,
+          "qtc_ms": 438,
+          "requested_regimen": "APIXABAN_PO"
+        },
+        "vignette": "Patient Order ID: M_S04\n- Age: 68 years | Serum Albumin: 3.5 g/dL\n- Baseline eGFR: 52 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 438 ms | Serum Potassium: 4.1 mmol/L | Platelets: 34 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: APIXABAN_PO"
+      },
+      {
+        "expected": {
+          "action": "ADJUST_APPROVE",
+          "dose_mg": 250,
+          "regimen": "CEFEPIME_IV",
+          "renal_tier": "R4_SEVERE",
+          "rule_id": "MED-R05"
+        },
+        "id": "M_S05",
+        "input": {
+          "active_bleed": false,
+          "age": 49,
+          "aki_stage": 2,
+          "albumin_g_dl": 4.0,
+          "egfr": 68,
+          "on_maoi": false,
+          "platelets_k": 190,
+          "potassium_mmol": 4.8,
+          "qtc_ms": 460,
+          "requested_regimen": "CEFEPIME_IV"
+        },
+        "vignette": "Patient Order ID: M_S05\n- Age: 49 years | Serum Albumin: 4.0 g/dL\n- Baseline eGFR: 68 mL/min/1.73m2 | KDIGO AKI Stage: 2\n- ECG QTc: 460 ms | Serum Potassium: 4.8 mmol/L | Platelets: 190 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: CEFEPIME_IV"
+      },
+      {
+        "expected": {
+          "action": "ADJUST_APPROVE",
+          "dose_mg": 1000,
+          "regimen": "VANCO_IV",
+          "renal_tier": "R2_MILD",
+          "rule_id": "MED-R05"
+        },
+        "id": "M_S06",
+        "input": {
+          "active_bleed": false,
+          "age": 81,
+          "aki_stage": 0,
+          "albumin_g_dl": 2.8,
+          "egfr": 66,
+          "on_maoi": false,
+          "platelets_k": 205,
+          "potassium_mmol": 4.2,
+          "qtc_ms": 448,
+          "requested_regimen": "VANCO_IV"
+        },
+        "vignette": "Patient Order ID: M_S06\n- Age: 81 years | Serum Albumin: 2.8 g/dL\n- Baseline eGFR: 66 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 448 ms | Serum Potassium: 4.2 mmol/L | Platelets: 205 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: VANCO_IV"
+      },
+      {
+        "expected": {
+          "action": "ADJUST_APPROVE",
+          "dose_mg": 2250,
+          "regimen": "PIPTAZO_IV",
+          "renal_tier": "R3_MOD",
+          "rule_id": "MED-R05"
+        },
+        "id": "M_S07",
+        "input": {
+          "active_bleed": false,
+          "age": 58,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.7,
+          "egfr": 22,
+          "on_maoi": false,
+          "platelets_k": 175,
+          "potassium_mmol": 4.4,
+          "qtc_ms": 450,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_S07\n- Age: 58 years | Serum Albumin: 3.7 g/dL\n- Baseline eGFR: 22 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 450 ms | Serum Potassium: 4.4 mmol/L | Platelets: 175 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "expected": {
+          "action": "STD_APPROVE",
+          "dose_mg": 2000,
+          "regimen": "CEFEPIME_IV",
+          "renal_tier": "R1_NORMAL",
+          "rule_id": "MED-R05"
+        },
+        "id": "M_S08",
+        "input": {
+          "active_bleed": false,
+          "age": 45,
+          "aki_stage": 0,
+          "albumin_g_dl": 4.1,
+          "egfr": 82,
+          "on_maoi": false,
+          "platelets_k": 260,
+          "potassium_mmol": 4.0,
+          "qtc_ms": 430,
+          "requested_regimen": "CEFEPIME_IV"
+        },
+        "vignette": "Patient Order ID: M_S08\n- Age: 45 years | Serum Albumin: 4.1 g/dL\n- Baseline eGFR: 82 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 430 ms | Serum Potassium: 4.0 mmol/L | Platelets: 260 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: CEFEPIME_IV"
+      }
+    ],
+    "sop_manual_text": "================================================================================\nINSTITUTIONAL CLINICAL PHARMACY & RENAL TRIAGE PROTOCOL (MED-SOP-2026-V4)\nEffective Scope: Inpatient Antimicrobial & Anticoagulant Order Verification\n================================================================================\n\nSECTION 1. EFFECTIVE RENAL TIER DETERMINATION (`renal_tier`)\nEvery inpatient medication order must first be assigned to one of four institutional\nrenal tiers (`R1_NORMAL`, `R2_MILD`, `R3_MOD`, `R4_SEVERE`) using the exact step order:\n\n  Step 1A (Acute Kidney Injury Override):\n    - If `aki_stage >= 2` (KDIGO Stage 2 or Stage 3 acute kidney injury), IMMEDIATELY\n      assign `renal_tier = \"R4_SEVERE\"`, regardless of the raw `egfr` value.\n\n  Step 1B (Geriatric Hypoalbuminemia Adjustment):\n    - Otherwise (`aki_stage < 2`), compute `effective_egfr`:\n      * If `age >= 75` AND `albumin_g_dl < 3.2`, subtract 12 from raw `egfr`:\n        `effective_egfr = egfr - 12`.\n      * In all other cases (`age < 75` OR `albumin_g_dl >= 3.2`), use raw `egfr`:\n        `effective_egfr = egfr`.\n\n  Step 1C (Tier Threshold Mapping on `effective_egfr`):\n    - `effective_egfr >= 60`           -> `\"R1_NORMAL\"`\n    - `30 <= effective_egfr <= 59`     -> `\"R2_MILD\"`\n    - `15 <= effective_egfr <= 29`     -> `\"R3_MOD\"`\n    - `effective_egfr < 15`            -> `\"R4_SEVERE\"`\n\n--------------------------------------------------------------------------------\nSECTION 2. INSTITUTIONAL SINGLE-DOSE MILLIGRAM TABLE (`dose_mg`)\nWhen a regimen is dispensed (either the original `requested_regimen` or a mandated\nsubstitute), select the exact institutional single-administration dose in milligrams\nstrictly from the matrix below according to the patient's `renal_tier`:\n\n  Regimen Code    | R1_NORMAL | R2_MILD | R3_MOD | R4_SEVERE | Clinical Notes\n  ----------------|-----------|---------|--------|-----------|--------------------------\n  CEFEPIME_IV     |  2000 mg  | 1000 mg | 500 mg |   250 mg  | Neurotoxicity guard in R3/R4\n  MEROPENEM_IV    |  1000 mg  | 1000 mg | 500 mg |   250 mg  | Carbapenem renal step-down\n  VANCO_IV        |  1500 mg  | 1000 mg | 750 mg |   500 mg  | Institutional loading cap\n  APIXABAN_PO     |    10 mg  |   10 mg |   5 mg |     2 mg  | Inpatient VTE protocol dose\n  LINEZOLID_PO    |   600 mg  |  600 mg | 600 mg |   600 mg  | Hepatic clearance; flat 600 mg\n  PIPTAZO_IV      |  4500 mg  | 3375 mg | 2250 mg|  1125 mg  | Zosyn composite mg strength\n  DAPTO_IV        |   700 mg  |  500 mg | 350 mg |   250 mg  | Mandated MAOI substitute\n\n--------------------------------------------------------------------------------\nSECTION 3. HARD SAFETY OVERRIDE HIERARCHY (`rule_id`, `action`, `regimen`)\nEvaluate rules strictly from TOP PRIORITY (`MED-R01`) to BOTTOM (`MED-R05`).\nThe FIRST triggered rule governs the final order decision:\n\n  Priority 1 \u2014 Rule `MED-R01` (Severe Torsades / QTc Prolongation Block):\n    - Trigger: `qtc_ms >= 510` (applies to ALL orders under acute telemetry lock).\n    - Decision:\n      * `action = \"HOLD_STAT\"`\n      * `regimen = \"NONE\"`\n      * `dose_mg = 0`\n      * `rule_id = \"MED-R01\"`\n\n  Priority 2 \u2014 Rule `MED-R04` (Active Hemorrhage or Severe Thrombocytopenia Anticoagulant Block):\n    - Trigger: `requested_regimen == \"APIXABAN_PO\"` AND (`active_bleed == true` OR `platelets_k < 45`).\n    - Decision:\n      * `action = \"HOLD_STAT\"`\n      * `regimen = \"NONE\"`\n      * `dose_mg = 0`\n      * `rule_id = \"MED-R04\"`\n    - Note: Non-anticoagulant antimicrobial regimens are NOT blocked by `MED-R04`.\n\n  Priority 3 \u2014 Rule `MED-R02` (Serotonin Syndrome MAOI Interaction Switch):\n    - Trigger: `on_maoi == true` AND `requested_regimen == \"LINEZOLID_PO\"`.\n    - Decision:\n      * `action = \"SWITCH_ALT\"`\n      * `regimen = \"DAPTO_IV\"`\n      * `dose_mg` = lookup `DAPTO_IV` under the patient's `renal_tier` in Section 2\n        (`700` for `R1_NORMAL`, `500` for `R2_MILD`, `350` for `R3_MOD`, `250` for `R4_SEVERE`).\n      * `rule_id = \"MED-R02\"`\n\n  Priority 4 \u2014 Rule `MED-R03` (Severe Hyperkalemia Piperacillin-Tazobactam Switch):\n    - Trigger: `potassium_mmol >= 5.7` AND `requested_regimen == \"PIPTAZO_IV\"`.\n    - Decision:\n      * `action = \"SWITCH_ALT\"`\n      * `regimen = \"MEROPENEM_IV\"`\n      * `dose_mg` = lookup `MEROPENEM_IV` under the patient's `renal_tier` in Section 2\n        (`1000` for `R1_NORMAL`/`R2_MILD`, `500` for `R3_MOD`, `250` for `R4_SEVERE`).\n      * `rule_id = \"MED-R03\"`\n\n  Priority 5 \u2014 Rule `MED-R05` (Standard / Renal-Adjusted Formulary Verification):\n    - Trigger: None of `MED-R01`..`MED-R04` fired.\n    - Decision:\n      * `regimen = requested_regimen`\n      * `dose_mg` = lookup `requested_regimen` under `renal_tier` in Section 2.\n      * `action`:\n        - `\"STD_APPROVE\"` if `dose_mg` equals that drug's `R1_NORMAL` dose in Section 2\n          (for example, any `R1_NORMAL` order, `MEROPENEM_IV` or `APIXABAN_PO` in `R2_MILD`,\n          or `LINEZOLID_PO` `600 mg` across all renal tiers).\n        - `\"ADJUST_APPROVE\"` whenever `dose_mg` is reduced below that drug's `R1_NORMAL` dose.\n      * `rule_id = \"MED-R05\"`\n================================================================================\n\nSECTION 3B. CLINICAL AUDIT CHECKLIST & PHARMACOKINETIC RATIONALE\n- Verify raw eGFR lab timestamp within 24 hours of inpatient order entry.\n- Confirm serum albumin in g/dL when patient age is 75 years or older: hypoalbuminemia (<3.2 g/dL) increases unbound drug fraction and reflects sarcopenic creatinine overestimation of glomerular filtration, mandating the -12 mL/min/1.73m2 effective eGFR deduction prior to tier lookup.\n- KDIGO AKI Stage 2 (serum creatinine 2.0-2.9x baseline) or Stage 3 (>=3.0x baseline or renal replacement) reflects acute non-steady-state filtration collapse; raw eGFR equations lag behind true clearance, so `R4_SEVERE` dosing is mandatory.\n- QTc >= 510 ms represents an institutional telemetry redline due to additive hERG potassium channel blockade under acute illness; hold order immediately (`HOLD_STAT`, `NONE`, `0 mg`, `MED-R01`) before evaluating any drug-specific rule.\n- For `APIXABAN_PO`, active hemorrhage or platelet count `< 45 K/uL` poses unacceptably high major bleeding risk (`MED-R04`); antimicrobial orders (`VANCO_IV`, `CEFEPIME_IV`, `MEROPENEM_IV`, `LINEZOLID_PO`, `PIPTAZO_IV`, `DAPTO_IV`) proceed through standard verification despite thrombocytopenia.\n- Concurrent MAOI therapy with oxazolidinone `LINEZOLID_PO` risks life-threatening serotonin toxicity (`MED-R02`); switch to lipopeptide `DAPTO_IV` dosed strictly per the patient's computed `renal_tier`.\n- Serum potassium `>= 5.7 mmol/L` contraindicates standard `PIPTAZO_IV` formulation under renal/electrolyte stewardship (`MED-R03`); switch to `MEROPENEM_IV` dosed strictly per the patient's computed `renal_tier`.\n- Under `MED-R05`, compare the dispensed `dose_mg` against that specific regimen's `R1_NORMAL` reference column: use `STD_APPROVE` whenever the milligram amount equals the `R1_NORMAL` dose (including `LINEZOLID_PO` 600 mg in any tier, or `MEROPENEM_IV` 1000 mg / `APIXABAN_PO` 10 mg in `R2_MILD`), and `ADJUST_APPROVE` whenever the milligram amount is stepped down.\n",
+    "unlabeled": [
+      {
+        "id": "M_U01",
+        "input": {
+          "active_bleed": false,
+          "age": 77,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.0,
+          "egfr": 65,
+          "on_maoi": false,
+          "platelets_k": 195,
+          "potassium_mmol": 4.2,
+          "qtc_ms": 440,
+          "requested_regimen": "CEFEPIME_IV"
+        },
+        "vignette": "Patient Order ID: M_U01\n- Age: 77 years | Serum Albumin: 3.0 g/dL\n- Baseline eGFR: 65 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 440 ms | Serum Potassium: 4.2 mmol/L | Platelets: 195 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: CEFEPIME_IV"
+      },
+      {
+        "id": "M_U02",
+        "input": {
+          "active_bleed": false,
+          "age": 63,
+          "aki_stage": 2,
+          "albumin_g_dl": 3.9,
+          "egfr": 55,
+          "on_maoi": false,
+          "platelets_k": 160,
+          "potassium_mmol": 4.6,
+          "qtc_ms": 452,
+          "requested_regimen": "VANCO_IV"
+        },
+        "vignette": "Patient Order ID: M_U02\n- Age: 63 years | Serum Albumin: 3.9 g/dL\n- Baseline eGFR: 55 mL/min/1.73m2 | KDIGO AKI Stage: 2\n- ECG QTc: 452 ms | Serum Potassium: 4.6 mmol/L | Platelets: 160 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: VANCO_IV"
+      },
+      {
+        "id": "M_U03",
+        "input": {
+          "active_bleed": false,
+          "age": 51,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.5,
+          "egfr": 76,
+          "on_maoi": false,
+          "platelets_k": 220,
+          "potassium_mmol": 4.1,
+          "qtc_ms": 518,
+          "requested_regimen": "MEROPENEM_IV"
+        },
+        "vignette": "Patient Order ID: M_U03\n- Age: 51 years | Serum Albumin: 3.5 g/dL\n- Baseline eGFR: 76 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 518 ms | Serum Potassium: 4.1 mmol/L | Platelets: 220 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: MEROPENEM_IV"
+      },
+      {
+        "id": "M_U04",
+        "input": {
+          "active_bleed": false,
+          "age": 72,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.4,
+          "egfr": 26,
+          "on_maoi": false,
+          "platelets_k": 38,
+          "potassium_mmol": 4.3,
+          "qtc_ms": 446,
+          "requested_regimen": "CEFEPIME_IV"
+        },
+        "vignette": "Patient Order ID: M_U04\n- Age: 72 years | Serum Albumin: 3.4 g/dL\n- Baseline eGFR: 26 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 446 ms | Serum Potassium: 4.3 mmol/L | Platelets: 38 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: CEFEPIME_IV"
+      },
+      {
+        "id": "M_U05",
+        "input": {
+          "active_bleed": true,
+          "age": 69,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.3,
+          "egfr": 44,
+          "on_maoi": false,
+          "platelets_k": 180,
+          "potassium_mmol": 4.2,
+          "qtc_ms": 439,
+          "requested_regimen": "APIXABAN_PO"
+        },
+        "vignette": "Patient Order ID: M_U05\n- Age: 69 years | Serum Albumin: 3.3 g/dL\n- Baseline eGFR: 44 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 439 ms | Serum Potassium: 4.2 mmol/L | Platelets: 180 K/uL\n- Active Bleeding: true | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: APIXABAN_PO"
+      },
+      {
+        "id": "M_U06",
+        "input": {
+          "active_bleed": false,
+          "age": 83,
+          "aki_stage": 0,
+          "albumin_g_dl": 2.7,
+          "egfr": 24,
+          "on_maoi": true,
+          "platelets_k": 210,
+          "potassium_mmol": 4.5,
+          "qtc_ms": 461,
+          "requested_regimen": "LINEZOLID_PO"
+        },
+        "vignette": "Patient Order ID: M_U06\n- Age: 83 years | Serum Albumin: 2.7 g/dL\n- Baseline eGFR: 24 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 461 ms | Serum Potassium: 4.5 mmol/L | Platelets: 210 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: true\n- Requested Inpatient Regimen: LINEZOLID_PO"
+      },
+      {
+        "id": "M_U07",
+        "input": {
+          "active_bleed": false,
+          "age": 59,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.8,
+          "egfr": 21,
+          "on_maoi": false,
+          "platelets_k": 200,
+          "potassium_mmol": 5.8,
+          "qtc_ms": 449,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_U07\n- Age: 59 years | Serum Albumin: 3.8 g/dL\n- Baseline eGFR: 21 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 449 ms | Serum Potassium: 5.8 mmol/L | Platelets: 200 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "id": "M_U08",
+        "input": {
+          "active_bleed": false,
+          "age": 47,
+          "aki_stage": 0,
+          "albumin_g_dl": 4.2,
+          "egfr": 42,
+          "on_maoi": false,
+          "platelets_k": 230,
+          "potassium_mmol": 4.1,
+          "qtc_ms": 433,
+          "requested_regimen": "MEROPENEM_IV"
+        },
+        "vignette": "Patient Order ID: M_U08\n- Age: 47 years | Serum Albumin: 4.2 g/dL\n- Baseline eGFR: 42 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 433 ms | Serum Potassium: 4.1 mmol/L | Platelets: 230 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: MEROPENEM_IV"
+      },
+      {
+        "id": "M_U09",
+        "input": {
+          "active_bleed": false,
+          "age": 76,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.5,
+          "egfr": 64,
+          "on_maoi": false,
+          "platelets_k": 215,
+          "potassium_mmol": 4.0,
+          "qtc_ms": 441,
+          "requested_regimen": "VANCO_IV"
+        },
+        "vignette": "Patient Order ID: M_U09\n- Age: 76 years | Serum Albumin: 3.5 g/dL\n- Baseline eGFR: 64 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 441 ms | Serum Potassium: 4.0 mmol/L | Platelets: 215 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: VANCO_IV"
+      },
+      {
+        "id": "M_U10",
+        "input": {
+          "active_bleed": false,
+          "age": 64,
+          "aki_stage": 0,
+          "albumin_g_dl": 2.9,
+          "egfr": 64,
+          "on_maoi": false,
+          "platelets_k": 190,
+          "potassium_mmol": 4.3,
+          "qtc_ms": 437,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_U10\n- Age: 64 years | Serum Albumin: 2.9 g/dL\n- Baseline eGFR: 64 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 437 ms | Serum Potassium: 4.3 mmol/L | Platelets: 190 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "id": "M_U11",
+        "input": {
+          "active_bleed": false,
+          "age": 55,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.6,
+          "egfr": 13,
+          "on_maoi": false,
+          "platelets_k": 170,
+          "potassium_mmol": 4.7,
+          "qtc_ms": 458,
+          "requested_regimen": "APIXABAN_PO"
+        },
+        "vignette": "Patient Order ID: M_U11\n- Age: 55 years | Serum Albumin: 3.6 g/dL\n- Baseline eGFR: 13 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 458 ms | Serum Potassium: 4.7 mmol/L | Platelets: 170 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: APIXABAN_PO"
+      },
+      {
+        "id": "M_U12",
+        "input": {
+          "active_bleed": false,
+          "age": 60,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.7,
+          "egfr": 19,
+          "on_maoi": false,
+          "platelets_k": 205,
+          "potassium_mmol": 4.4,
+          "qtc_ms": 445,
+          "requested_regimen": "LINEZOLID_PO"
+        },
+        "vignette": "Patient Order ID: M_U12\n- Age: 60 years | Serum Albumin: 3.7 g/dL\n- Baseline eGFR: 19 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 445 ms | Serum Potassium: 4.4 mmol/L | Platelets: 205 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: LINEZOLID_PO"
+      },
+      {
+        "id": "M_U13",
+        "input": {
+          "active_bleed": false,
+          "age": 80,
+          "aki_stage": 0,
+          "albumin_g_dl": 2.9,
+          "egfr": 40,
+          "on_maoi": false,
+          "platelets_k": 188,
+          "potassium_mmol": 4.2,
+          "qtc_ms": 451,
+          "requested_regimen": "APIXABAN_PO"
+        },
+        "vignette": "Patient Order ID: M_U13\n- Age: 80 years | Serum Albumin: 2.9 g/dL\n- Baseline eGFR: 40 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 451 ms | Serum Potassium: 4.2 mmol/L | Platelets: 188 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: APIXABAN_PO"
+      },
+      {
+        "id": "M_U14",
+        "input": {
+          "active_bleed": false,
+          "age": 52,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.9,
+          "egfr": 71,
+          "on_maoi": false,
+          "platelets_k": 245,
+          "potassium_mmol": 6.0,
+          "qtc_ms": 436,
+          "requested_regimen": "VANCO_IV"
+        },
+        "vignette": "Patient Order ID: M_U14\n- Age: 52 years | Serum Albumin: 3.9 g/dL\n- Baseline eGFR: 71 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 436 ms | Serum Potassium: 6.0 mmol/L | Platelets: 245 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: VANCO_IV"
+      },
+      {
+        "id": "M_U15",
+        "input": {
+          "active_bleed": false,
+          "age": 67,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.4,
+          "egfr": 33,
+          "on_maoi": false,
+          "platelets_k": 198,
+          "potassium_mmol": 4.3,
+          "qtc_ms": 444,
+          "requested_regimen": "DAPTO_IV"
+        },
+        "vignette": "Patient Order ID: M_U15\n- Age: 67 years | Serum Albumin: 3.4 g/dL\n- Baseline eGFR: 33 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 444 ms | Serum Potassium: 4.3 mmol/L | Platelets: 198 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: DAPTO_IV"
+      },
+      {
+        "id": "M_U16",
+        "input": {
+          "active_bleed": false,
+          "age": 78,
+          "aki_stage": 3,
+          "albumin_g_dl": 3.1,
+          "egfr": 70,
+          "on_maoi": false,
+          "platelets_k": 155,
+          "potassium_mmol": 4.9,
+          "qtc_ms": 463,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_U16\n- Age: 78 years | Serum Albumin: 3.1 g/dL\n- Baseline eGFR: 70 mL/min/1.73m2 | KDIGO AKI Stage: 3\n- ECG QTc: 463 ms | Serum Potassium: 4.9 mmol/L | Platelets: 155 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "id": "M_U17",
+        "input": {
+          "active_bleed": false,
+          "age": 43,
+          "aki_stage": 0,
+          "albumin_g_dl": 4.0,
+          "egfr": 88,
+          "on_maoi": true,
+          "platelets_k": 275,
+          "potassium_mmol": 3.9,
+          "qtc_ms": 428,
+          "requested_regimen": "LINEZOLID_PO"
+        },
+        "vignette": "Patient Order ID: M_U17\n- Age: 43 years | Serum Albumin: 4.0 g/dL\n- Baseline eGFR: 88 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 428 ms | Serum Potassium: 3.9 mmol/L | Platelets: 275 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: true\n- Requested Inpatient Regimen: LINEZOLID_PO"
+      },
+      {
+        "id": "M_U18",
+        "input": {
+          "active_bleed": true,
+          "age": 71,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.6,
+          "egfr": 18,
+          "on_maoi": true,
+          "platelets_k": 32,
+          "potassium_mmol": 5.9,
+          "qtc_ms": 515,
+          "requested_regimen": "APIXABAN_PO"
+        },
+        "vignette": "Patient Order ID: M_U18\n- Age: 71 years | Serum Albumin: 3.6 g/dL\n- Baseline eGFR: 18 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 515 ms | Serum Potassium: 5.9 mmol/L | Platelets: 32 K/uL\n- Active Bleeding: true | Concurrent MAOI Therapy: true\n- Requested Inpatient Regimen: APIXABAN_PO"
+      },
+      {
+        "id": "M_U19",
+        "input": {
+          "active_bleed": false,
+          "age": 57,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.8,
+          "egfr": 36,
+          "on_maoi": false,
+          "platelets_k": 212,
+          "potassium_mmol": 4.2,
+          "qtc_ms": 447,
+          "requested_regimen": "PIPTAZO_IV"
+        },
+        "vignette": "Patient Order ID: M_U19\n- Age: 57 years | Serum Albumin: 3.8 g/dL\n- Baseline eGFR: 36 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 447 ms | Serum Potassium: 4.2 mmol/L | Platelets: 212 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: PIPTAZO_IV"
+      },
+      {
+        "id": "M_U20",
+        "input": {
+          "active_bleed": false,
+          "age": 66,
+          "aki_stage": 0,
+          "albumin_g_dl": 3.5,
+          "egfr": 27,
+          "on_maoi": false,
+          "platelets_k": 184,
+          "potassium_mmol": 4.5,
+          "qtc_ms": 453,
+          "requested_regimen": "MEROPENEM_IV"
+        },
+        "vignette": "Patient Order ID: M_U20\n- Age: 66 years | Serum Albumin: 3.5 g/dL\n- Baseline eGFR: 27 mL/min/1.73m2 | KDIGO AKI Stage: 0\n- ECG QTc: 453 ms | Serum Potassium: 4.5 mmol/L | Platelets: 184 K/uL\n- Active Bleeding: false | Concurrent MAOI Therapy: false\n- Requested Inpatient Regimen: MEROPENEM_IV"
+      }
+    ]
+  },
+  "version": "cross_domain_v1"
+}

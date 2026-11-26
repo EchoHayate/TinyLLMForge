@@ -1,0 +1,249 @@
+{
+  "general_retention": {
+    "G_R01": "210",
+    "G_R02": "78.75",
+    "G_R03": "15",
+    "G_R04": "225",
+    "G_R05": "Gamma",
+    "G_R06": "NO",
+    "G_R07": "Redis",
+    "G_R08": "Room-C",
+    "G_R09": "INV-2026-4092",
+    "G_R10": "Apr",
+    "G_R11": "3",
+    "G_R12": "v1.4.5",
+    "G_R13": "241",
+    "G_R14": "\u4e59",
+    "G_R15": "03:40",
+    "G_R16": "84"
+  },
+  "legal_compliance": {
+    "L_T01": {
+      "cure_days": 0,
+      "min_cap_x": 5,
+      "primary_rule": "LEG-R01",
+      "risk_grade": "CRITICAL",
+      "routing": "GC_BOARD_REJECT"
+    },
+    "L_T02": {
+      "cure_days": 45,
+      "min_cap_x": 5,
+      "primary_rule": "LEG-R06",
+      "risk_grade": "LOW",
+      "routing": "AUTO_APPROVE"
+    },
+    "L_T03": {
+      "cure_days": 45,
+      "min_cap_x": 5,
+      "primary_rule": "LEG-R06",
+      "risk_grade": "LOW",
+      "routing": "AUTO_APPROVE"
+    },
+    "L_T04": {
+      "cure_days": 15,
+      "min_cap_x": 3,
+      "primary_rule": "LEG-R02",
+      "risk_grade": "CRITICAL",
+      "routing": "GC_BOARD_REJECT"
+    },
+    "L_T05": {
+      "cure_days": 15,
+      "min_cap_x": 3,
+      "primary_rule": "LEG-R03",
+      "risk_grade": "HIGH",
+      "routing": "VP_LEGAL_CISO"
+    },
+    "L_T06": {
+      "cure_days": 45,
+      "min_cap_x": 2,
+      "primary_rule": "LEG-R06",
+      "risk_grade": "LOW",
+      "routing": "AUTO_APPROVE"
+    },
+    "L_T07": {
+      "cure_days": 30,
+      "min_cap_x": 2,
+      "primary_rule": "LEG-R04",
+      "risk_grade": "HIGH",
+      "routing": "VP_LEGAL_CISO"
+    },
+    "L_T08": {
+      "cure_days": 45,
+      "min_cap_x": 2,
+      "primary_rule": "LEG-R06",
+      "risk_grade": "LOW",
+      "routing": "AUTO_APPROVE"
+    },
+    "L_T09": {
+      "cure_days": 30,
+      "min_cap_x": 5,
+      "primary_rule": "LEG-R05",
+      "risk_grade": "ELEVATED",
+      "routing": "SENIOR_COUNSEL"
+    },
+    "L_T10": {
+      "cure_days": 45,
+      "min_cap_x": 3,
+      "primary_rule": "LEG-R06",
+      "risk_grade": "LOW",
+      "routing": "AUTO_APPROVE"
+    },
+    "L_T11": {
+      "cure_days": 30,
+      "min_cap_x": 3,
+      "primary_rule": "LEG-R05",
+      "risk_grade": "ELEVATED",
+      "routing": "SENIOR_COUNSEL"
+    },
+    "L_T12": {
+      "cure_days": 30,
+      "min_cap_x": 5,
+      "primary_rule": "LEG-R05",
+      "risk_grade": "ELEVATED",
+      "routing": "SENIOR_COUNSEL"
+    },
+    "L_T13": {
+      "cure_days": 30,
+      "min_cap_x": 2,
+      "primary_rule": "LEG-R05",
+      "risk_grade": "ELEVATED",
+      "routing": "SENIOR_COUNSEL"
+    },
+    "L_T14": {
+      "cure_days": 45,
+      "min_cap_x": 1,
+      "primary_rule": "LEG-R06",
+      "risk_grade": "LOW",
+      "routing": "AUTO_APPROVE"
+    },
+    "L_T15": {
+      "cure_days": 0,
+      "min_cap_x": 5,
+      "primary_rule": "LEG-R01",
+      "risk_grade": "CRITICAL",
+      "routing": "GC_BOARD_REJECT"
+    },
+    "L_T16": {
+      "cure_days": 45,
+      "min_cap_x": 5,
+      "primary_rule": "LEG-R06",
+      "risk_grade": "LOW",
+      "routing": "AUTO_APPROVE"
+    }
+  },
+  "med_triage": {
+    "M_T01": {
+      "action": "ADJUST_APPROVE",
+      "dose_mg": 1000,
+      "regimen": "CEFEPIME_IV",
+      "renal_tier": "R2_MILD",
+      "rule_id": "MED-R05"
+    },
+    "M_T02": {
+      "action": "STD_APPROVE",
+      "dose_mg": 2000,
+      "regimen": "CEFEPIME_IV",
+      "renal_tier": "R1_NORMAL",
+      "rule_id": "MED-R05"
+    },
+    "M_T03": {
+      "action": "ADJUST_APPROVE",
+      "dose_mg": 500,
+      "regimen": "MEROPENEM_IV",
+      "renal_tier": "R3_MOD",
+      "rule_id": "MED-R05"
+    },
+    "M_T04": {
+      "action": "ADJUST_APPROVE",
+      "dose_mg": 500,
+      "regimen": "VANCO_IV",
+      "renal_tier": "R4_SEVERE",
+      "rule_id": "MED-R05"
+    },
+    "M_T05": {
+      "action": "ADJUST_APPROVE",
+      "dose_mg": 1125,
+      "regimen": "PIPTAZO_IV",
+      "renal_tier": "R4_SEVERE",
+      "rule_id": "MED-R05"
+    },
+    "M_T06": {
+      "action": "ADJUST_APPROVE",
+      "dose_mg": 3375,
+      "regimen": "PIPTAZO_IV",
+      "renal_tier": "R2_MILD",
+      "rule_id": "MED-R05"
+    },
+    "M_T07": {
+      "action": "HOLD_STAT",
+      "dose_mg": 0,
+      "regimen": "NONE",
+      "renal_tier": "R1_NORMAL",
+      "rule_id": "MED-R01"
+    },
+    "M_T08": {
+      "action": "HOLD_STAT",
+      "dose_mg": 0,
+      "regimen": "NONE",
+      "renal_tier": "R2_MILD",
+      "rule_id": "MED-R04"
+    },
+    "M_T09": {
+      "action": "ADJUST_APPROVE",
+      "dose_mg": 1000,
+      "regimen": "VANCO_IV",
+      "renal_tier": "R2_MILD",
+      "rule_id": "MED-R05"
+    },
+    "M_T10": {
+      "action": "SWITCH_ALT",
+      "dose_mg": 350,
+      "regimen": "DAPTO_IV",
+      "renal_tier": "R3_MOD",
+      "rule_id": "MED-R02"
+    },
+    "M_T11": {
+      "action": "STD_APPROVE",
+      "dose_mg": 1500,
+      "regimen": "VANCO_IV",
+      "renal_tier": "R1_NORMAL",
+      "rule_id": "MED-R05"
+    },
+    "M_T12": {
+      "action": "SWITCH_ALT",
+      "dose_mg": 500,
+      "regimen": "MEROPENEM_IV",
+      "renal_tier": "R3_MOD",
+      "rule_id": "MED-R03"
+    },
+    "M_T13": {
+      "action": "SWITCH_ALT",
+      "dose_mg": 250,
+      "regimen": "MEROPENEM_IV",
+      "renal_tier": "R4_SEVERE",
+      "rule_id": "MED-R03"
+    },
+    "M_T14": {
+      "action": "STD_APPROVE",
+      "dose_mg": 10,
+      "regimen": "APIXABAN_PO",
+      "renal_tier": "R2_MILD",
+      "rule_id": "MED-R05"
+    },
+    "M_T15": {
+      "action": "STD_APPROVE",
+      "dose_mg": 600,
+      "regimen": "LINEZOLID_PO",
+      "renal_tier": "R3_MOD",
+      "rule_id": "MED-R05"
+    },
+    "M_T16": {
+      "action": "ADJUST_APPROVE",
+      "dose_mg": 2,
+      "regimen": "APIXABAN_PO",
+      "renal_tier": "R4_SEVERE",
+      "rule_id": "MED-R05"
+    }
+  },
+  "version": "cross_domain_v1"
+}
