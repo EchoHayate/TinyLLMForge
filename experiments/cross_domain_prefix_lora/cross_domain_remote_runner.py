@@ -100,7 +100,6 @@ def main() -> None:
     if _sha256_bytes(code_g12_raw) != args.code_g12_expected_sha256:
         raise ValueError("Gate G12 code adapter SHA256 mismatch")
     code_g12_loaded = torch.load(io.BytesIO(code_g12_raw), map_location="cpu", weights_only=True)
-    code_g12_pack = {"adapter": code_g12_loaded["adapter"]}
 
     pub_path = repo_root / "experiments/cross_domain_prefix_lora/data/cross_domain_v1/public_bundle.json"
     manifest_path = repo_root / "experiments/cross_domain_prefix_lora/data/cross_domain_v1/manifest.json"
@@ -132,6 +131,11 @@ def main() -> None:
     model.eval()
     model.requires_grad_(False)
     init_base_sha = _tensor_digest(_state(model))
+    code_g12_pack = {
+        "base_sha256": init_base_sha,
+        "adapter": code_g12_loaded["adapter"],
+        "adapter_sha256": _tensor_digest(code_g12_loaded["adapter"]),
+    }
 
     t_bg0 = time.monotonic()
     bg_trajs = prepare_multimodal_background_trajectories(
@@ -178,9 +182,14 @@ def main() -> None:
         _write_private_bytes(out_pt, art_bytes)
 
         reloaded = torch.load(io.BytesIO(out_pt.read_bytes()), map_location="cpu", weights_only=True)
-        if _tensor_digest(reloaded["adapter"]) != train_out["adapter_sha256"]:
+        reloaded_sha = _tensor_digest(reloaded["adapter"])
+        if reloaded_sha != train_out["adapter_sha256"]:
             raise RuntimeError(f"Reloaded adapter digest mismatch for {dom_name}")
-        trained_packs[dom_name] = {"adapter": reloaded["adapter"]}
+        trained_packs[dom_name] = {
+            "base_sha256": init_base_sha,
+            "adapter": reloaded["adapter"],
+            "adapter_sha256": reloaded_sha,
+        }
 
         seed_steps = [st for st in train_out["steps"] if st["source_pool"] == "seed"]
         domain_training_summaries[dom_name] = {
