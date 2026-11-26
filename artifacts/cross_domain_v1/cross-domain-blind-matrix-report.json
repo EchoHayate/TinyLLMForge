@@ -1,0 +1,2351 @@
+{
+  "base_model_sha256_verified_unchanged": true,
+  "blind_oracles_sha256": "719ba9a5e185a52f26a2d7a63a9101c305498e13f5c20c461d721f2974992e41",
+  "domain_training_summaries": {
+    "legal_compliance": {
+      "adapter_bytes_bf16_equiv": 7667712,
+      "adapter_bytes_fp32": 15335424,
+      "artifact_path_name": "legal_sop_adapter.pt",
+      "artifact_sha256": "e97a8399fe8a9ff8ff8345f228663b16470c2c072c1a8dc2b73cec53530cb4b7",
+      "first_seed_surgical_ce": 0.49046,
+      "hyperparams": {
+        "alpha": 16,
+        "background_anchors_per_step": 2,
+        "diff_token_weight": 4.0,
+        "gradient_clip": 1.0,
+        "lambda_bg_kl": 2.5,
+        "lambda_pos_kl": 1.5,
+        "lambda_seed_surgical_ce": 0.55,
+        "learning_rate": 0.00022,
+        "lr_schedule": "linear_decay_to_10pct",
+        "max_anchor_tokens": 128,
+        "max_teacher_tokens": 192,
+        "optimizer": "AdamW",
+        "rank": 8,
+        "scaffold_token_weight": 1.0,
+        "seed": 42,
+        "steps": 96,
+        "targets": [
+          "q_proj",
+          "v_proj"
+        ],
+        "weight_decay": 0.01
+      },
+      "last_bg_kl": 0.000525,
+      "last_pos_kl": 0.06751,
+      "last_seed_surgical_ce": 0.22425,
+      "mining_stats": {
+        "accepted_ids": [
+          "L_U01",
+          "L_U02",
+          "L_U04",
+          "L_U05",
+          "L_U06",
+          "L_U07",
+          "L_U08",
+          "L_U09",
+          "L_U10",
+          "L_U11",
+          "L_U12",
+          "L_U13",
+          "L_U14",
+          "L_U15",
+          "L_U16",
+          "L_U17",
+          "L_U18",
+          "L_U19",
+          "L_U20"
+        ],
+        "domain": "legal_compliance",
+        "schema_consistent_accepted": 19,
+        "unlabeled_attempted": 20
+      },
+      "positive_trajectory_count": 27,
+      "seed_trajectory_count": 8,
+      "training_wall_seconds": 101.157,
+      "trajectory_prep_seconds": 43.291,
+      "verified_unlabeled_trajectory_count": 19
+    },
+    "med_triage": {
+      "adapter_bytes_bf16_equiv": 7667712,
+      "adapter_bytes_fp32": 15335424,
+      "artifact_path_name": "med_sop_adapter.pt",
+      "artifact_sha256": "eb4a4206c2662f0063486f5ceb11b92c15fb7aea0df5a0753753123566f981a8",
+      "first_seed_surgical_ce": 1.55892,
+      "hyperparams": {
+        "alpha": 16,
+        "background_anchors_per_step": 2,
+        "diff_token_weight": 4.0,
+        "gradient_clip": 1.0,
+        "lambda_bg_kl": 2.5,
+        "lambda_pos_kl": 1.5,
+        "lambda_seed_surgical_ce": 0.55,
+        "learning_rate": 0.00022,
+        "lr_schedule": "linear_decay_to_10pct",
+        "max_anchor_tokens": 128,
+        "max_teacher_tokens": 192,
+        "optimizer": "AdamW",
+        "rank": 8,
+        "scaffold_token_weight": 1.0,
+        "seed": 42,
+        "steps": 96,
+        "targets": [
+          "q_proj",
+          "v_proj"
+        ],
+        "weight_decay": 0.01
+      },
+      "last_bg_kl": 0.000619,
+      "last_pos_kl": 0.14736,
+      "last_seed_surgical_ce": 0.05416,
+      "mining_stats": {
+        "accepted_ids": [
+          "M_U01",
+          "M_U02",
+          "M_U03",
+          "M_U04",
+          "M_U05",
+          "M_U06",
+          "M_U07",
+          "M_U08",
+          "M_U09",
+          "M_U11",
+          "M_U12",
+          "M_U13",
+          "M_U14",
+          "M_U15",
+          "M_U16",
+          "M_U17",
+          "M_U18",
+          "M_U20"
+        ],
+        "domain": "med_triage",
+        "schema_consistent_accepted": 18,
+        "unlabeled_attempted": 20
+      },
+      "positive_trajectory_count": 26,
+      "seed_trajectory_count": 8,
+      "training_wall_seconds": 102.154,
+      "trajectory_prep_seconds": 50.502,
+      "verified_unlabeled_trajectory_count": 18
+    }
+  },
+  "gpu_summary": {
+    "free_mib": 80979,
+    "name": "NVIDIA A100 80GB PCIe",
+    "used_mib": 71
+  },
+  "in_domain_blind_summary": {
+    "code_bugfix": {
+      "base_pass": "3/12",
+      "base_submetric_rate": 0.7604,
+      "long_text_pass": "4/12",
+      "long_text_submetric_rate": 0.7917,
+      "lora_pass": "4/12",
+      "lora_submetric_rate": 0.7812,
+      "prompt_token_reduction": "3416.1 -> 366.1",
+      "speedup_lora_vs_long_text": 0.892
+    },
+    "legal_compliance": {
+      "base_pass": "0/16",
+      "base_submetric_rate": 0.325,
+      "long_text_pass": "7/16",
+      "long_text_submetric_rate": 0.5875,
+      "lora_pass": "2/16",
+      "lora_submetric_rate": 0.4375,
+      "prompt_token_reduction": "3196.2 -> 303.2",
+      "speedup_lora_vs_long_text": 0.979
+    },
+    "med_triage": {
+      "base_pass": "0/16",
+      "base_submetric_rate": 0.3875,
+      "long_text_pass": "4/16",
+      "long_text_submetric_rate": 0.575,
+      "lora_pass": "0/16",
+      "lora_submetric_rate": 0.3875,
+      "prompt_token_reduction": "4042.2 -> 329.2",
+      "speedup_lora_vs_long_text": 0.971
+    }
+  },
+  "kind": "CROSS_DOMAIN_BLIND_EVALUATION_AND_MATRIX_REPORT",
+  "off_diagonal_contamination": {
+    "contaminated_outputs": 0,
+    "contamination_rate": 0.0,
+    "total_off_diagonal_outputs": 136
+  },
+  "public_bundle_sha256": "f1343d0698eefd74aa3768a5ee26f6545deaf2614cab02cc3a449c982bbe79c4",
+  "scored_4x4_matrix": {
+    "slot_0_base": {
+      "code_bugfix": {
+        "case_level_pass_count": 73,
+        "case_level_rate": 0.7604,
+        "case_level_total": 96,
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "mean_input_tokens": 366.1,
+        "median_wall_ms": 4150.4,
+        "passed_ids": [
+          "WT03",
+          "WT06",
+          "WT09"
+        ],
+        "per_task": {
+          "WT01": {
+            "cases_passed": 3,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT02": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT03": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT04": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT05": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT06": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT07": {
+            "cases_passed": 7,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT08": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT09": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT10": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT11": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT12": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          }
+        },
+        "strict_pass_count": 3,
+        "strict_pass_rate": 0.25,
+        "tasks_total": 12,
+        "total_wall_ms": 52641.03
+      },
+      "general_retention": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "mean_input_tokens": 71.2,
+        "median_wall_ms": 5214.04,
+        "passed_ids": [
+          "G_R01",
+          "G_R02",
+          "G_R03",
+          "G_R04",
+          "G_R06",
+          "G_R08",
+          "G_R09",
+          "G_R10",
+          "G_R11",
+          "G_R12",
+          "G_R13",
+          "G_R15",
+          "G_R16"
+        ],
+        "per_case": {
+          "G_R01": {
+            "contaminated": false,
+            "expected": "210",
+            "extracted": "210",
+            "passed": true
+          },
+          "G_R02": {
+            "contaminated": false,
+            "expected": "78.75",
+            "extracted": "78.75",
+            "passed": true
+          },
+          "G_R03": {
+            "contaminated": false,
+            "expected": "15",
+            "extracted": "15",
+            "passed": true
+          },
+          "G_R04": {
+            "contaminated": false,
+            "expected": "225",
+            "extracted": "225",
+            "passed": true
+          },
+          "G_R05": {
+            "contaminated": false,
+            "expected": "Gamma",
+            "extracted": "Also, **Alpha** must",
+            "passed": false
+          },
+          "G_R06": {
+            "contaminated": false,
+            "expected": "NO",
+            "extracted": "NO",
+            "passed": true
+          },
+          "G_R07": {
+            "contaminated": false,
+            "expected": "Redis",
+            "extracted": "-",
+            "passed": false
+          },
+          "G_R08": {
+            "contaminated": false,
+            "expected": "Room-C",
+            "extracted": "Room-C",
+            "passed": true
+          },
+          "G_R09": {
+            "contaminated": false,
+            "expected": "INV-2026-4092",
+            "extracted": "INV-2026-4092",
+            "passed": true
+          },
+          "G_R10": {
+            "contaminated": false,
+            "expected": "Apr",
+            "extracted": "Apr",
+            "passed": true
+          },
+          "G_R11": {
+            "contaminated": false,
+            "expected": "3",
+            "extracted": "3",
+            "passed": true
+          },
+          "G_R12": {
+            "contaminated": false,
+            "expected": "v1.4.5",
+            "extracted": "v1.4.5",
+            "passed": true
+          },
+          "G_R13": {
+            "contaminated": false,
+            "expected": "241",
+            "extracted": "241",
+            "passed": true
+          },
+          "G_R14": {
+            "contaminated": false,
+            "expected": "\u4e59",
+            "extracted": "- \u6392\u5217 5\uff1a\u4e59\u5728\u7b2c\u4e8c\u4f4d\uff0c\u4e19\u5728\u7b2c\u4e09\u4f4d \u2192",
+            "passed": false
+          },
+          "G_R15": {
+            "contaminated": false,
+            "expected": "03:40",
+            "extracted": "03:40",
+            "passed": true
+          },
+          "G_R16": {
+            "contaminated": false,
+            "expected": "84",
+            "extracted": "84",
+            "passed": true
+          }
+        },
+        "strict_pass_count": 13,
+        "strict_pass_rate": 0.8125,
+        "tasks_total": 16,
+        "total_wall_ms": 79077.42
+      },
+      "legal_compliance": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "field_accuracy": 0.325,
+        "field_matched_count": 26,
+        "field_total_count": 80,
+        "mean_input_tokens": 303.2,
+        "median_wall_ms": 1435.31,
+        "passed_ids": [],
+        "per_case": {
+          "L_T01": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T02": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T03": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T04": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T05": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T06": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T07": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T08": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T09": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T10": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T11": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T12": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T13": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T14": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T15": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T16": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          }
+        },
+        "strict_pass_count": 0,
+        "strict_pass_rate": 0.0,
+        "tasks_total": 16,
+        "total_wall_ms": 22740.29,
+        "valid_json_count": 16
+      },
+      "med_triage": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "field_accuracy": 0.3875,
+        "field_matched_count": 31,
+        "field_total_count": 80,
+        "mean_input_tokens": 329.2,
+        "median_wall_ms": 1627.91,
+        "passed_ids": [],
+        "per_case": {
+          "M_T01": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T02": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T03": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T04": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T05": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T06": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T07": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T08": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T09": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T10": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T11": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T12": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T13": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T14": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T15": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T16": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          }
+        },
+        "strict_pass_count": 0,
+        "strict_pass_rate": 0.0,
+        "tasks_total": 16,
+        "total_wall_ms": 26095.63,
+        "valid_json_count": 16
+      }
+    },
+    "slot_1_code_lora": {
+      "code_bugfix": {
+        "case_level_pass_count": 75,
+        "case_level_rate": 0.7812,
+        "case_level_total": 96,
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "mean_input_tokens": 366.1,
+        "median_wall_ms": 5068.72,
+        "passed_ids": [
+          "WT01",
+          "WT03",
+          "WT05",
+          "WT06"
+        ],
+        "per_task": {
+          "WT01": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT02": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT03": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT04": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT05": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT06": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT07": {
+            "cases_passed": 7,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT08": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT09": {
+            "cases_passed": 2,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT10": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT11": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT12": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          }
+        },
+        "strict_pass_count": 4,
+        "strict_pass_rate": 0.3333,
+        "tasks_total": 12,
+        "total_wall_ms": 63129.14
+      },
+      "general_retention": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "mean_input_tokens": 71.2,
+        "median_wall_ms": 6542.49,
+        "passed_ids": [
+          "G_R01",
+          "G_R02",
+          "G_R03",
+          "G_R04",
+          "G_R06",
+          "G_R08",
+          "G_R09",
+          "G_R10",
+          "G_R12",
+          "G_R13",
+          "G_R15",
+          "G_R16"
+        ],
+        "per_case": {
+          "G_R01": {
+            "contaminated": false,
+            "expected": "210",
+            "extracted": "210",
+            "passed": true
+          },
+          "G_R02": {
+            "contaminated": false,
+            "expected": "78.75",
+            "extracted": "78.75",
+            "passed": true
+          },
+          "G_R03": {
+            "contaminated": false,
+            "expected": "15",
+            "extracted": "15",
+            "passed": true
+          },
+          "G_R04": {
+            "contaminated": false,
+            "expected": "225",
+            "extracted": "225",
+            "passed": true
+          },
+          "G_R05": {
+            "contaminated": false,
+            "expected": "Gamma",
+            "extracted": "Now, **Alpha** must come after **Gamma**, so **Alpha** must be in position 4.",
+            "passed": false
+          },
+          "G_R06": {
+            "contaminated": false,
+            "expected": "NO",
+            "extracted": "NO",
+            "passed": true
+          },
+          "G_R07": {
+            "contaminated": false,
+            "expected": "Redis",
+            "extracted": "- The three databases are: **Redis**, **Postgres**, and **ClickHouse",
+            "passed": false
+          },
+          "G_R08": {
+            "contaminated": false,
+            "expected": "Room-C",
+            "extracted": "Room-C",
+            "passed": true
+          },
+          "G_R09": {
+            "contaminated": false,
+            "expected": "INV-2026-4092",
+            "extracted": "INV-2026-4092",
+            "passed": true
+          },
+          "G_R10": {
+            "contaminated": false,
+            "expected": "Apr",
+            "extracted": "Apr",
+            "passed": true
+          },
+          "G_R11": {
+            "contaminated": false,
+            "expected": "3",
+            "extracted": "- 80 \u2192 divisible by 2",
+            "passed": false
+          },
+          "G_R12": {
+            "contaminated": false,
+            "expected": "v1.4.5",
+            "extracted": "v1.4.5",
+            "passed": true
+          },
+          "G_R13": {
+            "contaminated": false,
+            "expected": "241",
+            "extracted": "241",
+            "passed": true
+          },
+          "G_R14": {
+            "contaminated": false,
+            "expected": "\u4e59",
+            "extracted": "#### \u5206\u6790\u6392\u5217 4\uff1a\u4e59\u3001",
+            "passed": false
+          },
+          "G_R15": {
+            "contaminated": false,
+            "expected": "03:40",
+            "extracted": "03:40",
+            "passed": true
+          },
+          "G_R16": {
+            "contaminated": false,
+            "expected": "84",
+            "extracted": "84",
+            "passed": true
+          }
+        },
+        "strict_pass_count": 12,
+        "strict_pass_rate": 0.75,
+        "tasks_total": 16,
+        "total_wall_ms": 92739.35
+      },
+      "legal_compliance": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "field_accuracy": 0.3125,
+        "field_matched_count": 25,
+        "field_total_count": 80,
+        "mean_input_tokens": 303.2,
+        "median_wall_ms": 1739.42,
+        "passed_ids": [],
+        "per_case": {
+          "L_T01": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T02": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T03": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T04": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T05": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T06": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T07": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T08": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T09": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T10": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T11": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T12": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T13": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T14": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T15": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T16": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          }
+        },
+        "strict_pass_count": 0,
+        "strict_pass_rate": 0.0,
+        "tasks_total": 16,
+        "total_wall_ms": 27863.47,
+        "valid_json_count": 16
+      },
+      "med_triage": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "field_accuracy": 0.3875,
+        "field_matched_count": 31,
+        "field_total_count": 80,
+        "mean_input_tokens": 329.2,
+        "median_wall_ms": 1964.26,
+        "passed_ids": [],
+        "per_case": {
+          "M_T01": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T02": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T03": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T04": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T05": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T06": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T07": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T08": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T09": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T10": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T11": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T12": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T13": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T14": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T15": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T16": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          }
+        },
+        "strict_pass_count": 0,
+        "strict_pass_rate": 0.0,
+        "tasks_total": 16,
+        "total_wall_ms": 31473.42,
+        "valid_json_count": 16
+      }
+    },
+    "slot_2_med_lora": {
+      "code_bugfix": {
+        "case_level_pass_count": 78,
+        "case_level_rate": 0.8125,
+        "case_level_total": 96,
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "mean_input_tokens": 366.1,
+        "median_wall_ms": 5097.56,
+        "passed_ids": [
+          "WT01",
+          "WT03",
+          "WT04",
+          "WT06"
+        ],
+        "per_task": {
+          "WT01": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT02": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT03": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT04": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT05": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT06": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT07": {
+            "cases_passed": 7,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT08": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT09": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT10": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT11": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT12": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          }
+        },
+        "strict_pass_count": 4,
+        "strict_pass_rate": 0.3333,
+        "tasks_total": 12,
+        "total_wall_ms": 63294.33
+      },
+      "general_retention": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "mean_input_tokens": 71.2,
+        "median_wall_ms": 6226.61,
+        "passed_ids": [
+          "G_R01",
+          "G_R02",
+          "G_R03",
+          "G_R04",
+          "G_R06",
+          "G_R08",
+          "G_R09",
+          "G_R10",
+          "G_R12",
+          "G_R13",
+          "G_R15",
+          "G_R16"
+        ],
+        "per_case": {
+          "G_R01": {
+            "contaminated": false,
+            "expected": "210",
+            "extracted": "210",
+            "passed": true
+          },
+          "G_R02": {
+            "contaminated": false,
+            "expected": "78.75",
+            "extracted": "78.75",
+            "passed": true
+          },
+          "G_R03": {
+            "contaminated": false,
+            "expected": "15",
+            "extracted": "15",
+            "passed": true
+          },
+          "G_R04": {
+            "contaminated": false,
+            "expected": "225",
+            "extracted": "225",
+            "passed": true
+          },
+          "G_R05": {
+            "contaminated": false,
+            "expected": "Gamma",
+            "extracted": "Now, **Alpha** must come after **Gamma**, so **Alpha** must be in position",
+            "passed": false
+          },
+          "G_R06": {
+            "contaminated": false,
+            "expected": "NO",
+            "extracted": "NO",
+            "passed": true
+          },
+          "G_R07": {
+            "contaminated": false,
+            "expected": "Redis",
+            "extracted": "- Liam uses **ClickHouse**.",
+            "passed": false
+          },
+          "G_R08": {
+            "contaminated": false,
+            "expected": "Room-C",
+            "extracted": "Room-C",
+            "passed": true
+          },
+          "G_R09": {
+            "contaminated": false,
+            "expected": "INV-2026-4092",
+            "extracted": "INV-2026-4092",
+            "passed": true
+          },
+          "G_R10": {
+            "contaminated": false,
+            "expected": "Apr",
+            "extracted": "Apr",
+            "passed": true
+          },
+          "G_R11": {
+            "contaminated": false,
+            "expected": "3",
+            "extracted": "Check",
+            "passed": false
+          },
+          "G_R12": {
+            "contaminated": false,
+            "expected": "v1.4.5",
+            "extracted": "v1.4.5",
+            "passed": true
+          },
+          "G_R13": {
+            "contaminated": false,
+            "expected": "241",
+            "extracted": "241",
+            "passed": true
+          },
+          "G_R14": {
+            "contaminated": false,
+            "expected": "\u4e59",
+            "extracted": "- \u6392\u5217 5\uff1a\u4e59\u5728\u7b2c\u4e8c\u4f4d\uff0c\u4e19\u5728\u7b2c\u4e09\u4f4d \u2192",
+            "passed": false
+          },
+          "G_R15": {
+            "contaminated": false,
+            "expected": "03:40",
+            "extracted": "03:40",
+            "passed": true
+          },
+          "G_R16": {
+            "contaminated": false,
+            "expected": "84",
+            "extracted": "84",
+            "passed": true
+          }
+        },
+        "strict_pass_count": 12,
+        "strict_pass_rate": 0.75,
+        "tasks_total": 16,
+        "total_wall_ms": 88500.47
+      },
+      "legal_compliance": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "field_accuracy": 0.325,
+        "field_matched_count": 26,
+        "field_total_count": 80,
+        "mean_input_tokens": 303.2,
+        "median_wall_ms": 1716.9,
+        "passed_ids": [],
+        "per_case": {
+          "L_T01": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T02": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T03": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T04": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T05": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T06": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T07": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T08": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T09": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T10": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T11": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T12": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T13": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T14": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T15": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T16": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          }
+        },
+        "strict_pass_count": 0,
+        "strict_pass_rate": 0.0,
+        "tasks_total": 16,
+        "total_wall_ms": 27423.08,
+        "valid_json_count": 16
+      },
+      "med_triage": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "field_accuracy": 0.3875,
+        "field_matched_count": 31,
+        "field_total_count": 80,
+        "mean_input_tokens": 329.2,
+        "median_wall_ms": 2001.52,
+        "passed_ids": [],
+        "per_case": {
+          "M_T01": {
+            "contaminated": false,
+            "matched_fields": 4,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T02": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T03": {
+            "contaminated": false,
+            "matched_fields": 4,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T04": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T05": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T06": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T07": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T08": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T09": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T10": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T11": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T12": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T13": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T14": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T15": {
+            "contaminated": false,
+            "matched_fields": 4,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T16": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          }
+        },
+        "strict_pass_count": 0,
+        "strict_pass_rate": 0.0,
+        "tasks_total": 16,
+        "total_wall_ms": 31611.02,
+        "valid_json_count": 16
+      }
+    },
+    "slot_3_legal_lora": {
+      "code_bugfix": {
+        "case_level_pass_count": 73,
+        "case_level_rate": 0.7604,
+        "case_level_total": 96,
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "mean_input_tokens": 366.1,
+        "median_wall_ms": 5224.73,
+        "passed_ids": [
+          "WT03",
+          "WT06",
+          "WT09"
+        ],
+        "per_task": {
+          "WT01": {
+            "cases_passed": 3,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT02": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT03": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT04": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT05": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT06": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT07": {
+            "cases_passed": 7,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT08": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT09": {
+            "cases_passed": 8,
+            "contaminated": false,
+            "strict_pass": true,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT10": {
+            "cases_passed": 5,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT11": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          },
+          "WT12": {
+            "cases_passed": 6,
+            "contaminated": false,
+            "strict_pass": false,
+            "total_cases": 8,
+            "valid_syntax": true
+          }
+        },
+        "strict_pass_count": 3,
+        "strict_pass_rate": 0.25,
+        "tasks_total": 12,
+        "total_wall_ms": 65823.14
+      },
+      "general_retention": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "mean_input_tokens": 71.2,
+        "median_wall_ms": 6107.86,
+        "passed_ids": [
+          "G_R01",
+          "G_R02",
+          "G_R03",
+          "G_R04",
+          "G_R06",
+          "G_R08",
+          "G_R09",
+          "G_R10",
+          "G_R12",
+          "G_R13",
+          "G_R15",
+          "G_R16"
+        ],
+        "per_case": {
+          "G_R01": {
+            "contaminated": false,
+            "expected": "210",
+            "extracted": "210",
+            "passed": true
+          },
+          "G_R02": {
+            "contaminated": false,
+            "expected": "78.75",
+            "extracted": "78.75",
+            "passed": true
+          },
+          "G_R03": {
+            "contaminated": false,
+            "expected": "15",
+            "extracted": "15",
+            "passed": true
+          },
+          "G_R04": {
+            "contaminated": false,
+            "expected": "225",
+            "extracted": "225",
+            "passed": true
+          },
+          "G_R05": {
+            "contaminated": false,
+            "expected": "Gamma",
+            "extracted": "- Beta",
+            "passed": false
+          },
+          "G_R06": {
+            "contaminated": false,
+            "expected": "NO",
+            "extracted": "NO",
+            "passed": true
+          },
+          "G_R07": {
+            "contaminated": false,
+            "expected": "Redis",
+            "extracted": "-",
+            "passed": false
+          },
+          "G_R08": {
+            "contaminated": false,
+            "expected": "Room-C",
+            "extracted": "Room-C",
+            "passed": true
+          },
+          "G_R09": {
+            "contaminated": false,
+            "expected": "INV-2026-4092",
+            "extracted": "INV-2026-4092",
+            "passed": true
+          },
+          "G_R10": {
+            "contaminated": false,
+            "expected": "Apr",
+            "extracted": "Apr",
+            "passed": true
+          },
+          "G_R11": {
+            "contaminated": false,
+            "expected": "3",
+            "extracted": "- 3",
+            "passed": false
+          },
+          "G_R12": {
+            "contaminated": false,
+            "expected": "v1.4.5",
+            "extracted": "v1.4.5",
+            "passed": true
+          },
+          "G_R13": {
+            "contaminated": false,
+            "expected": "241",
+            "extracted": "241",
+            "passed": true
+          },
+          "G_R14": {
+            "contaminated": false,
+            "expected": "\u4e59",
+            "extracted": "\u6761\u4ef6 3\uff1a\u4e19\u4e0d\u5728\u6700\u540e\u4e00\u4f4d",
+            "passed": false
+          },
+          "G_R15": {
+            "contaminated": false,
+            "expected": "03:40",
+            "extracted": "03:40",
+            "passed": true
+          },
+          "G_R16": {
+            "contaminated": false,
+            "expected": "84",
+            "extracted": "84",
+            "passed": true
+          }
+        },
+        "strict_pass_count": 12,
+        "strict_pass_rate": 0.75,
+        "tasks_total": 16,
+        "total_wall_ms": 87495.15
+      },
+      "legal_compliance": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "field_accuracy": 0.4375,
+        "field_matched_count": 35,
+        "field_total_count": 80,
+        "mean_input_tokens": 303.2,
+        "median_wall_ms": 1701.12,
+        "passed_ids": [
+          "L_T01",
+          "L_T15"
+        ],
+        "per_case": {
+          "L_T01": {
+            "contaminated": false,
+            "matched_fields": 5,
+            "strict_pass": true,
+            "valid_json": true
+          },
+          "L_T02": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T03": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T04": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T05": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T06": {
+            "contaminated": false,
+            "matched_fields": 4,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T07": {
+            "contaminated": false,
+            "matched_fields": 4,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T08": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T09": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T10": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T11": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T12": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T13": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T14": {
+            "contaminated": false,
+            "matched_fields": 4,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "L_T15": {
+            "contaminated": false,
+            "matched_fields": 5,
+            "strict_pass": true,
+            "valid_json": true
+          },
+          "L_T16": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          }
+        },
+        "strict_pass_count": 2,
+        "strict_pass_rate": 0.125,
+        "tasks_total": 16,
+        "total_wall_ms": 27173.78,
+        "valid_json_count": 16
+      },
+      "med_triage": {
+        "contamination_count": 0,
+        "contamination_rate": 0.0,
+        "field_accuracy": 0.3875,
+        "field_matched_count": 31,
+        "field_total_count": 80,
+        "mean_input_tokens": 329.2,
+        "median_wall_ms": 2003.98,
+        "passed_ids": [],
+        "per_case": {
+          "M_T01": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T02": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T03": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T04": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T05": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T06": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T07": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T08": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T09": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T10": {
+            "contaminated": false,
+            "matched_fields": 1,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T11": {
+            "contaminated": false,
+            "matched_fields": 3,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T12": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T13": {
+            "contaminated": false,
+            "matched_fields": 0,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T14": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T15": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          },
+          "M_T16": {
+            "contaminated": false,
+            "matched_fields": 2,
+            "strict_pass": false,
+            "valid_json": true
+          }
+        },
+        "strict_pass_count": 0,
+        "strict_pass_rate": 0.0,
+        "tasks_total": 16,
+        "total_wall_ms": 31913.56,
+        "valid_json_count": 16
+      }
+    }
+  },
+  "scored_long_text_baselines": {
+    "code_bugfix": {
+      "case_level_pass_count": 76,
+      "case_level_rate": 0.7917,
+      "case_level_total": 96,
+      "contamination_count": 0,
+      "contamination_rate": 0.0,
+      "mean_input_tokens": 3416.1,
+      "median_wall_ms": 4385.97,
+      "passed_ids": [
+        "WT01",
+        "WT03",
+        "WT05",
+        "WT11"
+      ],
+      "per_task": {
+        "WT01": {
+          "cases_passed": 8,
+          "contaminated": false,
+          "strict_pass": true,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT02": {
+          "cases_passed": 5,
+          "contaminated": false,
+          "strict_pass": false,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT03": {
+          "cases_passed": 8,
+          "contaminated": false,
+          "strict_pass": true,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT04": {
+          "cases_passed": 6,
+          "contaminated": false,
+          "strict_pass": false,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT05": {
+          "cases_passed": 8,
+          "contaminated": false,
+          "strict_pass": true,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT06": {
+          "cases_passed": 7,
+          "contaminated": false,
+          "strict_pass": false,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT07": {
+          "cases_passed": 6,
+          "contaminated": false,
+          "strict_pass": false,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT08": {
+          "cases_passed": 6,
+          "contaminated": false,
+          "strict_pass": false,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT09": {
+          "cases_passed": 6,
+          "contaminated": false,
+          "strict_pass": false,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT10": {
+          "cases_passed": 3,
+          "contaminated": false,
+          "strict_pass": false,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT11": {
+          "cases_passed": 8,
+          "contaminated": false,
+          "strict_pass": true,
+          "total_cases": 8,
+          "valid_syntax": true
+        },
+        "WT12": {
+          "cases_passed": 5,
+          "contaminated": false,
+          "strict_pass": false,
+          "total_cases": 8,
+          "valid_syntax": true
+        }
+      },
+      "strict_pass_count": 4,
+      "strict_pass_rate": 0.3333,
+      "tasks_total": 12,
+      "total_wall_ms": 56306.78
+    },
+    "legal_compliance": {
+      "contamination_count": 0,
+      "contamination_rate": 0.0,
+      "field_accuracy": 0.5875,
+      "field_matched_count": 47,
+      "field_total_count": 80,
+      "mean_input_tokens": 3196.2,
+      "median_wall_ms": 1644.23,
+      "passed_ids": [
+        "L_T01",
+        "L_T05",
+        "L_T07",
+        "L_T09",
+        "L_T12",
+        "L_T14",
+        "L_T15"
+      ],
+      "per_case": {
+        "L_T01": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "L_T02": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "L_T03": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "L_T04": {
+          "contaminated": false,
+          "matched_fields": 4,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "L_T05": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "L_T06": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "L_T07": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "L_T08": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "L_T09": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "L_T10": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "L_T11": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "L_T12": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "L_T13": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "L_T14": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "L_T15": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "L_T16": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        }
+      },
+      "strict_pass_count": 7,
+      "strict_pass_rate": 0.4375,
+      "tasks_total": 16,
+      "total_wall_ms": 26614.55,
+      "valid_json_count": 16
+    },
+    "med_triage": {
+      "contamination_count": 0,
+      "contamination_rate": 0.0,
+      "field_accuracy": 0.575,
+      "field_matched_count": 46,
+      "field_total_count": 80,
+      "mean_input_tokens": 4042.2,
+      "median_wall_ms": 1929.91,
+      "passed_ids": [
+        "M_T01",
+        "M_T08",
+        "M_T10",
+        "M_T12"
+      ],
+      "per_case": {
+        "M_T01": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "M_T02": {
+          "contaminated": false,
+          "matched_fields": 2,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T03": {
+          "contaminated": false,
+          "matched_fields": 3,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T04": {
+          "contaminated": false,
+          "matched_fields": 3,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T05": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T06": {
+          "contaminated": false,
+          "matched_fields": 4,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T07": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T08": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "M_T09": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T10": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "M_T11": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T12": {
+          "contaminated": false,
+          "matched_fields": 5,
+          "strict_pass": true,
+          "valid_json": true
+        },
+        "M_T13": {
+          "contaminated": false,
+          "matched_fields": 4,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T14": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T15": {
+          "contaminated": false,
+          "matched_fields": 4,
+          "strict_pass": false,
+          "valid_json": true
+        },
+        "M_T16": {
+          "contaminated": false,
+          "matched_fields": 1,
+          "strict_pass": false,
+          "valid_json": true
+        }
+      },
+      "strict_pass_count": 4,
+      "strict_pass_rate": 0.25,
+      "tasks_total": 16,
+      "total_wall_ms": 30683.74,
+      "valid_json_count": 16
+    }
+  },
+  "single_shot_blind_protocol": true,
+  "stage1_wall_clock_seconds": 1558.52,
+  "version": "cross_domain_v1",
+  "zero_blind_oracle_in_gpu_payload": true
+}

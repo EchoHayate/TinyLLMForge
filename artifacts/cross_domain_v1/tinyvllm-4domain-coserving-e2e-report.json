@@ -1,0 +1,165 @@
+{
+  "all_12_mixed_4domain_matched_single_cudagraph": false,
+  "burst32_4domain_paged_kv_comparison": {
+    "kv_blocks_saved": 37,
+    "kv_blocks_saved_ratio": 0.3978,
+    "kv_mib_saved": 1332.0,
+    "native_3domain_warm_prefix_cache_apc": {
+      "batch_requests": 32,
+      "median_elapsed_ms": 7422.31,
+      "output_tokens": 2645,
+      "output_tokens_per_sec": 356.36,
+      "peak_allocated_kv_blocks": 93,
+      "peak_allocated_kv_mib": 3348.0
+    },
+    "promoted_3domain_bf16_lora_slots": {
+      "batch_requests": 32,
+      "median_elapsed_ms": 7086.08,
+      "output_tokens": 2643,
+      "output_tokens_per_sec": 372.98,
+      "peak_allocated_kv_blocks": 56,
+      "peak_allocated_kv_mib": 2016.0
+    },
+    "throughput_speedup": 1.0466
+  },
+  "cuda_graphs_captured_batch_sizes": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    48,
+    64
+  ],
+  "gpu_summary": {
+    "free_mib": 80979,
+    "name": "NVIDIA A100 80GB PCIe",
+    "used_mib": 71
+  },
+  "kind": "TINYVLLM_4DOMAIN_MULTISLOT_COSERVING_REPORT",
+  "mixed_12req_4domain_verification": {
+    "G_R01": {
+      "domain": "general_retention",
+      "initial_kv_blocks": 1,
+      "matches_single_request_cudagraph_run": false,
+      "original_tokens": 67,
+      "resolved_lora_slot_id": 0,
+      "rewritten_tokens": 67
+    },
+    "G_R02": {
+      "domain": "general_retention",
+      "initial_kv_blocks": 1,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 77,
+      "resolved_lora_slot_id": 0,
+      "rewritten_tokens": 77
+    },
+    "G_R03": {
+      "domain": "general_retention",
+      "initial_kv_blocks": 1,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 68,
+      "resolved_lora_slot_id": 0,
+      "rewritten_tokens": 68
+    },
+    "L_T01": {
+      "domain": "legal_compliance",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 3199,
+      "resolved_lora_slot_id": 3,
+      "rewritten_tokens": 306
+    },
+    "L_T02": {
+      "domain": "legal_compliance",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 3195,
+      "resolved_lora_slot_id": 3,
+      "rewritten_tokens": 302
+    },
+    "L_T03": {
+      "domain": "legal_compliance",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 3201,
+      "resolved_lora_slot_id": 3,
+      "rewritten_tokens": 308
+    },
+    "M_T01": {
+      "domain": "med_triage",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 4043,
+      "resolved_lora_slot_id": 2,
+      "rewritten_tokens": 330
+    },
+    "M_T02": {
+      "domain": "med_triage",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 4043,
+      "resolved_lora_slot_id": 2,
+      "rewritten_tokens": 330
+    },
+    "M_T03": {
+      "domain": "med_triage",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 4042,
+      "resolved_lora_slot_id": 2,
+      "rewritten_tokens": 329
+    },
+    "WT01": {
+      "domain": "code_bugfix",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 3431,
+      "resolved_lora_slot_id": 1,
+      "rewritten_tokens": 381
+    },
+    "WT02": {
+      "domain": "code_bugfix",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 3399,
+      "resolved_lora_slot_id": 1,
+      "rewritten_tokens": 349
+    },
+    "WT03": {
+      "domain": "code_bugfix",
+      "initial_kv_blocks": 2,
+      "matches_single_request_cudagraph_run": true,
+      "original_tokens": 3368,
+      "resolved_lora_slot_id": 1,
+      "rewritten_tokens": 318
+    }
+  },
+  "registered_domains": {
+    "slot_1_code_bugfix": {
+      "layers_loaded": 36,
+      "long_prefix_tokens": 3090,
+      "short_prefix_tokens": 40,
+      "slot_id": 1,
+      "slot_resident_bytes": 7667712
+    },
+    "slot_2_med_triage": {
+      "layers_loaded": 36,
+      "long_prefix_tokens": 3738,
+      "short_prefix_tokens": 25,
+      "slot_id": 2,
+      "slot_resident_bytes": 7667712
+    },
+    "slot_3_legal_compliance": {
+      "layers_loaded": 36,
+      "long_prefix_tokens": 2918,
+      "short_prefix_tokens": 25,
+      "slot_id": 3,
+      "slot_resident_bytes": 7667712
+    }
+  },
+  "stage3_wall_clock_seconds": 182.06,
+  "total_3domain_bf16_lora_mib": 21.9375,
+  "version": "cross_domain_v1"
+}

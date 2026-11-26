@@ -724,36 +724,44 @@ def extract_first_json_object(raw_text: str) -> dict | None:
     if not isinstance(raw_text, str):
         return None
     stripped = raw_text.strip()
-    start = stripped.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    in_str = False
-    esc = False
-    for idx in range(start, len(stripped)):
-        ch = stripped[idx]
-        if in_str:
-            if esc:
-                esc = False
-            elif ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-        else:
-            if ch == '"':
-                in_str = True
-            elif ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = stripped[start : idx + 1]
-                    try:
-                        parsed = json.loads(candidate)
-                        return parsed if isinstance(parsed, dict) else None
-                    except Exception:
-                        return None
-    return None
+    search_pos = 0
+    while True:
+        start = stripped.find("{", search_pos)
+        if start < 0:
+            return None
+        depth = 0
+        in_str = False
+        esc = False
+        matched = False
+        for idx in range(start, len(stripped)):
+            ch = stripped[idx]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+            else:
+                if ch == '"':
+                    in_str = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        matched = True
+                        candidate = stripped[start : idx + 1]
+                        try:
+                            parsed = json.loads(candidate)
+                            if isinstance(parsed, dict):
+                                return parsed
+                        except Exception:
+                            pass
+                        search_pos = start + 1
+                        break
+        if not matched:
+            return None
 
 
 def detect_cross_domain_contamination(target_domain: str, raw_text: str) -> bool:

@@ -1,0 +1,51 @@
+{
+  "domains": {
+    "legal_compliance": {
+      "accepted_unlabeled_cot": 20,
+      "base_cot": {
+        "field_accuracy": 0.3125,
+        "strict_pass": "0/16",
+        "strict_pass_count": 0,
+        "total_wall_ms": 38994.8
+      },
+      "general_retention_8_pass": "7/8",
+      "long_text_cot": {
+        "field_accuracy": 0.85,
+        "strict_pass": "13/16",
+        "strict_pass_count": 13,
+        "total_wall_ms": 68074.5
+      },
+      "lora_bf16_mib": 16.312,
+      "lora_cot_mlp": {
+        "field_accuracy": 0.525,
+        "strict_pass": "5/16",
+        "strict_pass_count": 5,
+        "total_wall_ms": 84005.5
+      }
+    },
+    "med_triage": {
+      "accepted_unlabeled_cot": 18,
+      "base_cot": {
+        "field_accuracy": 0.2875,
+        "strict_pass": "0/16",
+        "strict_pass_count": 0,
+        "total_wall_ms": 36053.2
+      },
+      "general_retention_8_pass": "6/8",
+      "long_text_cot": {
+        "field_accuracy": 0.6,
+        "strict_pass": "6/16",
+        "strict_pass_count": 6,
+        "total_wall_ms": 81606.9
+      },
+      "lora_bf16_mib": 16.312,
+      "lora_cot_mlp": {
+        "field_accuracy": 0.65,
+        "strict_pass": "2/16",
+        "strict_pass_count": 2,
+        "total_wall_ms": 94109.3
+      }
+    }
+  },
+  "elapsed_seconds": 943.85
+}
