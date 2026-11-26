@@ -1082,6 +1082,11 @@ class RowParallelLinear(LinearBase):
             return torch.cat(outputs)
         bias = self.bias if self.tp_rank == 0 else None
         y = self._local_output(x, bias)
+        mlp_pool = getattr(self, "mlp_lora_pool", None)
+        if mlp_pool is not None:
+            slot_ids = get_context().lora_token_slot_ids
+            if slot_ids is not None:
+                y = mlp_pool.apply(x, y, slot_ids)
         if self.tp_size > 1:
             profile_collective(
                 "row_parallel_all_reduce",

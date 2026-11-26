@@ -17,15 +17,17 @@ if "tinyvllm" not in sys.modules:
     sys.modules["tinyvllm"] = _pkg
 
 from tinyvllm.lora import (
+    LinearLoRASlotPool,
     PrefixLoRARegistry,
     QKVLoRASlotPool,
+    install_mlp_down_lora_pools,
     install_qkv_lora_pools,
     load_hf_lora_into_tinyvllm_slot,
 )
 from tinyvllm.sampling_params import SamplingParams
 from tinyvllm.engine.sequence import Sequence
 from tinyvllm.utils.context import get_context, reset_context, set_context
-from tinyvllm.layers.linear import QKVParallelLinear
+from tinyvllm.layers.linear import QKVParallelLinear, RowParallelLinear
 
 
 class PrefixLoRARuntimeUnitTests(unittest.TestCase):
@@ -162,6 +164,96 @@ class PrefixLoRARuntimeUnitTests(unittest.TestCase):
         self.assertFalse(torch.allclose(hooked_out[1, :16], base_out[1, :16]))
         self.assertTrue(torch.equal(hooked_out[1, 16:24], base_out[1, 16:24]))
         self.assertFalse(torch.allclose(hooked_out[1, 24:], base_out[1, 24:]))
+
+    def test_mlp_down_lora_pool_and_heterogeneous_rank_co_residency(self):
+        class MiniDecoderWithMLP(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = nn.Module()
+                layer = nn.Module()
+                layer.self_attn = nn.Module()
+                layer.self_attn.qkv_proj = QKVParallelLinear(16, 8, 2, 1, bias=False)
+                layer.mlp = nn.Module()
+                layer.mlp.down_proj = RowParallelLinear(32, 16, bias=False)
+                self.model.layers = nn.ModuleList([layer])
+
+        torch.manual_seed(31)
+        with mock.patch("torch.distributed.get_world_size", return_value=1), mock.patch(
+            "torch.distributed.get_rank", return_value=0
+        ):
+            mini = MiniDecoderWithMLP().to(dtype=torch.float32)
+        nn.init.normal_(mini.model.layers[0].self_attn.qkv_proj.weight, std=0.05)
+        nn.init.normal_(mini.model.layers[0].mlp.down_proj.weight, std=0.05)
+
+        install_qkv_lora_pools(mini, max_slots=3, rank=8)
+        install_mlp_down_lora_pools(mini, max_slots=3, rank=8)
+        self.assertIsInstance(mini.model.layers[0].mlp.down_proj.mlp_lora_pool, LinearLoRASlotPool)
+
+        slot1_r4_qv_only = {
+            "model.layers.0.self_attn.q_proj.adapter_a": torch.randn(4, 16) * 0.2,
+            "model.layers.0.self_attn.q_proj.adapter_b": torch.randn(16, 4) * 0.2,
+            "model.layers.0.self_attn.v_proj.adapter_a": torch.randn(4, 16) * 0.2,
+            "model.layers.0.self_attn.v_proj.adapter_b": torch.randn(8, 4) * 0.2,
+        }
+        load_hf_lora_into_tinyvllm_slot(mini, 1, slot1_r4_qv_only, alpha=8.0, rank=4)
+
+        a_down = torch.randn(8, 32) * 0.25
+        b_down = torch.randn(16, 8) * 0.25
+        slot2_r8_qv_and_mlp = {
+            "model.layers.0.self_attn.q_proj.adapter_a": torch.randn(8, 16) * 0.2,
+            "model.layers.0.self_attn.q_proj.adapter_b": torch.randn(16, 8) * 0.2,
+            "model.layers.0.self_attn.v_proj.adapter_a": torch.randn(8, 16) * 0.2,
+            "model.layers.0.self_attn.v_proj.adapter_b": torch.randn(8, 8) * 0.2,
+            "model.layers.0.mlp.down_proj.adapter_a": a_down,
+            "model.layers.0.mlp.down_proj.adapter_b": b_down,
+        }
+        load_hf_lora_into_tinyvllm_slot(mini, 2, slot2_r8_qv_and_mlp, alpha=16.0, rank=8)
+
+        x_mlp = torch.randn(4, 32, dtype=torch.float32)
+        reset_context()
+        base_mlp = mini.model.layers[0].mlp.down_proj(x_mlp)
+
+        try:
+            set_context(True, lora_token_slot_ids=torch.tensor([0, 1, 2, 0], dtype=torch.int64))
+            mixed_mlp = mini.model.layers[0].mlp.down_proj(x_mlp)
+        finally:
+            reset_context()
+
+        self.assertTrue(torch.equal(mixed_mlp[0], base_mlp[0]))
+        self.assertTrue(torch.equal(mixed_mlp[1], base_mlp[1]))
+        self.assertTrue(torch.equal(mixed_mlp[3], base_mlp[3]))
+        expected_delta2 = 2.0 * (x_mlp[2] @ a_down.t() @ b_down.t())
+        self.assertTrue(torch.allclose(mixed_mlp[2], base_mlp[2] + expected_delta2, atol=1e-5))
+
+    def test_template_prefix_registry_preserves_dynamic_date_and_user_variables(self):
+        registry = PrefixLoRARegistry(max_slots=4)
+        head_anchor = [101, 102]
+        tail_anchor = [201, 202, 203, 204, 205, 206, 207, 208]
+        short_replacement = [901, 902]
+        registry.register_template_prefix(
+            2,
+            head_anchor,
+            tail_anchor,
+            max_var_tokens=8,
+            short_prefix_ids=short_replacement,
+            preserve_var_span=True,
+            name="med_sop_dynamic_header",
+        )
+
+        req_alice = [101, 102, 71, 72, 201, 202, 203, 204, 205, 206, 207, 208, 500, 501]
+        rew_a, slot_a = registry.match_and_rewrite(req_alice)
+        self.assertEqual(slot_a, 2)
+        self.assertEqual(rew_a, [101, 102, 71, 72, 901, 902, 500, 501])
+
+        req_bob = [101, 102, 81, 82, 83, 84, 85, 201, 202, 203, 204, 205, 206, 207, 208, 600]
+        rew_b, slot_b = registry.match_and_rewrite(req_bob)
+        self.assertEqual(slot_b, 2)
+        self.assertEqual(rew_b, [101, 102, 81, 82, 83, 84, 85, 901, 902, 600])
+
+        too_long_var = [101, 102] + list(range(10)) + tail_anchor + [500]
+        rew_miss, slot_miss = registry.match_and_rewrite(too_long_var)
+        self.assertEqual(slot_miss, 0)
+        self.assertEqual(rew_miss, too_long_var)
 
 
 if __name__ == "__main__":

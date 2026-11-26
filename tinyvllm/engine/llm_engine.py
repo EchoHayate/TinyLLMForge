@@ -3928,6 +3928,40 @@ class LLMEngine:
             )
         return receipt
 
+    def register_promoted_template_prefix_lora(
+        self,
+        slot_id: int,
+        adapter_tensors: dict,
+        *,
+        head_anchor_ids,
+        tail_anchor_ids,
+        max_var_tokens: int = 64,
+        short_prefix_ids=(),
+        preserve_var_span: bool = True,
+        alpha: float = 16.0,
+        rank: int = 8,
+        name: str = "",
+    ) -> dict:
+        if self.model_runner.config.tensor_parallel_size != 1:
+            raise NotImplementedError("online register_promoted_template_prefix_lora currently supports TP=1")
+        receipt = load_hf_lora_into_tinyvllm_slot(
+            self.model_runner.model,
+            slot_id,
+            adapter_tensors,
+            alpha=alpha,
+            rank=rank,
+        )
+        self.prefix_lora_registry.register_template_prefix(
+            slot_id,
+            head_anchor_ids,
+            tail_anchor_ids,
+            max_var_tokens=max_var_tokens,
+            short_prefix_ids=short_prefix_ids,
+            preserve_var_span=preserve_var_span,
+            name=name,
+        )
+        return receipt
+
     def clear_promoted_prefix_lora(self, slot_id: int) -> None:
         self.prefix_lora_registry.unregister_slot(slot_id)
         clear_tinyvllm_lora_slot(self.model_runner.model, slot_id)

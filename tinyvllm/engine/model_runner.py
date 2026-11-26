@@ -2519,12 +2519,20 @@ class ModelRunner:
         if config.cpu_offload:
             apply_cpu_offload(self.model, config.cpu_offload_num_layers)
         if getattr(config, "prefix_lora_max_slots", 0) > 0:
-            from tinyvllm.lora import install_qkv_lora_pools
+            from tinyvllm.lora import install_mlp_down_lora_pools, install_qkv_lora_pools
+            max_slots_cfg = int(config.prefix_lora_max_slots)
+            max_rank_cfg = int(getattr(config, "prefix_lora_rank", 8))
             install_qkv_lora_pools(
                 self.model,
-                int(config.prefix_lora_max_slots),
-                int(getattr(config, "prefix_lora_rank", 8)),
+                max_slots_cfg,
+                max_rank_cfg,
             )
+            if bool(getattr(config, "prefix_lora_enable_mlp", False)):
+                install_mlp_down_lora_pools(
+                    self.model,
+                    max_slots_cfg,
+                    max_rank_cfg,
+                )
         self.sampler =  Sampler()
         self.greedy_sampling_fast_path_stats = (
             GreedySamplingFastPathStats()
