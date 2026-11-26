@@ -9,3 +9,4 @@ class SamplingParams:
     max_tokens: int = 64
     # 是否忽略句子的结束符，忽略会导致的句子无自然结尾
     ignore_eos: bool = False
+    lora_slot_id: int = 0

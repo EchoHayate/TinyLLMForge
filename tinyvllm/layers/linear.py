@@ -14,6 +14,7 @@ from tinyvllm.layers.quantization import (
     dequantize_weight,
     fake_quantize_act_int8,
 )
+from tinyvllm.utils.context import get_context
 
 _BNB_FUNCTIONAL = None
 _BNB_IMPORT_ATTEMPTED = False
@@ -904,6 +905,15 @@ class QKVParallelLinear(ColumnParallelLinear):                      #针对atten
         param_data = param_data.narrow(self.tp_dim, shard_offset, shard_size)
         loaded_weight = loaded_weight.chunk(self.tp_size, self.tp_dim)[self.tp_rank]
         param_data.copy_(loaded_weight)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out = super().forward(x)
+        pool = getattr(self, "qkv_lora_pool", None)
+        if pool is not None:
+            slot_ids = get_context().lora_token_slot_ids
+            if slot_ids is not None:
+                return pool.apply(x, out, slot_ids)
+        return out
 
 #行切分最后需要all_reduce  tp_dim = 1
 class RowParallelLinear(LinearBase):

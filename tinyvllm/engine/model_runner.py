@@ -2518,6 +2518,13 @@ class ModelRunner:
         # 加载完成后再做 cpu-offload（量化已在 loader 内 finalize 完成）
         if config.cpu_offload:
             apply_cpu_offload(self.model, config.cpu_offload_num_layers)
+        if getattr(config, "prefix_lora_max_slots", 0) > 0:
+            from tinyvllm.lora import install_qkv_lora_pools
+            install_qkv_lora_pools(
+                self.model,
+                int(config.prefix_lora_max_slots),
+                int(getattr(config, "prefix_lora_rank", 8)),
+            )
         self.sampler =  Sampler()
         self.greedy_sampling_fast_path_stats = (
             GreedySamplingFastPathStats()
@@ -10177,6 +10184,12 @@ class ModelRunner:
                 block_tables = self.prepare_block_tables(seqs)
         
         # 将准备好的数据传输到GPU上
+        lora_slot_tensor = None
+        if getattr(self.config, "prefix_lora_max_slots", 0) > 0:
+            lora_token_slots = []
+            for seq, c_start, c_end in zip(seqs, prefill_chunk_starts, prefill_chunk_ends):
+                lora_token_slots.extend([int(getattr(seq, "lora_slot_id", 0))] * (c_end - c_start))
+            lora_slot_tensor = self._list_to_cuda(lora_token_slots, "lora_token_slot_ids", torch.int64)
         input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
         positions = self._list_to_cuda(positions, "positions", torch.int64)
         cu_seqlens_q = self._list_to_cuda(cu_seqlens_q, "cu_seqlens_q", torch.int32)
@@ -10226,7 +10239,8 @@ class ModelRunner:
                     kv_offload_prefill_chunk_ends=prefill_chunk_ends,
                     prefill_attention_reference_lens=tuple(
                         prefill_attention_reference_lens
-                    ))
+                    ),
+                    lora_token_slot_ids=lora_slot_tensor)
         return input_ids, positions
 
     def prepare_mixed(self, seqs: list[Sequence]):
@@ -10279,6 +10293,13 @@ class ModelRunner:
         if cu_seqlens_k[-1] > cu_seqlens_q[-1]:
             block_tables = self.prepare_block_tables(seqs)
 
+        mixed_lora_tensor = None
+        if getattr(self.config, "prefix_lora_max_slots", 0) > 0:
+            mixed_lora_slots = []
+            for seq_idx, seq in enumerate(seqs):
+                q_count = cu_seqlens_q[seq_idx + 1] - cu_seqlens_q[seq_idx]
+                mixed_lora_slots.extend([int(getattr(seq, "lora_slot_id", 0))] * q_count)
+            mixed_lora_tensor = self._list_to_cuda(mixed_lora_slots, "lora_token_slot_ids", torch.int64)
         input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
         positions = self._list_to_cuda(positions, "positions", torch.int64)
         cu_seqlens_q = self._list_to_cuda(cu_seqlens_q, "cu_seqlens_q", torch.int32)
@@ -10286,7 +10307,8 @@ class ModelRunner:
         slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
         logits_indices = self._list_to_cuda(logits_indices, "logits_indices", torch.int64)
         set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k,
-                    slot_mapping, None, block_tables, logits_indices)
+                    slot_mapping, None, block_tables, logits_indices,
+                    lora_token_slot_ids=mixed_lora_tensor)
         return input_ids, positions
 
 
@@ -10385,6 +10407,10 @@ class ModelRunner:
                 for block, offset in zip(decode_write_blocks, decode_write_offsets)
             ]
 
+        decode_lora_tensor = None
+        if getattr(self.config, "prefix_lora_max_slots", 0) > 0:
+            decode_lora_slots = [int(getattr(seq, "lora_slot_id", 0)) for seq in seqs]
+            decode_lora_tensor = self._list_to_cuda(decode_lora_slots, "lora_token_slot_ids", torch.int64)
         input_ids = self._list_to_cuda(input_ids, "input_ids", torch.int64)
         positions = self._list_to_cuda(positions, "positions", torch.int64)
         slot_mapping = self._list_to_cuda(slot_mapping, "slot_mapping", torch.int32)
@@ -10450,7 +10476,8 @@ class ModelRunner:
                     kv_offload_blockwise_blocks=self.config.kv_offload_blockwise_blocks,
                     kv_offload_logical_block_tables=logical_block_table_rows,
                     kv_offload_context_lens=context_lens_host,
-                    kv_offload_write_blocks=[int(block) for block in decode_write_blocks])
+                    kv_offload_write_blocks=[int(block) for block in decode_write_blocks],
+                    lora_token_slot_ids=decode_lora_tensor)
         return input_ids, positions
 
     # 生成 temperatures列表，并传到GPU上
@@ -13077,6 +13104,8 @@ class ModelRunner:
                     :bs,
                     :context.block_tables.size(1),
                 ] = context.block_tables
+                if "lora_token_slot_ids" in graph_vars and context.lora_token_slot_ids is not None:
+                    graph_vars["lora_token_slot_ids"][:bs] = context.lora_token_slot_ids
             try:
                 graph.replay()
             finally:
@@ -13552,6 +13581,10 @@ class ModelRunner:
         context_lens = torch.zeros(max_bs, dtype=torch.int32)
         block_tables = torch.zeros(max_bs, max_num_blocks, dtype=torch.int32)
         outputs = torch.zeros(max_bs, hf_config.hidden_size)
+        use_prefix_lora_graph = getattr(config, "prefix_lora_max_slots", 0) > 0
+        lora_token_slot_ids = (
+            torch.zeros(max_bs, dtype=torch.int64) if use_prefix_lora_graph else None
+        )
         if config.multi_sequence_cuda_graphs:
             self.graph_bs = [1]
         else:
@@ -13562,7 +13595,13 @@ class ModelRunner:
         # decode 阶段
         for bs in reversed(self.graph_bs):
             graph = torch.cuda.CUDAGraph()
-            set_context(False, slot_mapping=slot_mapping[:bs], context_lens=context_lens[:bs], block_tables=block_tables[:bs, :])
+            set_context(
+                False,
+                slot_mapping=slot_mapping[:bs],
+                context_lens=context_lens[:bs],
+                block_tables=block_tables[:bs, :],
+                lora_token_slot_ids=(lora_token_slot_ids[:bs] if lora_token_slot_ids is not None else None),
+            )
             outputs[:bs] = self.model(input_ids[:bs], positions[:bs])       # warm up
             with torch.cuda.graph(graph, self.graph_pool):                  # 开始 capture
                 outputs[:bs] = self.model(input_ids[:bs], positions[:bs])
@@ -13573,13 +13612,15 @@ class ModelRunner:
             reset_context()
 
         self.graph_vars = dict(
-            input_ids=input_ids, 
+            input_ids=input_ids,
             positions=positions,
             slot_mapping=slot_mapping,
             context_lens=context_lens,
             block_tables=block_tables,
             outputs=outputs
         )
+        if lora_token_slot_ids is not None:
+            self.graph_vars["lora_token_slot_ids"] = lora_token_slot_ids
         self._ordinary_graph_generation += 1
         self._capture_graph_resident_greedy_tail()
         self._capture_exact_greedy_decode_burst()

@@ -1,0 +1,142 @@
+{
+  "all_6_mixed_tasks_matched_cudagraph_single_run": true,
+  "all_6_mixed_tasks_passed_all_8_cases": false,
+  "cuda_graph_has_lora_slot_buffer": true,
+  "cuda_graphs_captured_batch_sizes": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    48,
+    64
+  ],
+  "gpu_summary": {
+    "free_mib": 80979,
+    "name": "NVIDIA A100 80GB PCIe",
+    "used_mib": 71
+  },
+  "kind": "TINYVLLM_NATIVE_PREFIX_LORA_E2E_REPORT",
+  "long_prefix_tokens_registered": 3090,
+  "mixed_batch_6_requests_verification": {
+    "WR03": {
+      "matches_single_request_cudagraph_run": true,
+      "mode": "base",
+      "oracle_eval": {
+        "all_passed": true,
+        "passed": 8,
+        "total": 8,
+        "valid": true
+      },
+      "original_prompt_tokens": 365,
+      "paged_kv_blocks_needed": 2,
+      "resolved_lora_slot_id": 0,
+      "rewritten_prompt_tokens": 365
+    },
+    "WR04": {
+      "matches_single_request_cudagraph_run": true,
+      "mode": "base",
+      "oracle_eval": {
+        "all_passed": true,
+        "passed": 8,
+        "total": 8,
+        "valid": true
+      },
+      "original_prompt_tokens": 229,
+      "paged_kv_blocks_needed": 1,
+      "resolved_lora_slot_id": 0,
+      "rewritten_prompt_tokens": 229
+    },
+    "WR11": {
+      "matches_single_request_cudagraph_run": true,
+      "mode": "explicit_slot2",
+      "oracle_eval": {
+        "all_passed": true,
+        "passed": 8,
+        "total": 8,
+        "valid": true
+      },
+      "original_prompt_tokens": 308,
+      "paged_kv_blocks_needed": 2,
+      "resolved_lora_slot_id": 2,
+      "rewritten_prompt_tokens": 308
+    },
+    "WT01": {
+      "matches_single_request_cudagraph_run": true,
+      "mode": "explicit_slot2",
+      "oracle_eval": {
+        "all_passed": false,
+        "passed": 3,
+        "total": 8,
+        "valid": true
+      },
+      "original_prompt_tokens": 381,
+      "paged_kv_blocks_needed": 2,
+      "resolved_lora_slot_id": 2,
+      "rewritten_prompt_tokens": 381
+    },
+    "WT05": {
+      "matches_single_request_cudagraph_run": true,
+      "mode": "text_auto_promoted",
+      "oracle_eval": {
+        "all_passed": true,
+        "passed": 8,
+        "total": 8,
+        "valid": true
+      },
+      "original_prompt_tokens": 3426,
+      "paged_kv_blocks_needed": 2,
+      "resolved_lora_slot_id": 1,
+      "rewritten_prompt_tokens": 376
+    },
+    "WT06": {
+      "matches_single_request_cudagraph_run": true,
+      "mode": "text_auto_promoted",
+      "oracle_eval": {
+        "all_passed": true,
+        "passed": 8,
+        "total": 8,
+        "valid": true
+      },
+      "original_prompt_tokens": 3396,
+      "paged_kv_blocks_needed": 2,
+      "resolved_lora_slot_id": 1,
+      "rewritten_prompt_tokens": 346
+    }
+  },
+  "short_prefix_tokens_replacement": 40,
+  "slot_receipts": {
+    "slot_1": {
+      "layers_loaded": 36,
+      "slot_id": 1,
+      "slot_resident_bytes": 7667712
+    },
+    "slot_2": {
+      "layers_loaded": 36,
+      "slot_id": 2,
+      "slot_resident_bytes": 7667712
+    }
+  },
+  "tinyvllm_paged_kv_batch16_comparison": {
+    "kv_blocks_saved_ratio": 0.2666666666666667,
+    "native_warm_prefix_cache_apc": {
+      "batch_requests": 16,
+      "median_elapsed_ms": 7423.1139060000005,
+      "output_tokens": 1985,
+      "output_tokens_per_sec": 267.40799415667755,
+      "peak_allocated_kv_blocks": 45,
+      "peak_allocated_kv_mib": 1620.0
+    },
+    "promoted_prefix_to_bf16_lora": {
+      "batch_requests": 16,
+      "median_elapsed_ms": 7019.685894,
+      "output_tokens": 1965,
+      "output_tokens_per_sec": 279.9270550950951,
+      "peak_allocated_kv_blocks": 33,
+      "peak_allocated_kv_mib": 1188.0
+    },
+    "throughput_speedup": 1.0468163301471178
+  },
+  "wall_clock_seconds": 186.766
+}

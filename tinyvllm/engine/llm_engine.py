@@ -1,5 +1,10 @@
 from tinyvllm.sampling_params import SamplingParams
 from tinyvllm.config import Config
+from tinyvllm.lora import (
+    PrefixLoRARegistry,
+    clear_tinyvllm_lora_slot,
+    load_hf_lora_into_tinyvllm_slot,
+)
 from tinyvllm.engine.model_runner import ModelRunner
 from tinyvllm.engine.h2d_slot_reuse_diagnostic import (
     H2D_SLOT_REUSE_SCHEMA,
@@ -555,6 +560,9 @@ class LLMEngine:
         self.speculative_runtime_poisoned = False
         self.speculative_runtime_poison_reason = None
         self._speculative_residency_ticket_ids = count(1)
+        self.prefix_lora_registry = PrefixLoRARegistry(
+            int(getattr(config, "prefix_lora_max_slots", 0))
+        )
         atexit.register(self.exit)
         self._exit_handler_registered = True
 
@@ -3843,6 +3851,20 @@ class LLMEngine:
     ):
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)
+        registry = getattr(self, "prefix_lora_registry", None)
+        if registry is not None and registry.max_slots > 0:
+            explicit_slot = int(getattr(sampling_params, "lora_slot_id", 0))
+            rewritten_prompt, resolved_slot = registry.match_and_rewrite(
+                list(prompt), explicit_slot_id=explicit_slot
+            )
+            prompt = rewritten_prompt
+            if resolved_slot != explicit_slot:
+                sampling_params = SamplingParams(
+                    temperature=sampling_params.temperature,
+                    max_tokens=sampling_params.max_tokens,
+                    ignore_eos=sampling_params.ignore_eos,
+                    lora_slot_id=resolved_slot,
+                )
         seq = Sequence(prompt, sampling_params)
         runtime = getattr(
             self,
@@ -3876,6 +3898,39 @@ class LLMEngine:
                 lifecycle.release_sequence(seq.seq_id)
             raise
         return seq.seq_id
+
+    def register_promoted_prefix_lora(
+        self,
+        slot_id: int,
+        adapter_tensors: dict,
+        *,
+        long_prefix_ids=None,
+        short_prefix_ids=(),
+        alpha: float = 16.0,
+        rank: int = 8,
+        name: str = "",
+    ) -> dict:
+        if self.model_runner.config.tensor_parallel_size != 1:
+            raise NotImplementedError("online register_promoted_prefix_lora currently supports TP=1")
+        receipt = load_hf_lora_into_tinyvllm_slot(
+            self.model_runner.model,
+            slot_id,
+            adapter_tensors,
+            alpha=alpha,
+            rank=rank,
+        )
+        if long_prefix_ids is not None:
+            self.prefix_lora_registry.register_promoted_prefix(
+                slot_id,
+                long_prefix_ids,
+                short_prefix_ids,
+                name=name,
+            )
+        return receipt
+
+    def clear_promoted_prefix_lora(self, slot_id: int) -> None:
+        self.prefix_lora_registry.unregister_slot(slot_id)
+        clear_tinyvllm_lora_slot(self.model_runner.model, slot_id)
 
     def flush_pending_hybrid_state_releases(self, *, timeout_s):
         drain_releases = getattr(

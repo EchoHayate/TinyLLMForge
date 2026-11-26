@@ -201,6 +201,8 @@ class Config:
     # SmoothQuant 相关配置（把激活离群值迁移到 weight 上的 per-input-channel scale）
     smoothquant_scale_path: str | None = None           # 校准产物路径；None 关闭
     smoothquant_alpha: float = 0.5                      # 仅 calibration 时用；loader 不需要
+    prefix_lora_max_slots: int = 0                      # >0 时启用多槽位 Prefix-to-LoRA 参数化卸载池
+    prefix_lora_rank: int = 8                           # 多槽位 LoRA 固定低秩维度
 
     # 在默认的构造函数之后自动启用，用于补充缺少的初始化逻辑
     def __post_init__(self):
@@ -1141,3 +1143,7 @@ class Config:
                 max_position_embeddings,
             )
         assert self.max_num_batched_tokens >= self.max_model_len
+        if isinstance(self.prefix_lora_max_slots, bool) or not isinstance(self.prefix_lora_max_slots, int) or self.prefix_lora_max_slots < 0:
+            raise ValueError("prefix_lora_max_slots must be a non-negative integer")
+        if isinstance(self.prefix_lora_rank, bool) or not isinstance(self.prefix_lora_rank, int) or self.prefix_lora_rank <= 0:
+            raise ValueError("prefix_lora_rank must be a positive integer")

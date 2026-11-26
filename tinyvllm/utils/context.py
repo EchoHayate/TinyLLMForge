@@ -62,6 +62,7 @@ class Context:
     kv_offload_spec_verify_window_mask_cache: object | None = None
     kv_offload_prefill_window_plan_cache: object | None = None
     kv_offload_prefill_position_template_cache: object | None = None
+    lora_token_slot_ids: torch.Tensor | None = None
 
 _CONTEXT = Context()
 
@@ -182,7 +183,8 @@ def set_context(is_prefill=None, cu_seqlens_q=None, cu_seqlens_k=None, max_seqle
                 spec_verify_query_lens: tuple[int, ...] | list[int] = (),
                 mode: AttentionMode | None = None,
                 force_attention_backend: bool = False,
-                flash_attn_num_splits: int = 0):
+                flash_attn_num_splits: int = 0,
+                lora_token_slot_ids: torch.Tensor | None = None):
     global _CONTEXT
     resolved_mode = resolve_attention_mode(is_prefill, mode)
     if am_compact_enable_layers is not None and not isinstance(am_compact_enable_layers, tuple):
@@ -236,6 +238,7 @@ def set_context(is_prefill=None, cu_seqlens_q=None, cu_seqlens_k=None, max_seqle
         kv_offload_prefill_chunk_starts=kv_offload_prefill_chunk_starts,
         kv_offload_prefill_chunk_ends=kv_offload_prefill_chunk_ends,
         prefill_attention_reference_lens=prefill_attention_reference_lens,
+        lora_token_slot_ids=lora_token_slot_ids,
     )
 
 def reset_context():

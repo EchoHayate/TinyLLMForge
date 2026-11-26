@@ -112,6 +112,10 @@ class Sequence:
         self.temperature = sampling_params.temperature  # 记录该语句的采样温度
         self.max_tokens = sampling_params.max_tokens    # 记录该语句的最大生成长度
         self.ignore_eos = sampling_params.ignore_eos    # 记录是否忽略句子的结束符号
+        lora_slot = getattr(sampling_params, "lora_slot_id", 0)
+        if isinstance(lora_slot, bool) or not isinstance(lora_slot, int) or lora_slot < 0:
+            raise ValueError("lora_slot_id must be a non-negative integer")
+        self.lora_slot_id = lora_slot
 
 
     def __len__(self):                                  # 声明 __len__ 函数, 使得可以调用 len(Sequence) 返回长度
@@ -180,13 +184,18 @@ class Sequence:
 
     # 由于是多卡，涉及通信发送，需要将sequence进行序列化，这个函数是决定将哪些 Sequence的属性进行序列化传输
     # 增加这个魔术方法后，pickle模块会自动调用该函数，将 Sequence 数据进行序列化
-    def __getstate__(self):                             
-        return (self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, list(self.block_table),
-                self.num_computed_tokens, self.prefill_chunk_start, self.prefill_chunk_end,
-                self.prefill_chunk_final, self.step_is_decode, self.step_do_sample,
-                self.seq_id, self.hybrid_state_slot_id, self.hybrid_state_generation,
-                self.temperature, self.max_tokens, self.block_table.revision,
-                self.token_ids if self.num_completion_tokens == 0 else self.last_token)
+    def __getstate__(self):
+        tail_item = self.token_ids if self.num_completion_tokens == 0 else self.last_token
+        base_tuple = (
+            self.num_tokens, self.num_prompt_tokens, self.num_cached_blocks, list(self.block_table),
+            self.num_computed_tokens, self.prefill_chunk_start, self.prefill_chunk_end,
+            self.prefill_chunk_final, self.step_is_decode, self.step_do_sample,
+            self.seq_id, self.hybrid_state_slot_id, self.hybrid_state_generation,
+            self.temperature, self.max_tokens, self.block_table.revision,
+        )
+        if getattr(self, "lora_slot_id", 0) > 0:
+            return (*base_tuple, self.lora_slot_id, tail_item)
+        return (*base_tuple, tail_item)
     
     # 由于是多卡，涉及通信接收，需要对序列化的 Sequence 进行解析，该函数和 getstate函数一一对应
     def __setstate__(self, state):
@@ -218,6 +227,7 @@ class Sequence:
         self.hybrid_state_generation = 0
         self.temperature = 0.0
         self.max_tokens = 0
+        self.lora_slot_id = 0
         self.num_cached_tokens = num_cached_blocks * self.block_size
         if len(state) >= 9:
             (self.num_computed_tokens, self.prefill_chunk_start,
@@ -256,6 +266,11 @@ class Sequence:
                     "max_tokens must be a non-negative integer"
                 )
             self.max_tokens = max_tokens
+        if len(state) >= 18:
+            lora_slot = state[16]
+            if isinstance(lora_slot, bool) or not isinstance(lora_slot, int) or lora_slot < 0:
+                raise ValueError("lora_slot_id must be a non-negative integer")
+            self.lora_slot_id = lora_slot
         if self.num_completion_tokens == 0:
             self.token_ids = state[-1]
         else:

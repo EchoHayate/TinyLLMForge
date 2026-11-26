@@ -1,0 +1,2493 @@
+{
+  "benchmark_eligible": false,
+  "canary_bit_exact_with_g4b_base": {
+    "WR01": true,
+    "WT01": true
+  },
+  "changed_round1_vs_base": {
+    "retention": 5,
+    "total": 9,
+    "transfer": 4
+  },
+  "comparisons_feedback": {
+    "retention": {
+      "lora_hybrid_csd_vs_base": {
+        "baseline_arm": "base",
+        "both_right": 4,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": 1,
+        "observed_subset_net": 1,
+        "right_to_wrong": 0,
+        "target_arm": "lora_hybrid_csd",
+        "wrong_to_right": 1
+      },
+      "lora_hybrid_csd_vs_lora_csd": {
+        "baseline_arm": "lora_csd",
+        "both_right": 4,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": 1,
+        "observed_subset_net": 1,
+        "right_to_wrong": 0,
+        "target_arm": "lora_hybrid_csd",
+        "wrong_to_right": 1
+      },
+      "lora_hybrid_csd_vs_lora_diff_kl": {
+        "baseline_arm": "lora_diff_kl",
+        "both_right": 3,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": 2,
+        "observed_subset_net": 2,
+        "right_to_wrong": 0,
+        "target_arm": "lora_hybrid_csd",
+        "wrong_to_right": 2
+      },
+      "lora_hybrid_csd_vs_text": {
+        "baseline_arm": "text",
+        "both_right": 3,
+        "both_wrong": 6,
+        "missing_or_unknown": 0,
+        "net_gain": 1,
+        "observed_subset_net": 1,
+        "right_to_wrong": 1,
+        "target_arm": "lora_hybrid_csd",
+        "wrong_to_right": 2
+      }
+    },
+    "transfer": {
+      "lora_hybrid_csd_vs_base": {
+        "baseline_arm": "base",
+        "both_right": 2,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": 1,
+        "observed_subset_net": 1,
+        "right_to_wrong": 1,
+        "target_arm": "lora_hybrid_csd",
+        "wrong_to_right": 2
+      },
+      "lora_hybrid_csd_vs_lora_csd": {
+        "baseline_arm": "lora_csd",
+        "both_right": 3,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": 0,
+        "observed_subset_net": 0,
+        "right_to_wrong": 1,
+        "target_arm": "lora_hybrid_csd",
+        "wrong_to_right": 1
+      },
+      "lora_hybrid_csd_vs_lora_diff_kl": {
+        "baseline_arm": "lora_diff_kl",
+        "both_right": 4,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": -1,
+        "observed_subset_net": -1,
+        "right_to_wrong": 1,
+        "target_arm": "lora_hybrid_csd",
+        "wrong_to_right": 0
+      },
+      "lora_hybrid_csd_vs_text": {
+        "baseline_arm": "text",
+        "both_right": 3,
+        "both_wrong": 7,
+        "missing_or_unknown": 0,
+        "net_gain": 0,
+        "observed_subset_net": 0,
+        "right_to_wrong": 1,
+        "target_arm": "lora_hybrid_csd",
+        "wrong_to_right": 1
+      }
+    }
+  },
+  "complete_and_verified": true,
+  "costs": {
+    "adapter_bytes": 15335424,
+    "breakeven_tasks_vs_text": 2.0685756847716337,
+    "fixed_training_and_distill_ns": 511890232453,
+    "lora_hybrid_csd_generation_wall_ns": 747274739123,
+    "shared": {
+      "checkpoint_verify_ns": 17474339442,
+      "episodes_wall_ns": 884344941433,
+      "fast_anchor_trajectory_prep_ns": 81513468321,
+      "final_integrity_ns": 26658684424,
+      "heldout_dev_audit_ns": 393050990,
+      "model_and_tokenizer_load_ns": 22416544979,
+      "model_load_peak_allocated_bytes": 16383586816,
+      "model_load_peak_reserved_bytes": 16536043520,
+      "teacher_distill_prep_ns": 282804175798
+    },
+    "speedup_vs_text": 8.947606703047464,
+    "text_reference_generation_wall_ns": 6686320464795
+  },
+  "diagnostic_dispatch_authorized": false,
+  "episodes": [
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT01"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT02"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT03"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT04"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT05"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT06"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT07"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT08"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 2,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 2,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT09"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT10"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT11"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "transfer",
+      "task_id": "WT12"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR01"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR02"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR03"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR04"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR05"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": false,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "program_error",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": true,
+          "has_unknown_case": false,
+          "private_passed": 4,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR06"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR07"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "pass",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 1,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR08"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "mismatch",
+            "mismatch",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": false,
+          "public_passed": 0,
+          "public_revealed_mismatch": true,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR09"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "mismatch"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 5,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "SEMANTIC_FAIL"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR10"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR11"
+    },
+    {
+      "arm": "lora_hybrid_csd",
+      "roles": {
+        "feedback": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        },
+        "initial": {
+          "all_8_normal_completed": true,
+          "case_statuses": [
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass",
+            "pass"
+          ],
+          "has_concurrent_exec_error": false,
+          "has_unknown_case": false,
+          "private_passed": 6,
+          "public_both_normal_pass": true,
+          "public_passed": 2,
+          "public_revealed_mismatch": false,
+          "state": "PASS"
+        }
+      },
+      "split": "retention",
+      "task_id": "WR12"
+    }
+  ],
+  "formal_evaluation_ready": false,
+  "heldout_dev_restraint_audit": {
+    "mean_token_kl": 0.009911020212388455,
+    "per_task": {
+      "D01": {
+        "answer_tokens": 37,
+        "mean_token_kl": 0.014518068172037601,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 37
+      },
+      "D02": {
+        "answer_tokens": 40,
+        "mean_token_kl": 0.010252068750560284,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 40
+      },
+      "D03": {
+        "answer_tokens": 21,
+        "mean_token_kl": 0.0016190159367397428,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 21
+      },
+      "D04": {
+        "answer_tokens": 20,
+        "mean_token_kl": 0.009412488900125027,
+        "top1_agreement_rate": 1.0,
+        "top1_matched_tokens": 20
+      }
+    },
+    "top1_agreement_rate": 1.0,
+    "total_answer_tokens": 118
+  },
+  "incomplete_reasons": [],
+  "isolated": false,
+  "kind": "LORA_CONFIRMATORY_V2_HYBRID_CSD_ABLATION_REPORT",
+  "lora_hybrid_csd_by_split": {
+    "retention": {
+      "feedback": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 5,
+        "SEMANTIC_FAIL": 7,
+        "UNKNOWN": 0
+      },
+      "initial": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 5,
+        "SEMANTIC_FAIL": 7,
+        "UNKNOWN": 0
+      }
+    },
+    "transfer": {
+      "feedback": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 4,
+        "SEMANTIC_FAIL": 8,
+        "UNKNOWN": 0
+      },
+      "initial": {
+        "EXECUTION_FAIL": 0,
+        "INVALID_EVIDENCE": 0,
+        "PASS": 4,
+        "SEMANTIC_FAIL": 8,
+        "UNKNOWN": 0
+      }
+    }
+  },
+  "net_benefit_established": false,
+  "protocol_contradictions": [],
+  "run_authorized": false,
+  "run_id": "3b7125d545731f44dfe6b9a008aa26b6",
+  "total_eval_tasks": 24,
+  "total_pass_feedback": 9,
+  "total_pass_initial": 9,
+  "training": {
+    "adapter_bytes": 15335424,
+    "adapter_load_ns": 13866479,
+    "adapter_save_ns": 29935996,
+    "adapter_sha256": "c3c26097ff32c036a7fcbbe174cd6bc2ea76a886910c087a375bdf7411ed510b",
+    "artifact_bytes": 15380946,
+    "artifact_sha256": "4d03f75048c1646dc7c8f32bf943d02e2009c57d4d1ea55a1ff5b6cc6d09fa80",
+    "core_wall_ns": 147528785859,
+    "hyperparams": {
+      "alpha": 16,
+      "background_anchors_per_step": 2,
+      "cosmetic_valueerror_weight": 0.25,
+      "diff_token_weight": 4.0,
+      "gradient_clip": 1.0,
+      "lambda_bg_kl": 2.5,
+      "lambda_pos_kl": 1.5,
+      "lambda_seed_surgical_ce": 0.55,
+      "learning_rate": 0.00022,
+      "lr_schedule": "linear_decay_to_10pct",
+      "max_anchor_tokens": 128,
+      "max_teacher_tokens": 256,
+      "optimizer": "AdamW",
+      "rank": 8,
+      "scaffold_token_weight": 1.0,
+      "seed": 42,
+      "steps": 96,
+      "targets": [
+        "q_proj",
+        "v_proj"
+      ],
+      "weight_decay": 0.01
+    },
+    "initial_adapter_sha256": "c290a8da6eafd9ac2672c9228ee73068343f316da7aabd243eb41fc115d65f9c",
+    "peak_allocated_bytes": 23615694848,
+    "peak_reserved_bytes": 41051750400,
+    "positive_trajectory_count": 25,
+    "preparation_ns": 31411199285,
+    "seed_trajectory_count": 8,
+    "steps": [
+      {
+        "bg_kl_loss": 0.0,
+        "elapsed_ns": 993265695,
+        "gradient_norm": 0.11539812386035919,
+        "lr": 0.00022,
+        "pos_distill_kl": 0.007198605220764875,
+        "source_pool": "seed",
+        "step": 1,
+        "surgical_ce_loss": 6.244292904966642e-08,
+        "task_id": "V01"
+      },
+      {
+        "bg_kl_loss": 0.00043467686714393494,
+        "elapsed_ns": 887055594,
+        "gradient_norm": 0.11597970128059387,
+        "lr": 0.0002179157894736842,
+        "pos_distill_kl": 0.0006189878913573921,
+        "source_pool": "unlabeled_recal",
+        "step": 2,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C01"
+      },
+      {
+        "bg_kl_loss": 0.0016727603506296873,
+        "elapsed_ns": 869072163,
+        "gradient_norm": 1.4406113624572754,
+        "lr": 0.00021583157894736844,
+        "pos_distill_kl": 0.010802802629768848,
+        "source_pool": "seed",
+        "step": 3,
+        "surgical_ce_loss": 1.8279542922973633,
+        "task_id": "V02"
+      },
+      {
+        "bg_kl_loss": 0.0012223256866832344,
+        "elapsed_ns": 877595073,
+        "gradient_norm": 1.3413548469543457,
+        "lr": 0.00021374736842105264,
+        "pos_distill_kl": 0.26081252098083496,
+        "source_pool": "unlabeled_recal",
+        "step": 4,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C03"
+      },
+      {
+        "bg_kl_loss": 8.31298987691298e-05,
+        "elapsed_ns": 995816116,
+        "gradient_norm": 4.1796393394470215,
+        "lr": 0.00021166315789473685,
+        "pos_distill_kl": 0.0125883175060153,
+        "source_pool": "seed",
+        "step": 5,
+        "surgical_ce_loss": 2.796984910964966,
+        "task_id": "V03"
+      },
+      {
+        "bg_kl_loss": 0.0005273658578914819,
+        "elapsed_ns": 880159871,
+        "gradient_norm": 1.0446254014968872,
+        "lr": 0.00020957894736842105,
+        "pos_distill_kl": 0.032710764557123184,
+        "source_pool": "unlabeled_recal",
+        "step": 6,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C04"
+      },
+      {
+        "bg_kl_loss": 0.003738593659363687,
+        "elapsed_ns": 925910012,
+        "gradient_norm": 2.9843432903289795,
+        "lr": 0.00020749473684210528,
+        "pos_distill_kl": 0.027273960411548615,
+        "source_pool": "seed",
+        "step": 7,
+        "surgical_ce_loss": 0.5080978870391846,
+        "task_id": "V04"
+      },
+      {
+        "bg_kl_loss": 0.004609170835465193,
+        "elapsed_ns": 891501777,
+        "gradient_norm": 1.1542059183120728,
+        "lr": 0.00020541052631578948,
+        "pos_distill_kl": 0.016187282279133797,
+        "source_pool": "unlabeled_recal",
+        "step": 8,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C05"
+      },
+      {
+        "bg_kl_loss": 0.0014279558672569692,
+        "elapsed_ns": 903933976,
+        "gradient_norm": 0.8412213325500488,
+        "lr": 0.00020332631578947368,
+        "pos_distill_kl": 0.009943612851202488,
+        "source_pool": "seed",
+        "step": 9,
+        "surgical_ce_loss": 0.5769512057304382,
+        "task_id": "V05"
+      },
+      {
+        "bg_kl_loss": 0.013662151002790779,
+        "elapsed_ns": 869132453,
+        "gradient_norm": 0.9363351464271545,
+        "lr": 0.0002012421052631579,
+        "pos_distill_kl": 0.005917600356042385,
+        "source_pool": "unlabeled_recal",
+        "step": 10,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C08"
+      },
+      {
+        "bg_kl_loss": 0.009884153725579381,
+        "elapsed_ns": 872214346,
+        "gradient_norm": 2.0742759704589844,
+        "lr": 0.00019915789473684212,
+        "pos_distill_kl": 0.028327329084277153,
+        "source_pool": "seed",
+        "step": 11,
+        "surgical_ce_loss": 1.282274842262268,
+        "task_id": "V06"
+      },
+      {
+        "bg_kl_loss": 0.05373176523971779,
+        "elapsed_ns": 899878229,
+        "gradient_norm": 2.899785280227661,
+        "lr": 0.00019707368421052632,
+        "pos_distill_kl": 0.05248916521668434,
+        "source_pool": "unlabeled_recal",
+        "step": 12,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C09"
+      },
+      {
+        "bg_kl_loss": 0.001921679175211466,
+        "elapsed_ns": 976582629,
+        "gradient_norm": 1.8385159969329834,
+        "lr": 0.00019498947368421052,
+        "pos_distill_kl": 0.06723365187644958,
+        "source_pool": "seed",
+        "step": 13,
+        "surgical_ce_loss": 1.2054483890533447,
+        "task_id": "V07"
+      },
+      {
+        "bg_kl_loss": 0.0026664623692340683,
+        "elapsed_ns": 871206872,
+        "gradient_norm": 0.42678382992744446,
+        "lr": 0.00019290526315789475,
+        "pos_distill_kl": 0.008142202161252499,
+        "source_pool": "unlabeled_recal",
+        "step": 14,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C11"
+      },
+      {
+        "bg_kl_loss": 0.008623246336355805,
+        "elapsed_ns": 923775019,
+        "gradient_norm": 1.780898928642273,
+        "lr": 0.00019082105263157895,
+        "pos_distill_kl": 0.02514556422829628,
+        "source_pool": "seed",
+        "step": 15,
+        "surgical_ce_loss": 1.7484052181243896,
+        "task_id": "V08"
+      },
+      {
+        "bg_kl_loss": 0.00340994109865278,
+        "elapsed_ns": 856633316,
+        "gradient_norm": 0.24766920506954193,
+        "lr": 0.00018873684210526316,
+        "pos_distill_kl": 0.0005467687733471394,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 16,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T01"
+      },
+      {
+        "bg_kl_loss": 0.005760839907452464,
+        "elapsed_ns": 837814127,
+        "gradient_norm": 0.318055123090744,
+        "lr": 0.00018665263157894739,
+        "pos_distill_kl": 0.003922428470104933,
+        "source_pool": "seed",
+        "step": 17,
+        "surgical_ce_loss": 0.000649939407594502,
+        "task_id": "V01"
+      },
+      {
+        "bg_kl_loss": 0.011666532140225172,
+        "elapsed_ns": 915795017,
+        "gradient_norm": 2.52413272857666,
+        "lr": 0.0001845684210526316,
+        "pos_distill_kl": 0.20982596278190613,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 18,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T02"
+      },
+      {
+        "bg_kl_loss": 0.0029268094804137945,
+        "elapsed_ns": 867393536,
+        "gradient_norm": 0.9225878119468689,
+        "lr": 0.00018248421052631582,
+        "pos_distill_kl": 0.027156056836247444,
+        "source_pool": "seed",
+        "step": 19,
+        "surgical_ce_loss": 0.6967949271202087,
+        "task_id": "V02"
+      },
+      {
+        "bg_kl_loss": 0.013404226046986878,
+        "elapsed_ns": 839165055,
+        "gradient_norm": 1.0222598314285278,
+        "lr": 0.0001804,
+        "pos_distill_kl": 0.007520192302763462,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 20,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T03"
+      },
+      {
+        "bg_kl_loss": 0.0032717654976295307,
+        "elapsed_ns": 934010432,
+        "gradient_norm": 2.61902117729187,
+        "lr": 0.0001783157894736842,
+        "pos_distill_kl": 0.025406954810023308,
+        "source_pool": "seed",
+        "step": 21,
+        "surgical_ce_loss": 0.7494585514068604,
+        "task_id": "V03"
+      },
+      {
+        "bg_kl_loss": 0.005948210702626966,
+        "elapsed_ns": 870117718,
+        "gradient_norm": 0.9796559810638428,
+        "lr": 0.00017623157894736843,
+        "pos_distill_kl": 0.03381434082984924,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 22,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T05"
+      },
+      {
+        "bg_kl_loss": 0.012806195765733719,
+        "elapsed_ns": 926158154,
+        "gradient_norm": 0.4679102301597595,
+        "lr": 0.00017414736842105263,
+        "pos_distill_kl": 0.037054456770420074,
+        "source_pool": "seed",
+        "step": 23,
+        "surgical_ce_loss": 0.07914247363805771,
+        "task_id": "V04"
+      },
+      {
+        "bg_kl_loss": 0.006605265429243445,
+        "elapsed_ns": 913824330,
+        "gradient_norm": 0.37347352504730225,
+        "lr": 0.00017206315789473686,
+        "pos_distill_kl": 0.0067099155858159065,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 24,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T06"
+      },
+      {
+        "bg_kl_loss": 0.01156057813204825,
+        "elapsed_ns": 886464781,
+        "gradient_norm": 0.6051228642463684,
+        "lr": 0.00016997894736842106,
+        "pos_distill_kl": 0.018869882449507713,
+        "source_pool": "seed",
+        "step": 25,
+        "surgical_ce_loss": 0.26875990629196167,
+        "task_id": "V05"
+      },
+      {
+        "bg_kl_loss": 0.017289913608692586,
+        "elapsed_ns": 874875006,
+        "gradient_norm": 0.6806700229644775,
+        "lr": 0.0001678947368421053,
+        "pos_distill_kl": 0.02344006858766079,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 26,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T07"
+      },
+      {
+        "bg_kl_loss": 0.003861279459670186,
+        "elapsed_ns": 843227304,
+        "gradient_norm": 0.6598619222640991,
+        "lr": 0.00016581052631578947,
+        "pos_distill_kl": 0.026872659102082253,
+        "source_pool": "seed",
+        "step": 27,
+        "surgical_ce_loss": 0.8188568353652954,
+        "task_id": "V06"
+      },
+      {
+        "bg_kl_loss": 0.047407288613612764,
+        "elapsed_ns": 846524729,
+        "gradient_norm": 2.3208041191101074,
+        "lr": 0.00016372631578947367,
+        "pos_distill_kl": 0.032925743609666824,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 28,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T08"
+      },
+      {
+        "bg_kl_loss": 0.004069937102030963,
+        "elapsed_ns": 956801457,
+        "gradient_norm": 0.8300847411155701,
+        "lr": 0.0001616421052631579,
+        "pos_distill_kl": 0.04838328808546066,
+        "source_pool": "seed",
+        "step": 29,
+        "surgical_ce_loss": 0.7500833868980408,
+        "task_id": "V07"
+      },
+      {
+        "bg_kl_loss": 0.0038561967812711373,
+        "elapsed_ns": 848256592,
+        "gradient_norm": 0.20710869133472443,
+        "lr": 0.0001595578947368421,
+        "pos_distill_kl": 0.0053942338563501835,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 30,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T10"
+      },
+      {
+        "bg_kl_loss": 0.009164346382021904,
+        "elapsed_ns": 957322684,
+        "gradient_norm": 0.9625941514968872,
+        "lr": 0.00015747368421052633,
+        "pos_distill_kl": 0.014524521306157112,
+        "source_pool": "seed",
+        "step": 31,
+        "surgical_ce_loss": 1.183275580406189,
+        "task_id": "V08"
+      },
+      {
+        "bg_kl_loss": 0.007179496344178915,
+        "elapsed_ns": 852280791,
+        "gradient_norm": 0.8927914500236511,
+        "lr": 0.00015538947368421053,
+        "pos_distill_kl": 0.05585101619362831,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 32,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T12"
+      },
+      {
+        "bg_kl_loss": 0.008733920054510236,
+        "elapsed_ns": 866635030,
+        "gradient_norm": 0.3508906960487366,
+        "lr": 0.00015330526315789474,
+        "pos_distill_kl": 0.0028152153827250004,
+        "source_pool": "seed",
+        "step": 33,
+        "surgical_ce_loss": 0.003511388087645173,
+        "task_id": "V01"
+      },
+      {
+        "bg_kl_loss": 0.01182965049520135,
+        "elapsed_ns": 833774286,
+        "gradient_norm": 5.12019681930542,
+        "lr": 0.00015122105263157897,
+        "pos_distill_kl": 0.3697086274623871,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 34,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T13"
+      },
+      {
+        "bg_kl_loss": 0.004308323608711362,
+        "elapsed_ns": 868033147,
+        "gradient_norm": 0.6417874097824097,
+        "lr": 0.00014913684210526317,
+        "pos_distill_kl": 0.05533309653401375,
+        "source_pool": "seed",
+        "step": 35,
+        "surgical_ce_loss": 0.3804839551448822,
+        "task_id": "V02"
+      },
+      {
+        "bg_kl_loss": 0.011504910769872367,
+        "elapsed_ns": 873063739,
+        "gradient_norm": 1.0832390785217285,
+        "lr": 0.0001470526315789474,
+        "pos_distill_kl": 0.008346053771674633,
+        "source_pool": "unlabeled_recal",
+        "step": 36,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C01"
+      },
+      {
+        "bg_kl_loss": 0.003320766147226095,
+        "elapsed_ns": 979902636,
+        "gradient_norm": 1.2389861345291138,
+        "lr": 0.00014496842105263157,
+        "pos_distill_kl": 0.09850563108921051,
+        "source_pool": "seed",
+        "step": 37,
+        "surgical_ce_loss": 0.10711019486188889,
+        "task_id": "V03"
+      },
+      {
+        "bg_kl_loss": 0.005331740932888351,
+        "elapsed_ns": 875675109,
+        "gradient_norm": 0.7172292470932007,
+        "lr": 0.0001428842105263158,
+        "pos_distill_kl": 0.052102845162153244,
+        "source_pool": "unlabeled_recal",
+        "step": 38,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C03"
+      },
+      {
+        "bg_kl_loss": 0.006931432988494635,
+        "elapsed_ns": 905361451,
+        "gradient_norm": 0.5229392647743225,
+        "lr": 0.00014079999999999998,
+        "pos_distill_kl": 0.0527910478413105,
+        "source_pool": "seed",
+        "step": 39,
+        "surgical_ce_loss": 0.04279150068759918,
+        "task_id": "V04"
+      },
+      {
+        "bg_kl_loss": 0.006155530922114849,
+        "elapsed_ns": 864119647,
+        "gradient_norm": 0.3972656726837158,
+        "lr": 0.0001387157894736842,
+        "pos_distill_kl": 0.018770569935441017,
+        "source_pool": "unlabeled_recal",
+        "step": 40,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C04"
+      },
+      {
+        "bg_kl_loss": 0.0051763312658295035,
+        "elapsed_ns": 889793378,
+        "gradient_norm": 0.46625250577926636,
+        "lr": 0.0001366315789473684,
+        "pos_distill_kl": 0.021860159933567047,
+        "source_pool": "seed",
+        "step": 41,
+        "surgical_ce_loss": 0.1887056678533554,
+        "task_id": "V05"
+      },
+      {
+        "bg_kl_loss": 0.009219692088663578,
+        "elapsed_ns": 919641740,
+        "gradient_norm": 1.2043386697769165,
+        "lr": 0.00013454736842105262,
+        "pos_distill_kl": 0.06104990467429161,
+        "source_pool": "unlabeled_recal",
+        "step": 42,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C05"
+      },
+      {
+        "bg_kl_loss": 0.0031068623065948486,
+        "elapsed_ns": 912990262,
+        "gradient_norm": 0.7821930050849915,
+        "lr": 0.00013246315789473684,
+        "pos_distill_kl": 0.03926647827029228,
+        "source_pool": "seed",
+        "step": 43,
+        "surgical_ce_loss": 0.6787097454071045,
+        "task_id": "V06"
+      },
+      {
+        "bg_kl_loss": 0.013497384468792006,
+        "elapsed_ns": 909411398,
+        "gradient_norm": 0.8082889318466187,
+        "lr": 0.00013037894736842105,
+        "pos_distill_kl": 0.0015736572677269578,
+        "source_pool": "unlabeled_recal",
+        "step": 44,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C08"
+      },
+      {
+        "bg_kl_loss": 0.0017151072825072333,
+        "elapsed_ns": 968922460,
+        "gradient_norm": 0.6794873476028442,
+        "lr": 0.00012829473684210528,
+        "pos_distill_kl": 0.04336351528763771,
+        "source_pool": "seed",
+        "step": 45,
+        "surgical_ce_loss": 0.6011273860931396,
+        "task_id": "V07"
+      },
+      {
+        "bg_kl_loss": 0.004956126962497365,
+        "elapsed_ns": 859428792,
+        "gradient_norm": 0.6157560348510742,
+        "lr": 0.00012621052631578948,
+        "pos_distill_kl": 0.024939563125371933,
+        "source_pool": "unlabeled_recal",
+        "step": 46,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C09"
+      },
+      {
+        "bg_kl_loss": 0.0033893780782818794,
+        "elapsed_ns": 913263233,
+        "gradient_norm": 0.8081541657447815,
+        "lr": 0.00012412631578947368,
+        "pos_distill_kl": 0.01931735873222351,
+        "source_pool": "seed",
+        "step": 47,
+        "surgical_ce_loss": 1.0119349956512451,
+        "task_id": "V08"
+      },
+      {
+        "bg_kl_loss": 0.004798198118805885,
+        "elapsed_ns": 873105908,
+        "gradient_norm": 0.5348613262176514,
+        "lr": 0.00012204210526315791,
+        "pos_distill_kl": 0.00926411896944046,
+        "source_pool": "unlabeled_recal",
+        "step": 48,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C11"
+      },
+      {
+        "bg_kl_loss": 0.003987993230111897,
+        "elapsed_ns": 895810802,
+        "gradient_norm": 0.22854603826999664,
+        "lr": 0.00011995789473684212,
+        "pos_distill_kl": 0.0016753531526774168,
+        "source_pool": "seed",
+        "step": 49,
+        "surgical_ce_loss": 0.0025783078745007515,
+        "task_id": "V01"
+      },
+      {
+        "bg_kl_loss": 0.007812870549969375,
+        "elapsed_ns": 887771543,
+        "gradient_norm": 0.3411908745765686,
+        "lr": 0.0001178736842105263,
+        "pos_distill_kl": 0.0013933328446000814,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 50,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T01"
+      },
+      {
+        "bg_kl_loss": 0.0033893801737576723,
+        "elapsed_ns": 880800687,
+        "gradient_norm": 0.4944347143173218,
+        "lr": 0.00011578947368421055,
+        "pos_distill_kl": 0.0501885786652565,
+        "source_pool": "seed",
+        "step": 51,
+        "surgical_ce_loss": 0.31886807084083557,
+        "task_id": "V02"
+      },
+      {
+        "bg_kl_loss": 0.006033021869370714,
+        "elapsed_ns": 847415752,
+        "gradient_norm": 0.9095463156700134,
+        "lr": 0.00011370526315789474,
+        "pos_distill_kl": 0.0422309972345829,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 52,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T02"
+      },
+      {
+        "bg_kl_loss": 0.001513605260697659,
+        "elapsed_ns": 941193342,
+        "gradient_norm": 0.42420804500579834,
+        "lr": 0.00011162105263157893,
+        "pos_distill_kl": 0.054068673402071,
+        "source_pool": "seed",
+        "step": 53,
+        "surgical_ce_loss": 0.12603265047073364,
+        "task_id": "V03"
+      },
+      {
+        "bg_kl_loss": 0.0029220808210084215,
+        "elapsed_ns": 842819274,
+        "gradient_norm": 0.1892465502023697,
+        "lr": 0.00010953684210526317,
+        "pos_distill_kl": 0.004832379054278135,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 54,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T03"
+      },
+      {
+        "bg_kl_loss": 0.0028116441098973155,
+        "elapsed_ns": 911637997,
+        "gradient_norm": 0.40371736884117126,
+        "lr": 0.00010745263157894739,
+        "pos_distill_kl": 0.027629775926470757,
+        "source_pool": "seed",
+        "step": 55,
+        "surgical_ce_loss": 0.10583413392305374,
+        "task_id": "V04"
+      },
+      {
+        "bg_kl_loss": 0.003907980746589601,
+        "elapsed_ns": 857548707,
+        "gradient_norm": 0.6164085268974304,
+        "lr": 0.00010536842105263157,
+        "pos_distill_kl": 0.01498863659799099,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 56,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T05"
+      },
+      {
+        "bg_kl_loss": 0.002435244619846344,
+        "elapsed_ns": 887157137,
+        "gradient_norm": 0.4172872006893158,
+        "lr": 0.0001032842105263158,
+        "pos_distill_kl": 0.017187487334012985,
+        "source_pool": "seed",
+        "step": 57,
+        "surgical_ce_loss": 0.16164113581180573,
+        "task_id": "V05"
+      },
+      {
+        "bg_kl_loss": 0.004859911277890205,
+        "elapsed_ns": 853282918,
+        "gradient_norm": 0.23628626763820648,
+        "lr": 0.0001012,
+        "pos_distill_kl": 0.0034447466023266315,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 58,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T06"
+      },
+      {
+        "bg_kl_loss": 0.0021725803380832076,
+        "elapsed_ns": 849944845,
+        "gradient_norm": 0.6158735752105713,
+        "lr": 9.911578947368421e-05,
+        "pos_distill_kl": 0.02577914670109749,
+        "source_pool": "seed",
+        "step": 59,
+        "surgical_ce_loss": 0.6120109558105469,
+        "task_id": "V06"
+      },
+      {
+        "bg_kl_loss": 0.0016633554041618481,
+        "elapsed_ns": 855590348,
+        "gradient_norm": 0.5329466462135315,
+        "lr": 9.703157894736843e-05,
+        "pos_distill_kl": 0.006404177285730839,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 60,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T07"
+      },
+      {
+        "bg_kl_loss": 0.0012264642427908257,
+        "elapsed_ns": 953041863,
+        "gradient_norm": 0.603415310382843,
+        "lr": 9.494736842105264e-05,
+        "pos_distill_kl": 0.0346907339990139,
+        "source_pool": "seed",
+        "step": 61,
+        "surgical_ce_loss": 0.5432459712028503,
+        "task_id": "V07"
+      },
+      {
+        "bg_kl_loss": 0.0018909245773102157,
+        "elapsed_ns": 857219298,
+        "gradient_norm": 0.32868534326553345,
+        "lr": 9.286315789473684e-05,
+        "pos_distill_kl": 0.008861757814884186,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 62,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T08"
+      },
+      {
+        "bg_kl_loss": 0.00252347782952711,
+        "elapsed_ns": 934026049,
+        "gradient_norm": 0.7512763142585754,
+        "lr": 9.077894736842103e-05,
+        "pos_distill_kl": 0.023948393762111664,
+        "source_pool": "seed",
+        "step": 63,
+        "surgical_ce_loss": 0.8917089104652405,
+        "task_id": "V08"
+      },
+      {
+        "bg_kl_loss": 0.002640328020788729,
+        "elapsed_ns": 841044922,
+        "gradient_norm": 0.2536144256591797,
+        "lr": 8.869473684210528e-05,
+        "pos_distill_kl": 0.004322353284806013,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 64,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T10"
+      },
+      {
+        "bg_kl_loss": 0.0029357107123360038,
+        "elapsed_ns": 877416478,
+        "gradient_norm": 0.3494766354560852,
+        "lr": 8.661052631578947e-05,
+        "pos_distill_kl": 0.0015718803042545915,
+        "source_pool": "seed",
+        "step": 65,
+        "surgical_ce_loss": 0.0025333459489047527,
+        "task_id": "V01"
+      },
+      {
+        "bg_kl_loss": 0.0034232853213325143,
+        "elapsed_ns": 856575565,
+        "gradient_norm": 0.633649468421936,
+        "lr": 8.452631578947368e-05,
+        "pos_distill_kl": 0.032361384481191635,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 66,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T12"
+      },
+      {
+        "bg_kl_loss": 0.0028183908434584737,
+        "elapsed_ns": 854309480,
+        "gradient_norm": 0.5341391563415527,
+        "lr": 8.24421052631579e-05,
+        "pos_distill_kl": 0.046158693730831146,
+        "source_pool": "seed",
+        "step": 67,
+        "surgical_ce_loss": 0.28806567192077637,
+        "task_id": "V02"
+      },
+      {
+        "bg_kl_loss": 0.001671164034632966,
+        "elapsed_ns": 851473105,
+        "gradient_norm": 2.5981318950653076,
+        "lr": 8.035789473684211e-05,
+        "pos_distill_kl": 0.050510890781879425,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 68,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T13"
+      },
+      {
+        "bg_kl_loss": 0.0015380075055873021,
+        "elapsed_ns": 987330830,
+        "gradient_norm": 1.062700867652893,
+        "lr": 7.827368421052632e-05,
+        "pos_distill_kl": 0.0777883306145668,
+        "source_pool": "seed",
+        "step": 69,
+        "surgical_ce_loss": 0.08734754472970963,
+        "task_id": "V03"
+      },
+      {
+        "bg_kl_loss": 0.0019095066672889516,
+        "elapsed_ns": 852816305,
+        "gradient_norm": 0.1909637451171875,
+        "lr": 7.61894736842105e-05,
+        "pos_distill_kl": 0.002643557731062174,
+        "source_pool": "unlabeled_recal",
+        "step": 70,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C01"
+      },
+      {
+        "bg_kl_loss": 0.002556566148996353,
+        "elapsed_ns": 917125998,
+        "gradient_norm": 0.22313357889652252,
+        "lr": 7.410526315789475e-05,
+        "pos_distill_kl": 0.042431820183992386,
+        "source_pool": "seed",
+        "step": 71,
+        "surgical_ce_loss": 0.05863166227936745,
+        "task_id": "V04"
+      },
+      {
+        "bg_kl_loss": 0.001633390027564019,
+        "elapsed_ns": 898133021,
+        "gradient_norm": 0.37563860416412354,
+        "lr": 7.202105263157894e-05,
+        "pos_distill_kl": 0.018096160143613815,
+        "source_pool": "unlabeled_recal",
+        "step": 72,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C03"
+      },
+      {
+        "bg_kl_loss": 0.0019740667194128036,
+        "elapsed_ns": 882247600,
+        "gradient_norm": 0.4214281141757965,
+        "lr": 6.993684210526316e-05,
+        "pos_distill_kl": 0.01792706921696663,
+        "source_pool": "seed",
+        "step": 73,
+        "surgical_ce_loss": 0.13466043770313263,
+        "task_id": "V05"
+      },
+      {
+        "bg_kl_loss": 0.0030851747142151,
+        "elapsed_ns": 855488194,
+        "gradient_norm": 0.3369252681732178,
+        "lr": 6.785263157894737e-05,
+        "pos_distill_kl": 0.01383286900818348,
+        "source_pool": "unlabeled_recal",
+        "step": 74,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C04"
+      },
+      {
+        "bg_kl_loss": 0.0016503407387062907,
+        "elapsed_ns": 889670387,
+        "gradient_norm": 0.5843585729598999,
+        "lr": 6.576842105263157e-05,
+        "pos_distill_kl": 0.0227973535656929,
+        "source_pool": "seed",
+        "step": 75,
+        "surgical_ce_loss": 0.5368000864982605,
+        "task_id": "V06"
+      },
+      {
+        "bg_kl_loss": 0.0013350319204619154,
+        "elapsed_ns": 877176939,
+        "gradient_norm": 0.3886488080024719,
+        "lr": 6.368421052631579e-05,
+        "pos_distill_kl": 0.010015955194830894,
+        "source_pool": "unlabeled_recal",
+        "step": 76,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C05"
+      },
+      {
+        "bg_kl_loss": 0.0009671107982285321,
+        "elapsed_ns": 983885186,
+        "gradient_norm": 0.43643736839294434,
+        "lr": 6.159999999999998e-05,
+        "pos_distill_kl": 0.04132219776511192,
+        "source_pool": "seed",
+        "step": 77,
+        "surgical_ce_loss": 0.458020955324173,
+        "task_id": "V07"
+      },
+      {
+        "bg_kl_loss": 0.0013506360301107634,
+        "elapsed_ns": 855372585,
+        "gradient_norm": 0.14432872831821442,
+        "lr": 5.951578947368422e-05,
+        "pos_distill_kl": 0.0010020489571616054,
+        "source_pool": "unlabeled_recal",
+        "step": 78,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C08"
+      },
+      {
+        "bg_kl_loss": 0.0018877789261750877,
+        "elapsed_ns": 947787288,
+        "gradient_norm": 0.7933672070503235,
+        "lr": 5.743157894736841e-05,
+        "pos_distill_kl": 0.025277772918343544,
+        "source_pool": "seed",
+        "step": 79,
+        "surgical_ce_loss": 0.8102966547012329,
+        "task_id": "V08"
+      },
+      {
+        "bg_kl_loss": 0.0014497704687528312,
+        "elapsed_ns": 845680221,
+        "gradient_norm": 0.3457145690917969,
+        "lr": 5.534736842105263e-05,
+        "pos_distill_kl": 0.01255112886428833,
+        "source_pool": "unlabeled_recal",
+        "step": 80,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C09"
+      },
+      {
+        "bg_kl_loss": 0.001247923355549574,
+        "elapsed_ns": 864260460,
+        "gradient_norm": 0.17272213101387024,
+        "lr": 5.326315789473684e-05,
+        "pos_distill_kl": 0.0012916484847664833,
+        "source_pool": "seed",
+        "step": 81,
+        "surgical_ce_loss": 0.0020795955788344145,
+        "task_id": "V01"
+      },
+      {
+        "bg_kl_loss": 0.002890061237849295,
+        "elapsed_ns": 881372711,
+        "gradient_norm": 0.17107000946998596,
+        "lr": 5.1178947368421054e-05,
+        "pos_distill_kl": 0.002624260261654854,
+        "source_pool": "unlabeled_recal",
+        "step": 82,
+        "surgical_ce_loss": 0.0,
+        "task_id": "C11"
+      },
+      {
+        "bg_kl_loss": 0.001862401026301086,
+        "elapsed_ns": 876049434,
+        "gradient_norm": 0.4184325635433197,
+        "lr": 4.909473684210526e-05,
+        "pos_distill_kl": 0.04939054325222969,
+        "source_pool": "seed",
+        "step": 83,
+        "surgical_ce_loss": 0.25215235352516174,
+        "task_id": "V02"
+      },
+      {
+        "bg_kl_loss": 0.0012159249090473168,
+        "elapsed_ns": 849923907,
+        "gradient_norm": 0.1581459641456604,
+        "lr": 4.701052631578945e-05,
+        "pos_distill_kl": 0.001172347809188068,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 84,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T01"
+      },
+      {
+        "bg_kl_loss": 0.000834768965432886,
+        "elapsed_ns": 921422656,
+        "gradient_norm": 0.9980832934379578,
+        "lr": 4.4926315789473696e-05,
+        "pos_distill_kl": 0.04757095128297806,
+        "source_pool": "seed",
+        "step": 85,
+        "surgical_ce_loss": 0.16022855043411255,
+        "task_id": "V03"
+      },
+      {
+        "bg_kl_loss": 0.001150422373029869,
+        "elapsed_ns": 839808758,
+        "gradient_norm": 0.39306318759918213,
+        "lr": 4.2842105263157885e-05,
+        "pos_distill_kl": 0.012751569040119648,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 86,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T02"
+      },
+      {
+        "bg_kl_loss": 0.0020977542735636234,
+        "elapsed_ns": 922676854,
+        "gradient_norm": 0.18963733315467834,
+        "lr": 4.0757894736842094e-05,
+        "pos_distill_kl": 0.03464990109205246,
+        "source_pool": "seed",
+        "step": 87,
+        "surgical_ce_loss": 0.07946960628032684,
+        "task_id": "V04"
+      },
+      {
+        "bg_kl_loss": 0.0012473081587813795,
+        "elapsed_ns": 844918634,
+        "gradient_norm": 0.1868637055158615,
+        "lr": 3.867368421052631e-05,
+        "pos_distill_kl": 0.004682924132794142,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 88,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T03"
+      },
+      {
+        "bg_kl_loss": 0.0007458820764441043,
+        "elapsed_ns": 897668503,
+        "gradient_norm": 0.31477752327919006,
+        "lr": 3.6589473684210527e-05,
+        "pos_distill_kl": 0.01897401362657547,
+        "source_pool": "seed",
+        "step": 89,
+        "surgical_ce_loss": 0.12043850868940353,
+        "task_id": "V05"
+      },
+      {
+        "bg_kl_loss": 0.002674846211448312,
+        "elapsed_ns": 865794871,
+        "gradient_norm": 0.34534549713134766,
+        "lr": 3.4505263157894736e-05,
+        "pos_distill_kl": 0.005342903546988964,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 90,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T05"
+      },
+      {
+        "bg_kl_loss": 0.0016848333762027323,
+        "elapsed_ns": 837826427,
+        "gradient_norm": 0.5793340802192688,
+        "lr": 3.242105263157895e-05,
+        "pos_distill_kl": 0.024234019219875336,
+        "source_pool": "seed",
+        "step": 91,
+        "surgical_ce_loss": 0.4849563539028168,
+        "task_id": "V06"
+      },
+      {
+        "bg_kl_loss": 0.0014512560082948767,
+        "elapsed_ns": 845279956,
+        "gradient_norm": 0.30029240250587463,
+        "lr": 3.0336842105263165e-05,
+        "pos_distill_kl": 0.0028152193408459425,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 92,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T06"
+      },
+      {
+        "bg_kl_loss": 0.0009398594011145178,
+        "elapsed_ns": 927392109,
+        "gradient_norm": 0.5664851665496826,
+        "lr": 2.8252631578947354e-05,
+        "pos_distill_kl": 0.04465087130665779,
+        "source_pool": "seed",
+        "step": 93,
+        "surgical_ce_loss": 0.4198710322380066,
+        "task_id": "V07"
+      },
+      {
+        "bg_kl_loss": 0.0011977219182881527,
+        "elapsed_ns": 830371009,
+        "gradient_norm": 0.18633487820625305,
+        "lr": 2.6168421052631567e-05,
+        "pos_distill_kl": 0.0017130643827840686,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 94,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T07"
+      },
+      {
+        "bg_kl_loss": 0.0019234006758779287,
+        "elapsed_ns": 956306731,
+        "gradient_norm": 0.7835581302642822,
+        "lr": 2.4084210526315783e-05,
+        "pos_distill_kl": 0.027575543150305748,
+        "source_pool": "seed",
+        "step": 95,
+        "surgical_ce_loss": 0.7570604681968689,
+        "task_id": "V08"
+      },
+      {
+        "bg_kl_loss": 0.0008989470079541206,
+        "elapsed_ns": 847583827,
+        "gradient_norm": 0.12146458029747009,
+        "lr": 2.1999999999999996e-05,
+        "pos_distill_kl": 0.005715330597013235,
+        "source_pool": "unlabeled_v1_transfer",
+        "step": 96,
+        "surgical_ce_loss": 0.0,
+        "task_id": "T08"
+      }
+    ],
+    "surgical_seed_summary": {
+      "V01": {
+        "surgical_diff_tokens": 21,
+        "target_tokens": 115
+      },
+      "V02": {
+        "surgical_diff_tokens": 51,
+        "target_tokens": 91
+      },
+      "V03": {
+        "surgical_diff_tokens": 7,
+        "target_tokens": 108
+      },
+      "V04": {
+        "surgical_diff_tokens": 6,
+        "target_tokens": 109
+      },
+      "V05": {
+        "surgical_diff_tokens": 63,
+        "target_tokens": 126
+      },
+      "V06": {
+        "surgical_diff_tokens": 30,
+        "target_tokens": 80
+      },
+      "V07": {
+        "surgical_diff_tokens": 66,
+        "target_tokens": 168
+      },
+      "V08": {
+        "surgical_diff_tokens": 67,
+        "target_tokens": 123
+      }
+    },
+    "training_ns": 85315193091,
+    "unlabeled_teacher_mining": {
+      "accepted_ids": [
+        "C01",
+        "C03",
+        "C04",
+        "C05",
+        "C08",
+        "C09",
+        "C11",
+        "T01",
+        "T02",
+        "T03",
+        "T05",
+        "T06",
+        "T07",
+        "T08",
+        "T10",
+        "T12",
+        "T13"
+      ],
+      "attempted": 28,
+      "public_both_pass": 17,
+      "valid_syntax": 28
+    },
+    "verification_ns": 30786069944,
+    "verified_unlabeled_trajectory_count": 17
+  },
+  "trusted_collection_accepted": false,
+  "version": 1
+}
