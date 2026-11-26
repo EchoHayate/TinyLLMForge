@@ -1,0 +1,105 @@
+{
+  "all_5_heterogeneous_rank_mlp_matched_single_run": true,
+  "batch32_dynamic_template_elapsed_ms": 13214.76,
+  "cuda_graphs_captured": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    48,
+    64
+  ],
+  "elapsed_seconds": 138.39,
+  "gpu_summary": {
+    "free_mib": 80979,
+    "name": "NVIDIA A100 80GB PCIe",
+    "used_mib": 71
+  },
+  "kind": "TINYVLLM_MLP_AND_DYNAMIC_TEMPLATE_E2E_REPORT",
+  "mixed_rank_and_dynamic_template_verification": {
+    "L_T01_dynA": {
+      "initial_kv_blocks": 2,
+      "matches_single_cudagraph_run": true,
+      "original_tokens": 1867,
+      "resolved_lora_slot_id": 3,
+      "rewritten_tokens": 442
+    },
+    "L_T05_dynB": {
+      "initial_kv_blocks": 8,
+      "matches_single_cudagraph_run": true,
+      "original_tokens": 1865,
+      "resolved_lora_slot_id": 0,
+      "rewritten_tokens": 1865
+    },
+    "M_T01_dynA": {
+      "initial_kv_blocks": 3,
+      "matches_single_cudagraph_run": true,
+      "original_tokens": 2576,
+      "resolved_lora_slot_id": 2,
+      "rewritten_tokens": 517
+    },
+    "M_T05_dynB": {
+      "initial_kv_blocks": 3,
+      "matches_single_cudagraph_run": true,
+      "original_tokens": 2578,
+      "resolved_lora_slot_id": 2,
+      "rewritten_tokens": 519
+    },
+    "WT05": {
+      "initial_kv_blocks": 2,
+      "matches_single_cudagraph_run": true,
+      "original_tokens": 3426,
+      "resolved_lora_slot_id": 1,
+      "rewritten_tokens": 376
+    }
+  },
+  "slot_receipts": {
+    "slot_1_code_r8_qv": {
+      "layers_loaded": 36,
+      "mlp_layers_loaded": 0,
+      "slot_id": 1,
+      "slot_resident_bytes": 7667712
+    },
+    "slot_2_med_r16_mlp": {
+      "layers_loaded": 36,
+      "mlp_layers_loaded": 36,
+      "slot_id": 2,
+      "slot_resident_bytes": 34209792
+    },
+    "slot_3_legal_r16_mlp": {
+      "layers_loaded": 36,
+      "mlp_layers_loaded": 36,
+      "slot_id": 3,
+      "slot_resident_bytes": 34209792
+    }
+  },
+  "tinyvllm_engine_blind_legal_score": {
+    "field_accuracy": 0.65,
+    "passed_ids": [
+      "L_T01",
+      "L_T08",
+      "L_T09",
+      "L_T10",
+      "L_T11",
+      "L_T12",
+      "L_T14",
+      "L_T15",
+      "L_T16"
+    ],
+    "strict_pass": "9/16",
+    "strict_pass_count": 9
+  },
+  "tinyvllm_engine_blind_med_score": {
+    "field_accuracy": 0.5875,
+    "passed_ids": [
+      "M_T01",
+      "M_T04",
+      "M_T05",
+      "M_T15"
+    ],
+    "strict_pass": "4/16",
+    "strict_pass_count": 4
+  }
+}

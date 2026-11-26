@@ -1,0 +1,156 @@
+{
+  "elapsed_seconds": 640.17,
+  "gpu_summary": {
+    "free_mib": 80979,
+    "name": "NVIDIA A100 80GB PCIe",
+    "used_mib": 71
+  },
+  "kind": "PUBLIC_BBH_MULTISEED_AND_KV_COMPRESSION_REPORT",
+  "kv_compression_pareto_n40": [
+    {
+      "compression_ratio_vs_bf16_kv": 1.0,
+      "eval_40_seconds": 54.63,
+      "field_accuracy": 0.78,
+      "mode": "bf16_full",
+      "prefix_resident_mib": 496.55,
+      "strict_pass": "29/40",
+      "strict_pass_rate": 0.725
+    },
+    {
+      "compression_ratio_vs_bf16_kv": 1.97,
+      "eval_40_seconds": 54.81,
+      "field_accuracy": 0.775,
+      "mode": "int8_kv",
+      "prefix_resident_mib": 252.15,
+      "strict_pass": "29/40",
+      "strict_pass_rate": 0.725
+    },
+    {
+      "compression_ratio_vs_bf16_kv": 3.2,
+      "eval_40_seconds": 55.14,
+      "field_accuracy": 0.755,
+      "mode": "int4_kv",
+      "prefix_resident_mib": 155.17,
+      "strict_pass": "27/40",
+      "strict_pass_rate": 0.675
+    },
+    {
+      "compression_ratio_vs_bf16_kv": 5.0,
+      "eval_40_seconds": 14.68,
+      "field_accuracy": 0.315,
+      "mode": "snapkv_20pct",
+      "prefix_resident_mib": 99.28,
+      "strict_pass": "1/40",
+      "strict_pass_rate": 0.025
+    },
+    {
+      "compression_ratio_vs_bf16_kv": 10.0,
+      "eval_40_seconds": 14.7,
+      "field_accuracy": 0.295,
+      "mode": "snapkv_10pct",
+      "prefix_resident_mib": 49.64,
+      "strict_pass": "1/40",
+      "strict_pass_rate": 0.025
+    },
+    {
+      "compression_ratio_vs_bf16_kv": 15.22,
+      "eval_40_seconds": 13.62,
+      "field_accuracy": 0.485,
+      "mode": "lora_dense_r16_pure",
+      "prefix_resident_mib": 32.62,
+      "strict_pass": "11/40",
+      "strict_pass_rate": 0.275
+    },
+    {
+      "compression_ratio_vs_bf16_kv": 9.78,
+      "eval_40_seconds": 14.43,
+      "field_accuracy": 0.555,
+      "mode": "lora_dense_r16_plus_micro_table",
+      "prefix_resident_mib": 50.77,
+      "strict_pass": "17/40",
+      "strict_pass_rate": 0.425
+    }
+  ],
+  "public_bbh_multimodel_3seed": [
+    {
+      "base_0shot_accuracy": 0.0917,
+      "base_0shot_count": 11,
+      "distill_trajectories": 76,
+      "long_cot_accuracy": 0.4833,
+      "long_cot_count": 58,
+      "lora_3seed_mean_accuracy": 0.5,
+      "lora_3seed_std_accuracy": 0.0083,
+      "model": "Qwen3-0.6B",
+      "n_test_items": 120,
+      "seed_runs": [
+        {
+          "bf16_lora_mib": 2.188,
+          "lora_accuracy": 0.5083,
+          "lora_pass_count": 61,
+          "mcnemar_p_vs_base": 1.0382663478969434e-11,
+          "seed": 42,
+          "vs_base_r2w": 5,
+          "vs_base_w2r": 55
+        },
+        {
+          "bf16_lora_mib": 2.188,
+          "lora_accuracy": 0.5,
+          "lora_pass_count": 60,
+          "mcnemar_p_vs_base": 1.9067358802971057e-11,
+          "seed": 137,
+          "vs_base_r2w": 5,
+          "vs_base_w2r": 54
+        },
+        {
+          "bf16_lora_mib": 2.188,
+          "lora_accuracy": 0.4917,
+          "lora_pass_count": 59,
+          "mcnemar_p_vs_base": 1.1008055578187737e-11,
+          "seed": 2026,
+          "vs_base_r2w": 4,
+          "vs_base_w2r": 52
+        }
+      ]
+    },
+    {
+      "base_0shot_accuracy": 0.1333,
+      "base_0shot_count": 16,
+      "distill_trajectories": 76,
+      "long_cot_accuracy": 0.6667,
+      "long_cot_count": 80,
+      "lora_3seed_mean_accuracy": 0.625,
+      "lora_3seed_std_accuracy": 0.03,
+      "model": "Qwen3-8B",
+      "n_test_items": 120,
+      "seed_runs": [
+        {
+          "bf16_lora_mib": 7.312,
+          "lora_accuracy": 0.6167,
+          "lora_pass_count": 74,
+          "mcnemar_p_vs_base": 4.742842403537839e-15,
+          "seed": 42,
+          "vs_base_r2w": 3,
+          "vs_base_w2r": 61
+        },
+        {
+          "bf16_lora_mib": 7.312,
+          "lora_accuracy": 0.6583,
+          "lora_pass_count": 79,
+          "mcnemar_p_vs_base": 3.088620938868081e-17,
+          "seed": 137,
+          "vs_base_r2w": 2,
+          "vs_base_w2r": 65
+        },
+        {
+          "bf16_lora_mib": 7.312,
+          "lora_accuracy": 0.6,
+          "lora_pass_count": 72,
+          "mcnemar_p_vs_base": 4.0939474033052647e-16,
+          "seed": 2026,
+          "vs_base_r2w": 1,
+          "vs_base_w2r": 57
+        }
+      ]
+    }
+  ]
+}

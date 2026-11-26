@@ -1,0 +1,136 @@
+{
+  "domains": {
+    "legal_compliance": {
+      "artifact_sha256": "27aaed3861c6003cece87c5f1f44b45c41fb2a1681f834bdd93409c81cebaff3",
+      "base_micro_table_only": {
+        "field_accuracy": 0.275,
+        "passed_ids": [],
+        "strict_pass": "0/16",
+        "strict_pass_count": 0
+      },
+      "general_retention_8_pass": "7/8",
+      "long_text_cot": {
+        "field_accuracy": 0.85,
+        "passed_ids": [
+          "L_T01",
+          "L_T02",
+          "L_T04",
+          "L_T05",
+          "L_T06",
+          "L_T07",
+          "L_T08",
+          "L_T09",
+          "L_T11",
+          "L_T12",
+          "L_T14",
+          "L_T15",
+          "L_T16"
+        ],
+        "strict_pass": "13/16",
+        "strict_pass_count": 13
+      },
+      "lora_bf16_mib": 32.625,
+      "lora_dense_plus_micro_table": {
+        "field_accuracy": 0.7625,
+        "passed_ids": [
+          "L_T01",
+          "L_T02",
+          "L_T06",
+          "L_T08",
+          "L_T09",
+          "L_T10",
+          "L_T11",
+          "L_T12",
+          "L_T14",
+          "L_T15",
+          "L_T16"
+        ],
+        "strict_pass": "11/16",
+        "strict_pass_count": 11
+      },
+      "lora_dense_pure": {
+        "field_accuracy": 0.6,
+        "passed_ids": [
+          "L_T01",
+          "L_T09",
+          "L_T10",
+          "L_T11",
+          "L_T12",
+          "L_T13",
+          "L_T15",
+          "L_T16"
+        ],
+        "strict_pass": "8/16",
+        "strict_pass_count": 8
+      },
+      "mean_tokens_long_vs_hybrid": "3809 -> 427",
+      "mining_seconds": 614.0,
+      "rank": 16,
+      "self_consistent_accepted": 132,
+      "total_distill_trajectories": 140,
+      "training_seconds": 117.04,
+      "unlabeled_probes_attempted": 132
+    },
+    "med_triage": {
+      "artifact_sha256": "c390ce839d062a0b69473afe26c0f675943e5493f18904b042b4bd3eaf7a1b37",
+      "base_micro_table_only": {
+        "field_accuracy": 0.325,
+        "passed_ids": [],
+        "strict_pass": "0/16",
+        "strict_pass_count": 0
+      },
+      "general_retention_8_pass": "8/8",
+      "long_text_cot": {
+        "field_accuracy": 0.6,
+        "passed_ids": [
+          "M_T01",
+          "M_T03",
+          "M_T05",
+          "M_T08",
+          "M_T10",
+          "M_T13"
+        ],
+        "strict_pass": "6/16",
+        "strict_pass_count": 6
+      },
+      "lora_bf16_mib": 32.625,
+      "lora_dense_plus_micro_table": {
+        "field_accuracy": 0.7125,
+        "passed_ids": [
+          "M_T01",
+          "M_T03",
+          "M_T04",
+          "M_T05",
+          "M_T09",
+          "M_T15"
+        ],
+        "strict_pass": "6/16",
+        "strict_pass_count": 6
+      },
+      "lora_dense_pure": {
+        "field_accuracy": 0.6625,
+        "passed_ids": [
+          "M_T03",
+          "M_T09",
+          "M_T15"
+        ],
+        "strict_pass": "3/16",
+        "strict_pass_count": 3
+      },
+      "mean_tokens_long_vs_hybrid": "4691 -> 499",
+      "mining_seconds": 704.21,
+      "rank": 16,
+      "self_consistent_accepted": 117,
+      "total_distill_trajectories": 125,
+      "training_seconds": 121.2,
+      "unlabeled_probes_attempted": 132
+    }
+  },
+  "elapsed_seconds": 2376.69,
+  "gpu_summary": {
+    "free_mib": 80979,
+    "name": "NVIDIA A100 80GB PCIe",
+    "used_mib": 71
+  },
+  "kind": "DENSE_COMPILATION_AND_MICRO_RESIDUAL_REPORT"
+}
