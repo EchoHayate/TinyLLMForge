@@ -268,6 +268,54 @@ def _make_serving_chart() -> io.BytesIO:
     return _fig_to_stream(fig)
 
 
+def _make_bbh_and_kv_pareto_chart() -> io.BytesIO:
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11.4, 3.95))
+
+    models = ["Qwen3-0.6B\n(2.19 MiB LoRA)", "Qwen3-8B\n(7.31 MiB LoRA)"]
+    xm = np.arange(len(models))
+    w = 0.25
+    base_v = [9.17, 13.33]
+    text_v = [48.33, 66.67]
+    lora_v = [50.00, 62.50]
+    lora_err = [0.83, 3.00]
+
+    ax1.bar(xm - w, base_v, width=w, label="裸底座 0-shot", color="#94A3B8")
+    ax1.bar(xm, text_v, width=w, label="12-shot CoT 长提示词", color="#F59E0B")
+    ax1.bar(xm + w, lora_v, yerr=lora_err, capsize=4, width=w, label="受控 LoRA (3种子均值±std)", color="#1D4ED8")
+    ax1.text(0 + w, 53.0, "50.0%±0.8%\n(p<2e-11, 反超!)", ha="center", fontsize=8.5, fontweight="bold", color="#1D4ED8")
+    ax1.text(1 + w, 67.5, "62.5%±3.0%\n(p<5e-15)", ha="center", fontsize=8.5, fontweight="bold", color="#1D4ED8")
+    ax1.set_xticks(xm)
+    ax1.set_xticklabels(models, fontsize=9.8)
+    ax1.set_ylim(0, 82)
+    ax1.set_ylabel("准确率 (%)", fontsize=10.5, fontweight="bold")
+    ax1.set_title("公开 BIG-Bench Hard (N=120 × 3 Seeds)", fontsize=11.8, fontweight="bold")
+    ax1.grid(axis="y", linestyle=":", alpha=0.5)
+    ax1.spines["top"].set_visible(False)
+    ax1.spines["right"].set_visible(False)
+    ax1.legend(loc="upper left", fontsize=8.2)
+
+    comp_x = [1.0, 1.97, 3.20, 5.0, 10.0, 9.78, 15.22]
+    acc_y = [72.5, 72.5, 67.5, 2.5, 2.5, 42.5, 27.5]
+    ax2.plot([1.0, 1.97, 3.20], [72.5, 72.5, 67.5], "o-", color="#64748B", linewidth=2.0, label="INT8 / INT4 KV 量化 (零提速 55s)")
+    ax2.plot([5.0, 10.0], [2.5, 2.5], "x--", color="#DC2626", markersize=9, linewidth=2.0, label="SnapKV 20%/10% (静态驱逐崩盘)")
+    ax2.scatter([9.78, 15.22], [42.5, 27.5], s=110, marker="*", color="#059669", zorder=5, label="LoRA+微残差 / 纯LoRA (快3.8~4.0×)")
+    ax2.annotate("INT8 (2×, 72.5%)", (1.97, 72.5), xytext=(4, -14), textcoords="offset points", fontsize=8.2)
+    ax2.annotate("SnapKV-10%\n(2.5% 归零!)", (10.0, 2.5), xytext=(-15, 12), textcoords="offset points", fontsize=8.3, color="#DC2626", fontweight="bold")
+    ax2.annotate("LoRA+微残差 (9.8×)\n42.5% (17×于SnapKV!)", (9.78, 42.5), xytext=(-45, 10), textcoords="offset points", fontsize=8.5, color="#059669", fontweight="bold")
+    ax2.set_xlabel("相对 BF16 KV 显存压缩倍数 (×)", fontsize=10.2, fontweight="bold")
+    ax2.set_ylabel("严格全对率 (%, N=40)", fontsize=10.5, fontweight="bold")
+    ax2.set_ylim(-4, 86)
+    ax2.set_xlim(0, 17.5)
+    ax2.set_title("KV 压缩三段式帕累托前沿 (N=40)", fontsize=11.8, fontweight="bold")
+    ax2.grid(True, linestyle=":", alpha=0.5)
+    ax2.spines["top"].set_visible(False)
+    ax2.spines["right"].set_visible(False)
+    ax2.legend(loc="upper right", fontsize=8.0)
+
+    fig.tight_layout()
+    return _fig_to_stream(fig)
+
+
 def build_deck(repo_root: Path, out_pptx: Path, g12_report_path: Path | None = None) -> dict:
     g12_data = None
     if g12_report_path and g12_report_path.exists():
@@ -283,7 +331,7 @@ def build_deck(repo_root: Path, out_pptx: Path, g12_report_path: Path | None = N
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
     blank = prs.slide_layouts[6]
-    total_pages = 10
+    total_pages = 12
 
     best_score_str = "8 / 24 (追平长提示词，专精 5/12 反超)"
     g12_bullet = "G8 差异行 4× 聚焦达 5/12 迁移（反超长提示词 4/12）；G9 正反全 KL 自蒸馏达成全集 0 退化（8/24）"
@@ -716,8 +764,79 @@ def build_deck(repo_root: Path, out_pptx: Path, g12_report_path: Path | None = N
         font_size=11.3,
     )
 
+    s10_cd = prs.slides.add_slide(blank)
+    _add_header(
+        s10_cd,
+        "9. 跨领域泛化闭环：4×4 零串扰矩阵、多槽位 1.30 GiB 省显存与高低熵解耦定律",
+        "扩展至临床药学分诊 (MED-SOP) 与企业法务合规 (LEGAL-SOP) 双盲评测及 tinyvllm 异构秩+MLP+动态模板升级",
+        10,
+        total_pages,
+    )
+    _add_card(
+        s10_cd,
+        0.55,
+        1.35,
+        6.0,
+        5.55,
+        fill_rgb=C_BLUE_LIGHT,
+        border_rgb=C_BLUE,
+        title="4×4 跨界零污染与 tinyvllm 四领域多槽位复用",
+        title_rgb=C_BLUE,
+        bullets=[
+            "• 136/136 跨界请求 0.00% 格式污染：凭借 JSON 语法键名硬 CE 置 0 + 双模态 KL 零空间锁死，挂医/法权重写 Python 从不蹦 JSON，答通用题从不蹦 def。",
+            "• 四领域 32 并发对决原生三领域 Warm APC：",
+            "  - 三领域总常驻权重仅 21.94 MiB，一次性释放 37 个长前缀块（峰值 KV 3,348 → 2,016 MiB，净省 1.30 GiB / -39.8%）且吞吐反超 1.047×！",
+            "• 引擎升级全闭环：支持 36 层 mlp.down_proj 槽位池 + 异构秩零填充 (r=8 & r=16 同图共存) + 动态日期/科室头双锚点模板匹配，CUDA Graph 100% 逐字符一致。",
+        ],
+        font_size=11.1,
+    )
+    _add_card(
+        s10_cd,
+        6.75,
+        1.35,
+        6.03,
+        5.55,
+        fill_rgb=C_GREEN_LIGHT,
+        border_rgb=C_GREEN,
+        title="攻克非编程查表瓶颈：密集覆盖编译 + 75-tok 数字残差",
+        title_rgb=C_GREEN,
+        bullets=[
+            "• 关键物理边界发现：代码修复属过程性注意力路由（纯 q/v 满容量）；而医药 28 格精确毫克表存在「未问格 0 梯度（覆盖饥饿）」与高熵数字记忆瓶颈。",
+            "• 根治方案：离线 132 探针全网格+临界边界合成自蒸馏 (rank=16 q/v+MLP) + 仅保留 75-tok 纯数字速查表（砍掉 89% 上下文）：",
+            "  - 消融控制组（裸底座 + 仅给 75-tok 数字表）：0 / 16（证明无规则寸步难行）；",
+            "  - 医疗盲测：6 / 16（100% 追平长提示词！字段率 71.25% 大幅反超长提示词 60.0%！）；",
+            "  - 法律盲测：从稀疏 q/v 的 2/16 飙升至 11 / 16（字段率 76.25%）！",
+        ],
+        font_size=11.1,
+    )
+
+    s11_pub = prs.slides.add_slide(blank)
+    _add_header(
+        s11_pub,
+        "10. 论文级硬核验证：公开 BBH 双尺度三随机种子 (p < 10⁻¹¹) 与 KV 压缩帕累托前沿",
+        "跨越 13.3× 模型参数量级 (Qwen3-0.6B & 8B) 并同台对决 INT8 / INT4 KV 量化与 SnapKV 稀疏驱逐",
+        11,
+        total_pages,
+    )
+    bbh_png = _make_bbh_and_kv_pareto_chart()
+    s11_pub.shapes.add_picture(bbh_png, Inches(0.60), Inches(1.26), width=Inches(12.1))
+    _add_card(
+        s11_pub,
+        0.60,
+        5.62,
+        12.1,
+        1.36,
+        fill_rgb=C_PANEL,
+        border_rgb=C_BORDER,
+        bullets=[
+            "• 跨尺度惊喜发现：在 Qwen3-0.6B 上，2.19 MiB LoRA 三颗随机种子 (61, 60, 59 / 120) 全部正面反超 12-shot 长提示词 (58/120)，双侧精确 McNemar p < 2×10⁻¹¹；Qwen3-8B 达 p < 5×10⁻¹⁵。",
+            "• 三段式系统选型定律：2~3× 温和压缩选免训练 INT8 KV；而在 10×~60× 极致压缩与 4× 提速区，免训练 SnapKV 崩盘至 2.5% (1/40)，LoRA+微残差全对率高出 17 倍 (17/40)，确立清晰不可替代统治区！",
+        ],
+        font_size=10.8,
+    )
+
     s10 = prs.slides.add_slide(blank)
-    _add_header(s10, "9. 学术前沿对标（2022–2026）与技术面试核心亮点总结", "清晰界定已有共识与本项目的三项原创工程/算法增量", 10, total_pages)
+    _add_header(s10, "11. 学术前沿对标（2022–2026）与技术面试核心亮点总结", "清晰界定已有共识与本项目的原创工程/算法增量", 12, total_pages)
     _add_card(
         s10,
         0.55,
